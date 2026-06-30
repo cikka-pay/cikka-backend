@@ -1,0 +1,30 @@
+# Docker Compose for local development
+# Provides a Postgres database so you don't need a local install.
+# The app itself is run via `npm run dev` (not inside Docker).
+#
+# Usage:
+#   docker compose up -d        # start postgres
+#   docker compose down         # stop
+#   docker compose down -v      # stop + wipe data volume
+
+services:
+  db:
+    image: postgres:16-alpine
+    container_name: cikka_postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: cikka
+      POSTGRES_PASSWORD: cikka_dev
+      POSTGRES_DB: cikka_dashboard
+    ports:
+      - "5432:5432"
+    volumes:
+      - cikka_pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U cikka -d cikka_dashboard"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+volumes:
+  cikka_pgdata:

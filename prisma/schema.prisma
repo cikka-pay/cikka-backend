@@ -1,0 +1,126 @@
+// Cikka Seller Dashboard — Prisma schema
+// See docs/ARCHITECTURE.md for how these models map to the dashboard's data flow.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model Seller {
+  id           String   @id @default(uuid())
+  businessName String
+  loginId      String   @unique
+  passwordHash String
+  kycVerified  Boolean  @default(false)
+  createdAt    DateTime @default(now())
+
+  products    Product[]
+  orders      Order[]
+  settlements Settlement[]
+
+  @@map("sellers")
+}
+
+model Product {
+  id                String   @id @default(uuid())
+  sellerId          String
+  seller            Seller   @relation(fields: [sellerId], references: [id])
+  name              String
+  sku               String   @unique
+  category          String?
+  price             Decimal  @db.Decimal(10, 2)
+  stockQty          Int      @default(0)
+  lowStockThreshold Int      @default(5)
+  imageUrl          String?
+  status            String   @default("active") // active | inactive
+  createdAt         DateTime @default(now())
+
+  orderItems OrderItem[]
+  returns    Return[]
+
+  @@index([sellerId])
+  @@map("products")
+}
+
+enum OrderStatus {
+  PENDING
+  PACKED
+  SHIPPED
+  DELIVERED
+  CANCELLED
+  RETURNED
+}
+
+model Order {
+  id           String      @id @default(uuid())
+  sellerId     String
+  seller       Seller      @relation(fields: [sellerId], references: [id])
+  orderNumber  String      @unique
+  customerName String
+  status       OrderStatus @default(PENDING)
+  totalAmount  Decimal     @db.Decimal(10, 2)
+  createdAt    DateTime    @default(now())
+
+  items   OrderItem[]
+  returns Return[]
+
+  @@index([sellerId, createdAt])
+  @@index([sellerId, status])
+  @@map("orders")
+}
+
+model OrderItem {
+  id        String  @id @default(uuid())
+  orderId   String
+  order     Order   @relation(fields: [orderId], references: [id])
+  productId String
+  product   Product @relation(fields: [productId], references: [id])
+  quantity  Int
+  unitPrice Decimal @db.Decimal(10, 2)
+
+  @@map("order_items")
+}
+
+enum SettlementStatus {
+  PENDING
+  PAID
+}
+
+model Settlement {
+  id                String           @id @default(uuid())
+  sellerId          String
+  seller            Seller           @relation(fields: [sellerId], references: [id])
+  periodStart       DateTime
+  periodEnd         DateTime
+  category          String           @default("Cosmetics")
+  grossSales        Decimal          @db.Decimal(10, 2)
+  commissionRate    Decimal          @db.Decimal(5, 2) // e.g. 15.00 = 15%
+  commissionAmount  Decimal          @db.Decimal(10, 2)
+  shippingGstAmount Decimal          @db.Decimal(10, 2)
+  netPayable        Decimal          @db.Decimal(10, 2)
+  status            SettlementStatus @default(PENDING)
+  payoutDate        DateTime?
+  createdAt         DateTime         @default(now())
+
+  @@index([sellerId, periodStart])
+  @@index([sellerId, status])
+  @@map("settlements")
+}
+
+model Return {
+  id           String   @id @default(uuid())
+  orderId      String
+  order        Order    @relation(fields: [orderId], references: [id])
+  productId    String
+  product      Product  @relation(fields: [productId], references: [id])
+  reason       String?
+  status       String   @default("requested") // requested | approved | refunded | rejected
+  refundAmount Decimal  @db.Decimal(10, 2)
+  createdAt    DateTime @default(now())
+
+  @@map("returns")
+}
