@@ -1,305 +1,217 @@
-# Cikka — Seller Dashboard Platform
+# Cikka Backend
 
-A full-stack marketplace seller dashboard. Sellers manage payouts, track gross sales, dispatch orders, monitor low-stock inventory, and review settlement breakdowns — all scoped to their own account via JWT auth.
+REST API for the Cikka seller dashboard. Built with **Node.js + Express + TypeScript**, backed by **PostgreSQL via Prisma**.
 
-```
-cikka-backend/   → REST API  (Node.js · Express · TypeScript · PostgreSQL · Prisma)
-cikka-fe/        → Seller UI (React 18 · Vite · TypeScript · Tailwind CSS)
-```
+Sellers see pending payouts, gross sales, orders to pack, low-stock inventory alerts, settlement breakdowns, and recent orders — all scoped to their own account via JWT auth.
 
 ---
 
-## Architecture
+## Stack
 
-```
-┌─────────────────────────────────────────────────────────────────┐
-│  Browser  →  cikka-fe  (localhost:5173)                         │
-│               Vite dev proxy: /api/* → localhost:4000           │
-│                                                                  │
-│  cikka-fe  →  cikka-backend  (localhost:4000)                   │
-│               JWT Bearer token on every request                 │
-│                                                                  │
-│  cikka-backend  →  PostgreSQL  (localhost:5432)                  │
-│                    Prisma ORM · pre-computed settlements         │
-└─────────────────────────────────────────────────────────────────┘
-```
-
-| Service | Port | Description |
-|---|---|---|
-| `cikka-fe` | `5173` | React dev server (Vite) |
-| `cikka-backend` | `4000` | Express REST API |
-| PostgreSQL | `5432` | Relational DB (via Docker or local) |
+| Layer | Technology |
+|---|---|
+| Runtime | Node.js 20 |
+| Language | TypeScript (strict, CommonJS, `tsc` → `dist/`) |
+| Framework | Express 4 |
+| Database | PostgreSQL 14+ |
+| ORM | Prisma 5 |
+| Auth | JWT (HS256, 7-day expiry) |
+| Dev server | `tsx watch` |
+| Container | Docker (multistage Alpine build) |
 
 ---
 
 ## Quick Start
 
-### 1. Start the database
+### Option A — One command (recommended)
 
 ```bash
-cd cikka-backend
-docker compose up -d db          # starts Postgres 16 in Docker
+npm run setup
 ```
 
-### 2. Bootstrap the backend
+The setup script auto-detects whether Docker or a local Postgres is available, creates `.env`, installs dependencies, runs migrations, and seeds demo data. Credentials are printed once at the end.
+
+### Option B — Docker Compose (manual)
 
 ```bash
-cd cikka-backend
-cp .env.example .env             # edit DATABASE_URL & JWT_SECRET
+# 1. Start the Postgres container
+docker compose up -d db
+
+# 2. Copy and configure env
+cp .env.example .env
+# Edit DATABASE_URL → postgresql://cikka:cikka_dev@localhost:5432/cikka_dashboard?schema=public
+
+# 3. Install, migrate, seed
 npm install
 npm run prisma:generate
 npm run prisma:migrate
-npm run seed                     # loads demo data, prints seller credentials once
-npm run dev                      # API → http://localhost:4000
+npm run seed
+
+# 4. Start the API
+npm run dev
+# → http://localhost:4000
 ```
 
-### 3. Start the frontend
+### Option C — Local Postgres (Homebrew / system)
 
 ```bash
-cd cikka-fe
-npm install
-npm run dev                      # UI → http://localhost:5173
-```
+# Start Postgres (Homebrew example)
+pg_ctl start -D $(brew --prefix)/var/postgres
+psql postgres -c "CREATE DATABASE cikka_dashboard;"
 
-Open **http://localhost:5173** and sign in with the credentials printed by `npm run seed`.
+cp .env.example .env
+# Edit DATABASE_URL → postgresql://<your-os-user>@localhost:5432/cikka_dashboard?schema=public
+
+npm install
+npm run prisma:generate
+npm run prisma:migrate
+npm run seed
+npm run dev
+# → http://localhost:4000
+```
 
 ---
 
-## `cikka-backend` — REST API
-
-### Stack
-
-| Layer | Technology |
-|---|---|
-| Runtime | Node.js 20 |
-| Language | TypeScript (strict, CommonJS, `tsc → dist/`) |
-| Framework | Express 4 |
-| Database | PostgreSQL 14+ |
-| ORM | Prisma 5 |
-| Auth | JWT HS256 · 7-day expiry |
-| Dev server | `tsx watch` |
-| Container | Docker (multistage Alpine build) |
-
-### Project Structure
-
-```
-cikka-backend/
-├── src/
-│   ├── app.ts / server.ts
-│   ├── config/          # Prisma singleton
-│   ├── controllers/     # Parse req → call service → send res
-│   ├── services/        # Prisma queries + business logic
-│   ├── routes/          # Wire middleware + controllers
-│   ├── middleware/       # auth.middleware · error.middleware
-│   ├── types/           # Express augmentation (req.seller)
-│   └── utils/           # asyncHandler · jwt · credentials
-├── prisma/              # schema.prisma · seed.ts
-├── scripts/             # create-seller.ts · setup.sh
-├── specs/               # Feature specs & architecture docs
-├── Dockerfile
-└── docker-compose.yml
-```
-
-### Commands
-
-```bash
-npm run dev              # tsx watch → http://localhost:4000
-npm run build            # tsc → dist/
-npm run start            # node dist/server.js (production)
-npm run seed             # load demo data (prints creds once)
-npm run create-seller    # provision a new seller (prints creds once)
-npm run prisma:migrate   # run DB migrations
-npm run prisma:generate  # regenerate Prisma client after schema changes
-npm run prisma:studio    # inspect DB in browser
-```
-
-### API Endpoints
-
-All routes except `/api/auth/login` require `Authorization: Bearer <token>`.
-
-```
-POST   /api/auth/login
-
-GET    /api/dashboard/summary
-GET    /api/dashboard/settlement-breakdown?period=week|month
-
-GET    /api/orders?status=all|pending|returns&limit=N
-GET    /api/orders/:id
-
-GET    /api/products
-GET    /api/products/:id
-POST   /api/products
-
-GET    /api/inventory/alerts?limit=N
-GET    /api/settlements
-GET    /api/returns
-
-GET    /health
-```
-
-### Environment Variables
+## Environment Variables
 
 Copy `.env.example` → `.env` and set:
 
 | Variable | Description | Default |
 |---|---|---|
 | `DATABASE_URL` | Postgres connection string | see `.env.example` |
-| `JWT_SECRET` | HS256 signing secret (`openssl rand -hex 32`) | **must change** |
+| `JWT_SECRET` | Secret for signing JWTs — generate with `openssl rand -hex 32` | **must change** |
 | `JWT_EXPIRES_IN` | Token lifetime | `7d` |
 | `PORT` | API port | `4000` |
-| `CORS_ORIGIN` | Allowed frontend origin | `http://localhost:5173` |
+| `CORS_ORIGIN` | Comma-separated allowed origins | `http://localhost:5173` |
 
-### Docker
+---
 
-```bash
-# Development — DB only
-docker compose up -d db
+## API Endpoints
 
-# Full production stack (DB + API)
-docker compose up
+All routes under `/api/` except `/api/auth/login` require `Authorization: Bearer <token>`.
 
-# Build production image
-docker build -t cikka-backend .
-docker run -p 4000:4000 --env-file .env cikka-backend
+```
+POST   /api/auth/login                   # → { token, seller }
+
+GET    /api/dashboard/summary            # aggregate stats card
+GET    /api/dashboard/settlement-breakdown?period=week|month
+
+GET    /api/orders                       # ?status=all|pending|returns  &limit=N
+GET    /api/orders/:id
+
+GET    /api/products
+GET    /api/products/:id
+POST   /api/products
+
+GET    /api/inventory/alerts             # low-stock SKUs, ?limit=N
+
+GET    /api/settlements
+
+GET    /api/returns
+
+GET    /health                           # { status: "ok" }
 ```
 
 ---
 
-## `cikka-fe` — Seller UI
-
-### Stack
-
-| Layer | Technology |
-|---|---|
-| Framework | React 18 + Vite 5 |
-| Language | TypeScript (strict) |
-| Styling | Tailwind CSS v3 + custom design system |
-| Routing | react-router-dom v6 |
-| HTTP | axios (JWT interceptor) |
-| Icons | lucide-react |
-
-### Project Structure
-
-```
-cikka-fe/
-├── src/
-│   ├── api/
-│   │   ├── client.ts      # Axios singleton + JWT interceptor (ALL calls go here)
-│   │   └── services.ts    # Typed endpoint functions
-│   ├── components/
-│   │   ├── ui/            # Card · Badge · Spinner
-│   │   └── dashboard/     # StatCard · SettlementBreakdown · InventoryAlerts · RecentOrders
-│   ├── hooks/             # useAsync — generic loading/error/data wrapper
-│   ├── pages/             # LoginPage · DashboardPage
-│   ├── router/            # ProtectedRoute · PublicRoute
-│   ├── store/             # AuthContext (JWT + seller state)
-│   ├── types/             # api.ts — all API response types
-│   └── utils/             # currency.ts — ₹ formatter
-├── index.html
-├── vite.config.ts         # Proxy: /api → localhost:4000
-├── tailwind.config.js
-└── tsconfig.json
-```
-
-### Commands
+## NPM Scripts
 
 ```bash
-npm run dev          # Dev server → http://localhost:5173
-npm run type-check   # TypeScript strict check (no emit)
-npm run build        # Production build → dist/
-npm run preview      # Preview production build
+# ── Development ──────────────────────────────────────────────────────────────
+npm run setup            # first-time bootstrap (auto-detects DB backend)
+npm run dev              # tsx watch → http://localhost:4000
+npm run build            # tsc → dist/
+npm run start            # node dist/server.js (production)
+
+# ── Data ─────────────────────────────────────────────────────────────────────
+npm run seed             # load demo data — prints credentials once
+npm run create-seller    # provision a new seller — prints credentials once
+
+# ── Prisma ───────────────────────────────────────────────────────────────────
+npm run prisma:generate  # regenerate client after schema changes
+npm run prisma:migrate   # prisma migrate dev (creates + applies migration)
+npm run prisma:studio    # open Prisma Studio in the browser
+
+# ── Docker ───────────────────────────────────────────────────────────────────
+docker compose up -d db          # start only the Postgres container
+docker build -t cikka-backend .  # build the production image
+docker compose up                # run full stack (DB + app)
 ```
 
-### Routes
+---
 
-| Route | Component | Guard |
-|---|---|---|
-| `/login` | `LoginPage` | Public — redirects to `/dashboard` if already authed |
-| `/dashboard` | `DashboardPage` | Protected — redirects to `/login` if not authed |
-| `*` | — | Redirects to `/dashboard` |
+## Project Structure
 
-### Design System
+```
+cikka-backend/
+├── src/
+│   ├── app.ts                 # Express app (middleware, routes)
+│   ├── server.ts              # Process entrypoint (listen)
+│   ├── config/
+│   │   └── prisma.ts          # Shared PrismaClient singleton
+│   ├── controllers/           # Parse req → call service → send res
+│   │   ├── auth.controller.ts
+│   │   ├── dashboard.controller.ts
+│   │   ├── inventory.controller.ts
+│   │   ├── orders.controller.ts
+│   │   ├── products.controller.ts
+│   │   ├── returns.controller.ts
+│   │   └── settlements.controller.ts
+│   ├── middleware/
+│   │   ├── auth.middleware.ts  # JWT verification → req.seller
+│   │   └── error.middleware.ts # Centralised error handler
+│   ├── routes/
+│   │   └── index.ts + *.routes.ts
+│   ├── services/              # Prisma queries + business logic
+│   │   ├── dashboard.service.ts
+│   │   └── settlement.service.ts
+│   ├── types/
+│   │   └── express.d.ts       # Augments req.seller globally
+│   └── utils/
+│       ├── asyncHandler.ts    # Wraps async handlers for error middleware
+│       ├── credentials.ts     # generateLoginId / generatePassword
+│       └── jwt.ts             # signToken / verifyToken
+├── prisma/
+│   ├── schema.prisma          # DB models (Seller, Product, Order, Settlement, Return)
+│   └── seed.ts                # Demo data — run via tsx, not compiled
+├── scripts/
+│   ├── create-seller.ts       # Provision a seller — run via tsx
+│   └── setup.sh               # First-time bootstrap agent
+├── Dockerfile                 # Multistage build (deps → builder → runner)
+├── docker-compose.yml         # Local Postgres 16 for dev
+├── .env.example               # Template — copy to .env, never commit .env
+├── tsconfig.json              # strict, CommonJS, rootDir: src, outDir: dist
+└── specs/                     # Specs & architecture docs (no source code)
+```
 
-| Token | Value |
+---
+
+## Docker — Production Build
+
+The `Dockerfile` uses three stages to produce a lean, secure image:
+
+| Stage | What it does |
 |---|---|
-| Background | `#0a0a0f` |
-| Card surface | `#16161f` |
-| Border | `rgba(255,255,255,0.07)` |
-| Brand | purple → indigo gradient |
-| Font | Inter (Google Fonts) |
-| Animations | `animate-slide-up` · `animate-fade-in` |
+| `deps` | `npm ci --omit=dev` — cached prod dependencies |
+| `builder` | Full install + `prisma generate` + `tsc` |
+| `runner` | Alpine + prod deps + `dist/` only, runs as non-root `cikka` user |
 
-Component classes: `glass-card`, `btn-primary`, `btn-ghost`, `badge-*` — defined in `src/index.css`.
+```bash
+docker build -t cikka-backend .
+docker run -p 4000:4000 --env-file .env cikka-backend
+```
 
-### Environment Variables (optional)
-
-| Variable | Description |
-|---|---|
-| `VITE_API_BASE_URL` | Backend base URL (leave empty in dev — Vite proxy handles it) |
+On startup the container runs `prisma migrate deploy` before `node dist/server.js` — migrations are safe to apply repeatedly.
 
 ---
 
 ## Auth Model
 
-Sellers are **provisioned by the platform operator** — there is no public signup.
+Sellers are provisioned by the platform operator — **there is no public signup**:
 
 ```bash
-# From cikka-backend:
 npm run create-seller -- "Business Name"
 # → prints loginId + plaintext password exactly once
 ```
 
-1. Seller POSTs credentials to `POST /api/auth/login` → receives a JWT.
-2. The frontend stores the JWT in `localStorage` under `cikka_token`.
-3. Every subsequent request carries `Authorization: Bearer <token>`.
-4. The backend middleware attaches `req.seller = { id }` and all Prisma queries scope to that ID.
-5. A `401` response anywhere auto-clears the token and redirects to `/login`.
-
----
-
-## Agent Team
-
-Both repos ship an `.agents/AGENTS.md` that defines specialised agent roles for AI-assisted development:
-
-| Agent | Scope | Responsibilities |
-|---|---|---|
-| 🎨 **UI/UX** | `components/`, `pages/`, CSS | Visual components, design system, responsive layouts |
-| 🔌 **API Integration** | `api/`, `hooks/`, `store/`, `types/` | HTTP calls, typed services, auth state, data hooks |
-| 🔍 **QA / Review** | Cross-cutting | Type safety, currency formatting, empty states, spec compliance |
-
-See:
-- [`cikka-backend/.agents/AGENTS.md`](./cikka-backend/.agents/AGENTS.md)
-- [`cikka-fe/.agents/AGENTS.md`](./cikka-fe/.agents/AGENTS.md)
-
----
-
-## Key Conventions
-
-| Rule | Detail |
-|---|---|
-| **Money is a string** | API returns `Decimal` as `string` — format on the frontend only, using `currency.ts` |
-| **No ad-hoc fetch** | All API calls go through `cikka-fe/src/api/client.ts` |
-| **Seller-scoped data** | Every Prisma query filters by `req.seller.id` — never cross-seller leakage |
-| **TypeScript strict** | Both repos compile with `"strict": true` — no `any` casts |
-| **Spec-first features** | Write a spec in `cikka-backend/specs/` before adding a new widget or endpoint |
-| **No public signup** | Auth model is deliberate — sellers are provisioned by admins only |
-
----
-
-## Data Model (Summary)
-
-```
-Seller ──< Product
-       ──< Order ──< Return
-       ──< Settlement
-```
-
-| Model | Key fields |
-|---|---|
-| `Seller` | `id`, `businessName`, `loginId`, `passwordHash` |
-| `Product` | `id`, `name`, `sku`, `price`, `stockQty`, `lowStockThreshold` |
-| `Order` | `id`, `status`, `totalAmount`, `sellerId`, `productId`, `createdAt` |
-| `Return` | `id`, `orderId`, `reason`, `status` |
-| `Settlement` | `id`, `sellerId`, `status`, `grossSales`, `commissionAmount`, `shippingGstAmount`, `netPayable`, `payoutDate` |
-
-Money columns are `Decimal` in Postgres — returned as `string` from the API, formatted as `₹` on the frontend.
+Login returns a JWT. All subsequent requests send `Authorization: Bearer <token>`. The middleware attaches `req.seller = { id }` and every Prisma query filters by that ID.
