@@ -2,16 +2,50 @@ openapi: 3.1.0
 info:
   title: Cikka Seller API
   version: 1.0.0
-  description: Backend API for the Cikka Seller Dashboard
+  description: API for the Cikka Seller Dashboard
 servers:
-  - url: http://localhost:4000
-    description: Local development server
-
+  - url: http://localhost:4000/api
+    description: Local Dev Server
+components:
+  securitySchemes:
+    BearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+  schemas:
+    ErrorResponse:
+      type: object
+      properties:
+        error:
+          type: string
+    SellerProfile:
+      type: object
+      properties:
+        id:
+          type: string
+        phone:
+          type: string
+        email:
+          type: string
+        businessName:
+          type: string
+        kycVerified:
+          type: boolean
+        onboardingStatus:
+          type: string
+          enum: [INCOMPLETE, SUBMITTED, UNDER_REVIEW, VERIFIED, REJECTED]
+        onboarding:
+          type: object
+security:
+  - BearerAuth: []
 paths:
-  /api/auth/signup/send-phone-otp:
+  /auth/signup/send-phone-otp:
     post:
-      summary: Send OTP to phone for signup
+      tags: [Auth]
+      summary: Send OTP for phone verification
+      security: []
       requestBody:
+        required: true
         content:
           application/json:
             schema:
@@ -19,72 +53,789 @@ paths:
               properties:
                 phone:
                   type: string
+              required: [phone]
       responses:
-        '200':
+        "200":
           description: OTP sent
-  /api/auth/signin/send-otp:
-    post:
-      summary: Send OTP to phone for signin
-      requestBody:
-        content:
-          application/json:
-            schema:
-              type: object
-              properties:
-                phone:
-                  type: string
-      responses:
-        '200':
-          description: OTP sent
-  /api/dashboard/summary:
-    get:
-      summary: Get dashboard summary
-      responses:
-        '200':
-          description: OK
           content:
             application/json:
               schema:
                 type: object
-  /api/products:
+                properties:
+                  message:
+                    type: string
+        "400":
+          description: Phone already registered
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+  /auth/signup/verify-phone-otp:
+    post:
+      tags: [Auth]
+      summary: Verify phone OTP
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                phone:
+                  type: string
+                otp:
+                  type: string
+              required: [phone, otp]
+      responses:
+        "200":
+          description: Phone verified
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message:
+                    type: string
+                  signupToken:
+                    type: string
+  /auth/signup/send-email-otp:
+    post:
+      tags: [Auth]
+      summary: Send OTP for email verification
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                email:
+                  type: string
+              required: [email]
+      responses:
+        "200":
+          description: OTP sent
+        "400":
+          description: Email in use
+  /auth/signup/verify-email-otp:
+    post:
+      tags: [Auth]
+      summary: Verify email OTP
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                email:
+                  type: string
+                otp:
+                  type: string
+              required: [email, otp]
+      responses:
+        "200":
+          description: Email verified
+  /auth/signup/set-password:
+    post:
+      tags: [Auth]
+      summary: Set password and finalize signup
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                password:
+                  type: string
+              required: [password]
+      responses:
+        "200":
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  token:
+                    type: string
+                  seller:
+                    $ref: "#/components/schemas/SellerProfile"
+  /auth/signin/send-otp:
+    post:
+      tags: [Auth]
+      summary: Send OTP for signin
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                phone:
+                  type: string
+              required: [phone]
+      responses:
+        "200":
+          description: OTP sent
+  /auth/signin/verify-otp:
+    post:
+      tags: [Auth]
+      summary: Verify signin OTP
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                phone:
+                  type: string
+                otp:
+                  type: string
+              required: [phone, otp]
+      responses:
+        "200":
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  token:
+                    type: string
+                  seller:
+                    $ref: "#/components/schemas/SellerProfile"
+  /auth/forgot-password/send-otp:
+    post:
+      tags: [Auth]
+      summary: Send forgot password OTP
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                phone:
+                  type: string
+              required: [phone]
+      responses:
+        "200":
+          description: OTP sent
+  /auth/forgot-password/verify-otp:
+    post:
+      tags: [Auth]
+      summary: Verify forgot password OTP
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                phone:
+                  type: string
+                otp:
+                  type: string
+              required: [phone, otp]
+      responses:
+        "200":
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message:
+                    type: string
+                  resetToken:
+                    type: string
+  /auth/forgot-password/reset:
+    post:
+      tags: [Auth]
+      summary: Reset password
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                password:
+                  type: string
+              required: [password]
+      responses:
+        "200":
+          description: Password reset successfully
+  /auth/me:
     get:
+      tags: [Auth]
+      summary: Get current user
+      responses:
+        "200":
+          description: Current user profile
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SellerProfile"
+  /onboarding:
+    get:
+      tags: [Onboarding]
+      summary: Get onboarding state
+      responses:
+        "200":
+          description: Onboarding state
+  /onboarding/submit:
+    post:
+      tags: [Onboarding]
+      summary: Submit onboarding application
+      responses:
+        "200":
+          description: Success
+  /onboarding/step/1:
+    patch:
+      tags: [Onboarding]
+      summary: Update Step 1 (Business Info)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+      responses:
+        "200":
+          description: Success
+  /onboarding/step/2:
+    patch:
+      tags: [Onboarding]
+      summary: Update Step 2 (Legal)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+      responses:
+        "200":
+          description: Success
+  /onboarding/kyb/verify-gst:
+    post:
+      tags: [Onboarding]
+      summary: Verify GST
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                gstNumber:
+                  type: string
+      responses:
+        "200":
+          description: Success
+  /onboarding/kyb/verify-pan:
+    post:
+      tags: [Onboarding]
+      summary: Verify PAN
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                panNumber:
+                  type: string
+      responses:
+        "200":
+          description: Success
+  /onboarding/kyb/verify-cin:
+    post:
+      tags: [Onboarding]
+      summary: Verify CIN
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                cinNumber:
+                  type: string
+      responses:
+        "200":
+          description: Success
+  /onboarding/step/3:
+    patch:
+      tags: [Onboarding]
+      summary: Update Step 3 (Authorized Signatory)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+      responses:
+        "200":
+          description: Success
+  /onboarding/kyb/send-aadhaar-otp:
+    post:
+      tags: [Onboarding]
+      summary: Send Aadhaar OTP
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                aadhaarNumber:
+                  type: string
+      responses:
+        "200":
+          description: Success
+  /onboarding/kyb/verify-aadhaar-otp:
+    post:
+      tags: [Onboarding]
+      summary: Verify Aadhaar OTP
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                otp:
+                  type: string
+      responses:
+        "200":
+          description: Success
+  /onboarding/step/4:
+    patch:
+      tags: [Onboarding]
+      summary: Update Step 4 (Bank Account)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+      responses:
+        "200":
+          description: Success
+  /onboarding/kyb/verify-bank:
+    post:
+      tags: [Onboarding]
+      summary: Verify Bank
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                accountNumber:
+                  type: string
+                ifsc:
+                  type: string
+      responses:
+        "200":
+          description: Success
+  /onboarding/step/5:
+    patch:
+      tags: [Onboarding]
+      summary: Update Step 5 (Brand & Logistics)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+      responses:
+        "200":
+          description: Success
+  /onboarding/upload/logo:
+    post:
+      tags: [Onboarding]
+      summary: Upload logo
+      responses:
+        "200":
+          description: Success
+  /onboarding/step/6:
+    patch:
+      tags: [Onboarding]
+      summary: Update Step 6 (Agreements)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+      responses:
+        "200":
+          description: Success
+  /dashboard/summary:
+    get:
+      tags: [Dashboard]
+      summary: Get dashboard summary
+      responses:
+        "200":
+          description: Success
+  /dashboard/settlement-breakdown:
+    get:
+      tags: [Dashboard]
+      summary: Get settlement breakdown
+      parameters:
+        - in: query
+          name: period
+          schema:
+            type: string
+            enum: [week, month]
+      responses:
+        "200":
+          description: Success
+  /products:
+    get:
+      tags: [Products]
       summary: List products
+      parameters:
+        - in: query
+          name: page
+          schema:
+            type: string
+        - in: query
+          name: limit
+          schema:
+            type: string
+        - in: query
+          name: status
+          schema:
+            type: string
+            enum: [DRAFT, ACTIVE, INACTIVE, OUT_OF_STOCK]
+        - in: query
+          name: category
+          schema:
+            type: string
+        - in: query
+          name: q
+          schema:
+            type: string
       responses:
-        '200':
-          description: OK
-  /api/orders:
+        "200":
+          description: Success
+    post:
+      tags: [Products]
+      summary: Create product
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                name:
+                  type: string
+                sku:
+                  type: string
+                price:
+                  type: number
+              required: [name, sku, price]
+      responses:
+        "201":
+          description: Created
+  /products/{id}:
     get:
+      tags: [Products]
+      summary: Get product
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Success
+    patch:
+      tags: [Products]
+      summary: Update product
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+      responses:
+        "200":
+          description: Success
+    delete:
+      tags: [Products]
+      summary: Delete product
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: string
+      responses:
+        "204":
+          description: Deleted
+  /products/{id}/variants/{variantId}:
+    patch:
+      tags: [Products]
+      summary: Update product variant
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: string
+        - in: path
+          name: variantId
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                stockQty:
+                  type: integer
+                price:
+                  type: number
+      responses:
+        "200":
+          description: Success
+  /orders:
+    get:
+      tags: [Orders]
       summary: List orders
+      parameters:
+        - in: query
+          name: page
+          schema:
+            type: string
+        - in: query
+          name: limit
+          schema:
+            type: string
+        - in: query
+          name: status
+          schema:
+            type: string
+            enum: [ALL, PENDING, PACKED, SHIPPED, DELIVERED, CANCELLED, RETURNED]
       responses:
-        '200':
-          description: OK
-  /api/inventory/alerts:
+        "200":
+          description: Success
+  /orders/{id}:
     get:
-      summary: Get inventory alerts
+      tags: [Orders]
+      summary: Get order
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: string
       responses:
-        '200':
-          description: OK
-  /api/settlements:
+        "200":
+          description: Success
+  /orders/{id}/status:
+    patch:
+      tags: [Orders]
+      summary: Update order status
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                status:
+                  type: string
+                  enum: [PENDING, PACKED, SHIPPED, DELIVERED, CANCELLED, RETURNED]
+                trackingNumber:
+                  type: string
+                courier:
+                  type: string
+              required: [status]
+      responses:
+        "200":
+          description: Success
+  /inventory/alerts:
     get:
+      tags: [Inventory]
+      summary: Get low stock alerts
+      responses:
+        "200":
+          description: Success
+  /inventory/restock:
+    patch:
+      tags: [Inventory]
+      summary: Restock product/variant
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                productId:
+                  type: string
+                variantId:
+                  type: string
+                quantity:
+                  type: integer
+              required: [productId, quantity]
+      responses:
+        "200":
+          description: Success
+  /settlements:
+    get:
+      tags: [Settlements]
       summary: List settlements
+      parameters:
+        - in: query
+          name: page
+          schema:
+            type: string
+        - in: query
+          name: limit
+          schema:
+            type: string
+        - in: query
+          name: status
+          schema:
+            type: string
+            enum: [ALL, PENDING, PAID]
       responses:
-        '200':
-          description: OK
-  /api/returns:
+        "200":
+          description: Success
+  /returns:
     get:
+      tags: [Returns]
       summary: List returns
+      parameters:
+        - in: query
+          name: page
+          schema:
+            type: string
+        - in: query
+          name: limit
+          schema:
+            type: string
+        - in: query
+          name: status
+          schema:
+            type: string
+            enum: [ALL, REQUESTED, APPROVED, REJECTED, RECEIVED, REFUNDED]
       responses:
-        '200':
-          description: OK
-  /api/settings/profile:
+        "200":
+          description: Success
+  /returns/{id}/status:
+    patch:
+      tags: [Returns]
+      summary: Update return status
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                status:
+                  type: string
+                  enum: [APPROVED, REJECTED, RECEIVED, REFUNDED]
+              required: [status]
+      responses:
+        "200":
+          description: Success
+  /notifications:
     get:
-      summary: Get seller profile
+      tags: [Notifications]
+      summary: Get notifications
       responses:
-        '200':
-          description: OK
-  /api/notifications:
+        "200":
+          description: Success
+  /notifications/mark-all-read:
+    post:
+      tags: [Notifications]
+      summary: Mark all as read
+      responses:
+        "200":
+          description: Success
+  /notifications/{id}/read:
+    patch:
+      tags: [Notifications]
+      summary: Mark as read
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Success
+  /settings/profile:
     get:
-      summary: List notifications
+      tags: [Settings]
+      summary: Get settings profile
       responses:
-        '200':
-          description: OK
+        "200":
+          description: Success
+  /settings:
+    get:
+      tags: [Settings]
+      summary: Get settings
+      responses:
+        "200":
+          description: Success
+    patch:
+      tags: [Settings]
+      summary: Update settings
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                notifyLowStock:
+                  type: boolean
+                notifyNewOrder:
+                  type: boolean
+                notifySettlement:
+                  type: boolean
+      responses:
+        "200":
+          description: Success
