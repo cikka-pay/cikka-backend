@@ -5,6 +5,7 @@
   "scripts": {
     "setup": "bash scripts/setup.sh",
     "dev": "tsx watch src/server.ts",
+    "dev:docker": "bash scripts/dev.sh",
     "start": "node dist/server.js",
     "build": "tsc",
     "seed": "tsx prisma/seed.ts",
@@ -15,12 +16,15 @@
   },
   "dependencies": {
     "@prisma/client": "^5.14.0",
+    "@types/multer": "^2.2.0",
     "bcryptjs": "^2.4.3",
     "cors": "^2.8.5",
     "dotenv": "^16.4.5",
     "express": "^4.19.2",
     "jsonwebtoken": "^9.0.2",
-    "morgan": "^1.10.0"
+    "morgan": "^1.10.0",
+    "multer": "^2.2.0",
+    "zod": "^4.4.3"
   },
   "devDependencies": {
     "@types/bcryptjs": "^2.4.6",
@@ -29,8 +33,12 @@
     "@types/jsonwebtoken": "^9.0.6",
     "@types/morgan": "^1.9.9",
     "@types/node": "^20.14.0",
+    "@types/supertest": "^7.2.0",
+    "@vitest/coverage-v8": "^1.6.1",
     "prisma": "^5.14.0",
+    "supertest": "^7.2.2",
     "tsx": "^4.15.0",
-    "typescript": "^5.5.0"
+    "typescript": "^5.5.0",
+    "vitest": "^1.6.1"
   }
 }

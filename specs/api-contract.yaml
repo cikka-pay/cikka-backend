@@ -1,0 +1,90 @@
+openapi: 3.1.0
+info:
+  title: Cikka Seller API
+  version: 1.0.0
+  description: Backend API for the Cikka Seller Dashboard
+servers:
+  - url: http://localhost:4000
+    description: Local development server
+
+paths:
+  /api/auth/signup/send-phone-otp:
+    post:
+      summary: Send OTP to phone for signup
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                phone:
+                  type: string
+      responses:
+        '200':
+          description: OTP sent
+  /api/auth/signin/send-otp:
+    post:
+      summary: Send OTP to phone for signin
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                phone:
+                  type: string
+      responses:
+        '200':
+          description: OTP sent
+  /api/dashboard/summary:
+    get:
+      summary: Get dashboard summary
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+  /api/products:
+    get:
+      summary: List products
+      responses:
+        '200':
+          description: OK
+  /api/orders:
+    get:
+      summary: List orders
+      responses:
+        '200':
+          description: OK
+  /api/inventory/alerts:
+    get:
+      summary: Get inventory alerts
+      responses:
+        '200':
+          description: OK
+  /api/settlements:
+    get:
+      summary: List settlements
+      responses:
+        '200':
+          description: OK
+  /api/returns:
+    get:
+      summary: List returns
+      responses:
+        '200':
+          description: OK
+  /api/settings/profile:
+    get:
+      summary: Get seller profile
+      responses:
+        '200':
+          description: OK
+  /api/notifications:
+    get:
+      summary: List notifications
+      responses:
+        '200':
+          description: OK

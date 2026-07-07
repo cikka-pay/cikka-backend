@@ -3,7 +3,7 @@
 // Re-running is safe — existing data is wiped before seeding.
 import { PrismaClient } from "@prisma/client";
 import bcrypt from "bcryptjs";
-import { generateLoginId, generatePassword } from "../src/utils/credentials";
+import { generatePassword } from "../src/utils/credentials";
 
 const prisma = new PrismaClient();
 
@@ -30,14 +30,14 @@ async function wipeExisting() {
 async function main() {
   await wipeExisting();
 
-  const loginId = generateLoginId();
+  const phone = "9999999999";
   const plainPassword = generatePassword();
   const passwordHash = await bcrypt.hash(plainPassword, 10);
 
   const seller = await prisma.seller.create({
     data: {
       businessName: "Aura Vogue",
-      loginId,
+      phone,
       passwordHash,
       kycVerified: true,
     },
@@ -53,7 +53,7 @@ async function main() {
         price: 499.0,
         stockQty: 2,
         lowStockThreshold: 5,
-        status: "active",
+        status: "ACTIVE",
       },
     }),
     prisma.product.create({
@@ -65,7 +65,7 @@ async function main() {
         price: 899.0,
         stockQty: 0,
         lowStockThreshold: 5,
-        status: "active",
+        status: "ACTIVE",
       },
     }),
     prisma.product.create({
@@ -77,7 +77,7 @@ async function main() {
         price: 349.0,
         stockQty: 5,
         lowStockThreshold: 10,
-        status: "active",
+        status: "ACTIVE",
       },
     }),
     prisma.product.create({
@@ -89,7 +89,7 @@ async function main() {
         price: 299.0,
         stockQty: 42,
         lowStockThreshold: 10,
-        status: "active",
+        status: "ACTIVE",
       },
     }),
   ]);
@@ -169,7 +169,7 @@ async function main() {
 
   console.log("Seed complete.\n");
   console.log("Demo login credentials (also work via npm run create-seller for new sellers):");
-  console.log(`  loginId:  ${loginId}`);
+  console.log(`  phone:    ${phone}`);
   console.log(`  password: ${plainPassword}`);
   console.log("\nThese are only shown once — store them now if you want to log in as this demo seller.");
 }

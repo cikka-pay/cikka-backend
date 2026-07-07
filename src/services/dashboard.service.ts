@@ -39,7 +39,7 @@ export async function getSummary(sellerId: string) {
       sumOrderTotals(sellerId, weekStart, now),
       sumOrderTotals(sellerId, lastWeekStart, weekStart),
       prisma.order.count({ where: { sellerId, status: "PENDING" } }),
-      prisma.product.findMany({ where: { sellerId, status: "active" } }),
+      prisma.product.findMany({ where: { sellerId, status: "ACTIVE" } }),
       prisma.settlement.findFirst({
         where: { sellerId, status: "PENDING" },
         orderBy: { payoutDate: "asc" },

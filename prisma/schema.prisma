@@ -1,5 +1,9 @@
-// Cikka Seller Dashboard — Prisma schema
-// See docs/ARCHITECTURE.md for how these models map to the dashboard's data flow.
+// ============================================================
+// Cikka Seller Portal — Prisma Schema
+// DB Architect: All models normalized, indexed, and documented.
+// Money: Decimal(10,2) always. Enums for finite sets.
+// Soft delete: status fields, no hard deletes on business data.
+// ============================================================
 
 generator client {
   provider = "prisma-client-js"
@@ -10,40 +14,16 @@ datasource db {
   url      = env("DATABASE_URL")
 }
 
-model Seller {
-  id           String   @id @default(uuid())
-  businessName String
-  loginId      String   @unique
-  passwordHash String
-  kycVerified  Boolean  @default(false)
-  createdAt    DateTime @default(now())
+// ============================================================
+// ENUMS
+// ============================================================
 
-  products    Product[]
-  orders      Order[]
-  settlements Settlement[]
-
-  @@map("sellers")
-}
-
-model Product {
-  id                String   @id @default(uuid())
-  sellerId          String
-  seller            Seller   @relation(fields: [sellerId], references: [id])
-  name              String
-  sku               String   @unique
-  category          String?
-  price             Decimal  @db.Decimal(10, 2)
-  stockQty          Int      @default(0)
-  lowStockThreshold Int      @default(5)
-  imageUrl          String?
-  status            String   @default("active") // active | inactive
-  createdAt         DateTime @default(now())
-
-  orderItems OrderItem[]
-  returns    Return[]
-
-  @@index([sellerId])
-  @@map("products")
+enum OnboardingStatus {
+  INCOMPLETE   // Still filling steps
+  SUBMITTED    // Submitted for review
+  UNDER_REVIEW // Signzy/manual review in progress
+  VERIFIED     // Fully approved
+  REJECTED     // Rejected by ops
 }
 
 enum OrderStatus {
@@ -55,16 +35,304 @@ enum OrderStatus {
   RETURNED
 }
 
+enum SettlementStatus {
+  PENDING
+  PAID
+}
+
+enum ReturnStatus {
+  REQUESTED
+  APPROVED
+  REFUNDED
+  REJECTED
+}
+
+enum ProductStatus {
+  DRAFT
+  ACTIVE
+  INACTIVE
+  OUT_OF_STOCK
+}
+
+enum NotificationType {
+  ORDER
+  INVENTORY
+  SETTLEMENT
+  SYSTEM
+  KYB
+}
+
+enum FulfillmentType {
+  SELF
+  THREE_PL
+  CIKKA
+}
+
+enum BusinessType {
+  PRIVATE_LIMITED
+  LLP
+  PROPRIETORSHIP
+  PARTNERSHIP
+}
+
+enum SettlementCycle {
+  T_PLUS_1
+  T_PLUS_3
+  T_PLUS_7
+  T_PLUS_14
+}
+
+// ============================================================
+// SELLER — Core identity record created at signup
+// ============================================================
+
+model Seller {
+  id              String            @id @default(uuid())
+  phone           String            @unique
+  phoneVerified   Boolean           @default(false)
+  email           String?           @unique
+  emailVerified   Boolean           @default(false)
+  passwordHash    String?           // Set in signup step 5; null for OTP-only sessions
+  // businessName kept for backward compat; also stored in onboarding
+  businessName    String            @default("")
+  kycVerified     Boolean           @default(false)
+  onboardingStatus OnboardingStatus @default(INCOMPLETE)
+
+  // Signup OTP state (phone)
+  phoneOtpCode      String?
+  phoneOtpExpiresAt DateTime?
+  phoneOtpAttempts  Int       @default(0)
+
+  // Email OTP state (signup step 3)
+  emailOtpCode      String?
+  emailOtpExpiresAt DateTime?
+
+  // Forgot password OTP state
+  resetOtpCode      String?
+  resetOtpExpiresAt DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  // Relations
+  onboarding    SellerOnboarding?
+  products      Product[]
+  orders        Order[]
+  settlements   Settlement[]
+  notifications Notification[]
+  settings      SellerSettings?
+
+  @@map("sellers")
+}
+
+// ============================================================
+// SELLER ONBOARDING — 6-step KYB/KYC data
+// One-to-one with Seller; created when Step 1 is saved.
+// ============================================================
+
+model SellerOnboarding {
+  id       String @id @default(uuid())
+  sellerId String @unique
+  seller   Seller @relation(fields: [sellerId], references: [id], onDelete: Cascade)
+
+  // ---------- Step 1: Basic Business Info ----------
+  businessName     String?
+  businessType     BusinessType?
+  yearEstablished  Int?
+  website          String?
+  businessCategory String?    // Electronics | Fashion | Cosmetics | etc.
+  description      String?    // @db.Text
+
+  // ---------- Step 2: Legal / KYB ----------
+  gstNumber    String?
+  gstVerified  Boolean @default(false)
+  gstData      Json?   // Raw stub/API response cached
+
+  panNumber    String?
+  panVerified  Boolean @default(false)
+  panData      Json?
+
+  cinNumber    String?
+  cinVerified  Boolean @default(false)
+  cinData      Json?
+
+  msmeNumber   String?  // Optional
+
+  // ---------- Step 3: Authorized Signatory ----------
+  signatoryName            String?
+  signatoryTitle           String?  // Director | Owner | Authorized Signatory | Managing Partner
+  signatoryPersonalPan     String?
+  signatoryAadhaar         String?
+  signatoryAadhaarVerified Boolean @default(false)
+  signatoryMobile          String?
+  signatoryEmail           String?
+
+  // ---------- Step 4: Bank Account ----------
+  bankAccountHolder String?
+  bankName          String?
+  bankAccountNumber String?
+  bankIfsc          String?
+  bankVerified      Boolean @default(false)
+  bankData          Json?   // Penny drop response
+
+  // ---------- Step 5: Brand & Logistics ----------
+  logoUrl           String?
+  productCategories Json?    // String[] e.g. ["Skincare","Makeup"]
+  returnPolicy      String?  // No Returns | 7-Day | 15-Day | 30-Day | Exchange Only
+  settlementCycle   SettlementCycle @default(T_PLUS_7)
+  avgOrderValue     Decimal?  @db.Decimal(10, 2)
+  monthlySalesTarget Decimal? @db.Decimal(12, 2)
+  fulfillmentType   FulfillmentType @default(THREE_PL)
+
+  // Pickup address stored as structured JSON
+  pickupAddress     Json?    // { line1, city, state, pincode }
+
+  // ---------- Step 6: Agreements ----------
+  merchantAgreementAccepted  Boolean   @default(false)
+  commissionAcknowledged     Boolean   @default(false)
+  returnPolicyAcknowledged   Boolean   @default(false)
+  authenticityAcknowledged   Boolean   @default(false)
+  digitalSignature           String?   // Typed name
+  agreementAcceptedAt        DateTime?
+
+  // ---------- Application tracking ----------
+  applicationId  String?   @unique  // CKA-YYYY-NNNNN (sequential)
+  submittedAt    DateTime?
+
+  // Step completion tracking (1–6)
+  completedSteps Int @default(0)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@map("seller_onboarding")
+}
+
+// ============================================================
+// SELLER SETTINGS — Configurable per-seller preferences
+// ============================================================
+
+model SellerSettings {
+  id              String          @id @default(uuid())
+  sellerId        String          @unique
+  seller          Seller          @relation(fields: [sellerId], references: [id], onDelete: Cascade)
+
+  settlementCycle SettlementCycle @default(T_PLUS_7)
+  returnPolicy    String          @default("7-Day Return Window")
+  fulfillmentType FulfillmentType @default(THREE_PL)
+  lowStockDefault Int             @default(5)  // Default low-stock threshold for new products
+
+  // Notification preferences
+  notifyLowStock      Boolean @default(true)
+  notifyNewOrder      Boolean @default(true)
+  notifySettlement    Boolean @default(true)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@map("seller_settings")
+}
+
+// ============================================================
+// PRODUCT — SKU-level catalog entry
+// ============================================================
+
+model Product {
+  id                String        @id @default(uuid())
+  sellerId          String
+  seller            Seller        @relation(fields: [sellerId], references: [id])
+
+  name              String
+  sku               String        @unique
+  category          String?
+  description       String?       // @db.Text
+
+  // Pricing
+  mrp               Decimal?      @db.Decimal(10, 2)   // Original / Maximum Retail Price
+  price             Decimal       @db.Decimal(10, 2)   // Selling price on Cikka
+  gstSlab           Int           @default(12)          // 0 | 5 | 12 | 18 | 28
+
+  // Loyalty
+  loyaltyPoints     Int           @default(0)
+
+  // Inventory
+  stockQty          Int           @default(0)
+  lowStockThreshold Int           @default(5)
+
+  // Shipping
+  weightGrams       Int?
+  dimLengthCm       Decimal?      @db.Decimal(6, 1)
+  dimWidthCm        Decimal?      @db.Decimal(6, 1)
+  dimHeightCm       Decimal?      @db.Decimal(6, 1)
+  fulfillmentType   FulfillmentType @default(THREE_PL)
+  dispatchDays      String        @default("same")      // same | 1-2 | 3-5
+
+  // Media
+  imageUrls         Json?         // String[] — first is thumbnail
+  videoUrl          String?
+
+  status            ProductStatus @default(DRAFT)
+
+  createdAt         DateTime      @default(now())
+  updatedAt         DateTime      @updatedAt
+
+  // Relations
+  orderItems  OrderItem[]
+  returns     Return[]
+  variants    ProductVariant[]
+
+  @@index([sellerId])
+  @@index([sellerId, status])
+  @@index([sellerId, category])
+  @@map("products")
+}
+
+// ============================================================
+// PRODUCT VARIANT — Size/Color/Storage options per Product
+// Each variant has its own qty and optionally its own price.
+// ============================================================
+
+model ProductVariant {
+  id         String   @id @default(uuid())
+  productId  String
+  product    Product  @relation(fields: [productId], references: [id], onDelete: Cascade)
+
+  typeName   String   // Color | Size | Storage | Material | Custom
+  value      String   // Red | Large | 128GB | etc.
+  stockQty   Int      @default(0)
+  price      Decimal? @db.Decimal(10, 2)  // null = inherit from Product.price
+
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  @@unique([productId, typeName, value])
+  @@index([productId])
+  @@map("product_variants")
+}
+
+// ============================================================
+// ORDER — One order = one transaction for this seller
+// ============================================================
+
 model Order {
   id           String      @id @default(uuid())
   sellerId     String
   seller       Seller      @relation(fields: [sellerId], references: [id])
-  orderNumber  String      @unique
-  customerName String
-  status       OrderStatus @default(PENDING)
-  totalAmount  Decimal     @db.Decimal(10, 2)
-  createdAt    DateTime    @default(now())
 
+  orderNumber     String      @unique
+  customerName    String
+  customerCity    String?
+  status          OrderStatus @default(PENDING)
+  totalAmount     Decimal     @db.Decimal(10, 2)
+
+  // Shipping / fulfilment tracking — set when status moves to SHIPPED
+  trackingNumber  String?
+  courier         String?     // Courier partner name e.g. "Delhivery", "Blue Dart"
+
+  createdAt    DateTime    @default(now())
+  updatedAt    DateTime    @updatedAt
+
+  // Relations
   items   OrderItem[]
   returns Return[]
 
@@ -73,54 +341,108 @@ model Order {
   @@map("orders")
 }
 
+// ============================================================
+// ORDER ITEM — Line items within an order
+// ============================================================
+
 model OrderItem {
   id        String  @id @default(uuid())
   orderId   String
-  order     Order   @relation(fields: [orderId], references: [id])
+  order     Order   @relation(fields: [orderId], references: [id], onDelete: Cascade)
   productId String
   product   Product @relation(fields: [productId], references: [id])
+
   quantity  Int
   unitPrice Decimal @db.Decimal(10, 2)
+  variantId String?  // Optional — points to the chosen variant
 
+  @@index([orderId])
+  @@index([productId])
   @@map("order_items")
 }
 
-enum SettlementStatus {
-  PENDING
-  PAID
-}
+// ============================================================
+// SETTLEMENT — Pre-computed payout record per cycle
+// Written by payout job (currently seeded by seed.ts)
+// ============================================================
 
 model Settlement {
   id                String           @id @default(uuid())
   sellerId          String
   seller            Seller           @relation(fields: [sellerId], references: [id])
+
   periodStart       DateTime
   periodEnd         DateTime
   category          String           @default("Cosmetics")
   grossSales        Decimal          @db.Decimal(10, 2)
-  commissionRate    Decimal          @db.Decimal(5, 2) // e.g. 15.00 = 15%
+  commissionRate    Decimal          @db.Decimal(5, 2)   // e.g. 15.00 = 15%
   commissionAmount  Decimal          @db.Decimal(10, 2)
   shippingGstAmount Decimal          @db.Decimal(10, 2)
   netPayable        Decimal          @db.Decimal(10, 2)
   status            SettlementStatus @default(PENDING)
   payoutDate        DateTime?
+
   createdAt         DateTime         @default(now())
+  updatedAt         DateTime         @updatedAt
 
   @@index([sellerId, periodStart])
   @@index([sellerId, status])
   @@map("settlements")
 }
 
-model Return {
-  id           String   @id @default(uuid())
-  orderId      String
-  order        Order    @relation(fields: [orderId], references: [id])
-  productId    String
-  product      Product  @relation(fields: [productId], references: [id])
-  reason       String?
-  status       String   @default("requested") // requested | approved | refunded | rejected
-  refundAmount Decimal  @db.Decimal(10, 2)
-  createdAt    DateTime @default(now())
+// ============================================================
+// RETURN — Return request raised against a delivered order
+// ============================================================
 
+model Return {
+  id           String       @id @default(uuid())
+  orderId      String
+  order        Order        @relation(fields: [orderId], references: [id])
+  productId    String
+  product      Product      @relation(fields: [productId], references: [id])
+
+  reason       String?
+  status       ReturnStatus @default(REQUESTED)
+  refundAmount Decimal      @db.Decimal(10, 2)
+
+  createdAt    DateTime     @default(now())
+  updatedAt    DateTime     @updatedAt
+
+  @@index([orderId])
+  @@index([productId])
   @@map("returns")
+}
+
+// ============================================================
+// NOTIFICATION — In-app notifications per seller
+// ============================================================
+
+model Notification {
+  id       String           @id @default(uuid())
+  sellerId String
+  seller   Seller           @relation(fields: [sellerId], references: [id], onDelete: Cascade)
+
+  type     NotificationType
+  title    String
+  body     String
+  read     Boolean          @default(false)
+  metadata Json?            // Extra context: { orderId, productId, etc. }
+
+  createdAt DateTime        @default(now())
+
+  @@index([sellerId, read])
+  @@index([sellerId, createdAt])
+  @@map("notifications")
+}
+
+// ============================================================
+// APPLICATION SEQUENCE — Sequential counter for application IDs
+// Single row (id=1) incremented atomically.
+// ============================================================
+
+model ApplicationSequence {
+  id       Int @id @default(1)
+  lastSeq  Int @default(0)
+
+  @@map("application_sequence")
 }

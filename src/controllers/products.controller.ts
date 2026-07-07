@@ -1,17 +1,53 @@
+import { Request, Response } from "express";
 import { asyncHandler } from "../utils/asyncHandler";
 import { prisma } from "../config/prisma";
+import { Prisma } from "@prisma/client";
 
-export const listProducts = asyncHandler(async (req, res) => {
-  const products = await prisma.product.findMany({
-    where: { sellerId: req.seller.id },
-    orderBy: { createdAt: "desc" },
+export const listProducts = asyncHandler(async (req: Request, res: Response) => {
+  const sellerId = req.seller!.id;
+  const { page = "1", limit = "10", status, category, q } = req.query as any;
+
+  const pageNum = parseInt(page, 10);
+  const limitNum = parseInt(limit, 10);
+  const skip = (pageNum - 1) * limitNum;
+
+  const where: Prisma.ProductWhereInput = { sellerId };
+
+  if (status) where.status = status;
+  if (category) where.category = category;
+  if (q) {
+    where.OR = [
+      { name: { contains: q, mode: "insensitive" } },
+      { sku: { contains: q, mode: "insensitive" } },
+    ];
+  }
+
+  const [data, total] = await Promise.all([
+    prisma.product.findMany({
+      where,
+      skip,
+      take: limitNum,
+      orderBy: { createdAt: "desc" },
+      include: { variants: true },
+    }),
+    prisma.product.count({ where }),
+  ]);
+
+  res.json({
+    data,
+    meta: {
+      total,
+      page: pageNum,
+      limit: limitNum,
+      totalPages: Math.ceil(total / limitNum),
+    },
   });
-  res.json(products);
 });
 
-export const getProduct = asyncHandler(async (req, res) => {
+export const getProduct = asyncHandler(async (req: Request, res: Response) => {
   const product = await prisma.product.findFirst({
-    where: { id: req.params.id, sellerId: req.seller.id },
+    where: { id: req.params.id, sellerId: req.seller!.id },
+    include: { variants: true },
   });
   if (!product) {
     res.status(404).json({ error: "Product not found" });
@@ -20,34 +56,101 @@ export const getProduct = asyncHandler(async (req, res) => {
   res.json(product);
 });
 
-export const createProduct = asyncHandler(async (req, res) => {
-  const { name, sku, category, price, stockQty, lowStockThreshold, imageUrl } = req.body as {
-    name?: string;
-    sku?: string;
-    category?: string;
-    price?: number;
-    stockQty?: number;
-    lowStockThreshold?: number;
-    imageUrl?: string;
-  };
+export const createProduct = asyncHandler(async (req: Request, res: Response) => {
+  const sellerId = req.seller!.id;
+  const data = req.body;
 
-  if (!name || !sku || price === undefined) {
-    res.status(400).json({ error: "name, sku, and price are required" });
-    return;
-  }
+  // variants are optional
+  const { variants, ...productData } = data;
 
   const product = await prisma.product.create({
     data: {
-      sellerId: req.seller.id,
-      name,
-      sku,
-      category,
-      price,
-      stockQty: stockQty ?? 0,
-      lowStockThreshold: lowStockThreshold ?? 5,
-      imageUrl,
+      sellerId,
+      ...productData,
+      variants: variants && variants.length > 0 ? {
+        create: variants.map((v: any) => ({
+          typeName: v.typeName,
+          value: v.value,
+          stockQty: v.stockQty ?? 0,
+          price: v.price,
+        })),
+      } : undefined,
     },
+    include: { variants: true },
   });
 
   res.status(201).json(product);
+});
+
+export const updateProduct = asyncHandler(async (req: Request, res: Response) => {
+  const { id } = req.params;
+  const sellerId = req.seller!.id;
+  const data = req.body;
+
+  const existing = await prisma.product.findFirst({ where: { id, sellerId } });
+  if (!existing) {
+    res.status(404).json({ error: "Product not found" });
+    return;
+  }
+
+  const { variants, ...updateData } = data;
+
+  // We do not allow updating variants directly via this endpoint for now 
+  // (would require deleting/recreating or complex upsert)
+  const product = await prisma.product.update({
+    where: { id },
+    data: updateData,
+    include: { variants: true },
+  });
+
+  res.json(product);
+});
+
+export const deleteProduct = asyncHandler(async (req: Request, res: Response) => {
+  const { id } = req.params;
+  const sellerId = req.seller!.id;
+
+  const existing = await prisma.product.findFirst({ where: { id, sellerId } });
+  if (!existing) {
+    res.status(404).json({ error: "Product not found" });
+    return;
+  }
+
+  await prisma.product.update({
+    where: { id },
+    data: { status: "INACTIVE" },
+  });
+
+  res.json({ message: "Product soft deleted" });
+});
+
+export const updateVariant = asyncHandler(async (req: Request, res: Response) => {
+  const { id, variantId } = req.params;
+  const sellerId = req.seller!.id;
+  const { stockQty, price } = req.body;
+
+  // Ensure the product belongs to this seller
+  const product = await prisma.product.findFirst({ where: { id, sellerId } });
+  if (!product) {
+    res.status(404).json({ error: "Product not found" });
+    return;
+  }
+
+  const variant = await prisma.productVariant.findFirst({
+    where: { id: variantId, productId: id },
+  });
+  if (!variant) {
+    res.status(404).json({ error: "Variant not found" });
+    return;
+  }
+
+  const updated = await prisma.productVariant.update({
+    where: { id: variantId },
+    data: {
+      ...(stockQty !== undefined && { stockQty }),
+      ...(price !== undefined && { price }),
+    },
+  });
+
+  res.json(updated);
 });

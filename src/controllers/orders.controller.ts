@@ -1,48 +1,49 @@
+import { Request, Response } from "express";
 import { asyncHandler } from "../utils/asyncHandler";
 import { prisma } from "../config/prisma";
-import { OrderStatus } from "@prisma/client";
+import { Prisma, OrderStatus } from "@prisma/client";
 
-export const listOrders = asyncHandler(async (req, res) => {
-  const status = (req.query.status as string) || "all";
-  const limit = Math.min(Number(req.query.limit) || 10, 100);
+export const listOrders = asyncHandler(async (req: Request, res: Response) => {
+  const sellerId = req.seller!.id;
+  const { page = "1", limit = "10", status } = req.query as any;
 
-  if (status === "returns") {
-    const returns = await prisma.return.findMany({
-      where: { order: { sellerId: req.seller.id } },
-      include: { order: true, product: true },
-      orderBy: { createdAt: "desc" },
-      take: limit,
-    });
+  const pageNum = parseInt(page, 10);
+  const limitNum = parseInt(limit, 10);
+  const skip = (pageNum - 1) * limitNum;
 
-    res.json(
-      returns.map((r) => ({
-        id: r.id,
-        orderNumber: r.order.orderNumber,
-        customerName: r.order.customerName,
-        productName: r.product.name,
-        status: r.status,
-        refundAmount: r.refundAmount,
-        createdAt: r.createdAt,
-      }))
-    );
-    return;
+  const where: Prisma.OrderWhereInput = { sellerId };
+
+  if (status && status !== "ALL") {
+    where.status = status as OrderStatus;
   }
 
-  const where: { sellerId: string; status?: OrderStatus } = { sellerId: req.seller.id };
-  if (status === "pending") where.status = OrderStatus.PENDING;
+  const [data, total] = await Promise.all([
+    prisma.order.findMany({
+      where,
+      skip,
+      take: limitNum,
+      orderBy: { createdAt: "desc" },
+      include: {
+        items: { include: { product: true } },
+      },
+    }),
+    prisma.order.count({ where }),
+  ]);
 
-  const orders = await prisma.order.findMany({
-    where,
-    orderBy: { createdAt: "desc" },
-    take: limit,
+  res.json({
+    data,
+    meta: {
+      total,
+      page: pageNum,
+      limit: limitNum,
+      totalPages: Math.ceil(total / limitNum),
+    },
   });
-
-  res.json(orders);
 });
 
-export const getOrder = asyncHandler(async (req, res) => {
+export const getOrder = asyncHandler(async (req: Request, res: Response) => {
   const order = await prisma.order.findFirst({
-    where: { id: req.params.id, sellerId: req.seller.id },
+    where: { id: req.params.id, sellerId: req.seller!.id },
     include: { items: { include: { product: true } } },
   });
   if (!order) {
@@ -50,4 +51,31 @@ export const getOrder = asyncHandler(async (req, res) => {
     return;
   }
   res.json(order);
+});
+
+export const updateOrderStatus = asyncHandler(async (req: Request, res: Response) => {
+  const { id } = req.params;
+  const sellerId = req.seller!.id;
+  const { status, trackingNumber, courier } = req.body;
+
+  const order = await prisma.order.findFirst({
+    where: { id, sellerId },
+  });
+
+  if (!order) {
+    res.status(404).json({ error: "Order not found" });
+    return;
+  }
+
+  const updatedOrder = await prisma.order.update({
+    where: { id },
+    data: {
+      status,
+      // Only update tracking fields when they're explicitly provided
+      ...(trackingNumber !== undefined && { trackingNumber }),
+      ...(courier !== undefined && { courier }),
+    },
+  });
+
+  res.json(updatedOrder);
 });

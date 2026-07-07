@@ -69,7 +69,7 @@ if [[ ! -f .env ]]; then
 
   if [[ "$DB_BACKEND" == "docker" ]]; then
     # Patch DATABASE_URL to match docker-compose credentials
-    sed -i.bak 's|DATABASE_URL=.*|DATABASE_URL="postgresql://cikka:cikka_dev@localhost:5432/cikka_dashboard?schema=public"|' .env
+    sed -i.bak 's|DATABASE_URL=.*|DATABASE_URL="postgresql://cikka:cikka_dev@localhost:5433/cikka_dashboard?schema=public"|' .env
     rm -f .env.bak
     ok ".env patched for Docker Postgres (cikka:cikka_dev)"
   else
