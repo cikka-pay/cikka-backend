@@ -3,7 +3,7 @@ import { prisma } from "../config/prisma";
 import { signToken } from "../utils/jwt";
 import { asyncHandler } from "../utils/asyncHandler";
 import { otpService } from "../external";
-import { generateOtp, isOtpValid, hashPassword } from "../services/auth.service";
+import { generateOtp, isOtpValid, hashPassword, checkPassword } from "../services/auth.service";
 
 // ==========================================
 // SIGNUP FLOW (5 Steps)
@@ -304,5 +304,48 @@ export const getMe = asyncHandler(async (req: Request, res: Response) => {
     kycVerified: seller.kycVerified,
     onboardingStatus: seller.onboardingStatus,
     onboarding: seller.onboarding,
+  });
+});
+
+// ==========================================
+// PASSWORD LOGIN (loginId + password)
+// ==========================================
+
+export const login = asyncHandler(async (req: Request, res: Response) => {
+  const { loginId, password } = req.body;
+
+  const seller = await prisma.seller.findFirst({
+    where: {
+      OR: [
+        { loginId },
+        { phone: loginId },
+        { email: loginId },
+      ],
+    },
+  });
+
+  if (!seller || !seller.passwordHash) {
+    res.status(401).json({ error: "Invalid credentials" });
+    return;
+  }
+
+  const valid = await checkPassword(password, seller.passwordHash);
+  if (!valid) {
+    res.status(401).json({ error: "Invalid credentials" });
+    return;
+  }
+
+  const token = signToken(seller.id);
+  res.json({
+    token,
+    seller: {
+      id: seller.id,
+      loginId: seller.loginId,
+      phone: seller.phone,
+      email: seller.email,
+      businessName: seller.businessName,
+      kycVerified: seller.kycVerified,
+      onboardingStatus: seller.onboardingStatus,
+    },
   });
 });

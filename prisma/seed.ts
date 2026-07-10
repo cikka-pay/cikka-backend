@@ -31,12 +31,13 @@ async function main() {
   await wipeExisting();
 
   const phone = "9999999999";
-  const plainPassword = generatePassword();
+  const plainPassword = "dL5M$Vm6E%!B";
   const passwordHash = await bcrypt.hash(plainPassword, 10);
 
   const seller = await prisma.seller.create({
     data: {
       businessName: "Aura Vogue",
+      loginId: "CIKKA-ACD945",
       phone,
       passwordHash,
       kycVerified: true,

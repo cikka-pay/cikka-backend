@@ -88,6 +88,7 @@ enum SettlementCycle {
 
 model Seller {
   id              String            @id @default(uuid())
+  loginId         String?           @unique   // Platform-issued login ID, e.g. CIKKA-ACD945
   phone           String            @unique
   phoneVerified   Boolean           @default(false)
   email           String?           @unique

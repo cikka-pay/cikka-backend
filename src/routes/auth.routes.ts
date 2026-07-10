@@ -11,6 +11,7 @@ import {
   forgotPasswordVerifyOtp,
   forgotPasswordReset,
   getMe,
+  login,
 } from "../controllers/auth.controller";
 import { requireAuth } from "../middleware/auth.middleware";
 import { z } from "zod";
@@ -35,6 +36,11 @@ const passwordSchema = z.object({
   password: z.string().min(8, "Password must be at least 8 characters"),
 });
 
+const loginSchema = z.object({
+  loginId: z.string().min(1, "Login ID is required"),
+  password: z.string().min(8, "Password must be at least 8 characters"),
+});
+
 // Signup Flow
 router.post("/signup/send-phone-otp", validate({ body: phoneSchema }), signupSendPhoneOtp);
 router.post("/signup/verify-phone-otp", validate({ body: phoneOtpSchema }), signupVerifyPhoneOtp);
@@ -56,5 +62,8 @@ router.post("/forgot-password/reset", requireAuth, validate({ body: passwordSche
 
 // Current User
 router.get("/me", requireAuth, getMe);
+
+// Password Login (loginId + password — no OTP required)
+router.post("/login", validate({ body: loginSchema }), login);
 
 export default router;
