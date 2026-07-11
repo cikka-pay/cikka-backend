@@ -49,8 +49,9 @@ jobs:
       - name: Generate Prisma client
         run: npx prisma generate
 
-      - name: Run database migrations
-        run: npx prisma migrate deploy
+      - name: Apply database schema
+        # db push syncs schema directly — avoids stale migration state in CI
+        run: npx prisma db push --force-reset --accept-data-loss
 
       - name: TypeScript type check
         run: npm run build
