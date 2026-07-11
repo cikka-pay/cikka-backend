@@ -20,8 +20,11 @@ const router = Router();
 
 // Zod schemas for validation
 const phoneSchema = z.object({
-  phone: z.string().regex(/^\+91\d{10}$/, "Invalid Indian phone number format (+91XXXXXXXXXX)"),
+  // Accept plain 10-digit ("9876543210") or +91-prefixed ("+919876543210").
+  // Backend normalises to E.164 via normalizePhone() — country code always 91.
+  phone: z.string().regex(/^(\+91)?[6-9]\d{9}$/, "Enter a valid 10-digit Indian mobile number"),
 });
+
 const phoneOtpSchema = phoneSchema.extend({
   otp: z.string().length(6, "OTP must be 6 digits"),
 });

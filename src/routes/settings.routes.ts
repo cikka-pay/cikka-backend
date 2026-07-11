@@ -6,9 +6,15 @@ import { validate } from "../middleware/validate.middleware";
 const router = Router();
 
 const updateSettingsSchema = z.object({
-  notifyLowStock: z.boolean().optional(),
-  notifyNewOrder: z.boolean().optional(),
+  // Notification preferences
+  notifyLowStock:   z.boolean().optional(),
+  notifyNewOrder:   z.boolean().optional(),
   notifySettlement: z.boolean().optional(),
+  // Operational preferences
+  settlementCycle:  z.enum(["T_PLUS_1", "T_PLUS_3", "T_PLUS_7", "T_PLUS_14"]).optional(),
+  returnPolicy:     z.string().optional(),
+  fulfillmentType:  z.enum(["SELF", "THREE_PL", "CIKKA"]).optional(),
+  lowStockDefault:  z.number().int().min(0).optional(),
 });
 
 router.get("/profile", getProfile);

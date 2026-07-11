@@ -17,8 +17,11 @@ import {
   submitApplication,
 } from "../controllers/onboarding.controller";
 import { requireAuth } from "../middleware/auth.middleware";
+import multer from "multer";
 
 const router = Router();
+const upload = multer({ dest: "uploads/", limits: { fileSize: 2 * 1024 * 1024 } });
+
 
 // All onboarding endpoints require the user to be authenticated
 router.use(requireAuth);
@@ -46,8 +49,9 @@ router.post("/kyb/verify-bank", verifyBank);
 
 // Step 5: Brand & Logistics
 router.patch("/step/5", updateStep5);
-// NOTE: logo upload should ideally use multer middleware, skipping for now
-router.post("/upload/logo", uploadLogo);
+// Logo upload — multer parses multipart/form-data, populates req.file
+router.post("/upload/logo", upload.single("logo"), uploadLogo);
+
 
 // Step 6: Agreements
 router.patch("/step/6", updateStep6);

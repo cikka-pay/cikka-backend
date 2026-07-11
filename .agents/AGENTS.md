@@ -42,17 +42,11 @@ cikka-backend/
 ## First-time Setup
 
 ```bash
-# One-command bootstrap (auto-detects Docker vs local Postgres)
+# Requires Docker Desktop to be running. One command does everything.
 npm run setup
 
-# Or manually:
-docker compose up -d db        # start Postgres in Docker
-cp .env.example .env           # then edit DATABASE_URL
-npm install
-npm run prisma:generate
-npm run prisma:migrate
-npm run seed                   # load demo data (prints credentials once)
-npm run dev                    # start API on http://localhost:4000
+# Or with demo data skipped:
+SKIP_SEED=1 npm run setup
 ```
 
 ## Commands
