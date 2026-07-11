@@ -109,7 +109,8 @@ describe("Auth Integration Tests", () => {
     });
 
     it("Should fail signin for unregistered phone", async () => {
-      const res = await request(app).post("/api/auth/signin/send-otp").send({ phone: "+910000000000" });
+      // Use a valid-format number (starts with 9) that has never been registered
+      const res = await request(app).post("/api/auth/signin/send-otp").send({ phone: "+919000000000" });
       expect(res.status).toBe(404);
     });
   });
