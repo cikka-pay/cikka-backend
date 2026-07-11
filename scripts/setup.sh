@@ -2,17 +2,16 @@
 # scripts/setup.sh — First-time project bootstrap for Cikka Backend
 #
 # What this does:
-#   1. Checks required tools (node, npm, psql OR docker)
+#   1. Checks required tools (node, npm, docker)
 #   2. Creates .env from .env.example if not present
-#   3. Starts the database (Docker or local Postgres)
+#   3. Starts the database via Docker Compose
 #   4. Installs npm dependencies
 #   5. Runs prisma generate + migrate dev
 #   6. Optionally seeds demo data
 #
 # Usage:
-#   bash scripts/setup.sh           # interactive
-#   SKIP_SEED=1 bash scripts/setup.sh   # skip demo data
-#   USE_DOCKER_DB=1 bash scripts/setup.sh  # force Docker for Postgres
+#   npm run setup              # or: bash scripts/setup.sh
+#   SKIP_SEED=1 npm run setup  # skip demo data
 
 set -euo pipefail
 
@@ -42,43 +41,21 @@ NODE_MAJOR=$(node -e "process.stdout.write(String(process.versions.node.split('.
 
 ok "Node $(node --version) / npm $(npm --version)"
 
-HAS_DOCKER=0; HAS_PSQL=0
-command -v docker >/dev/null 2>&1 && docker info >/dev/null 2>&1 && HAS_DOCKER=1
-command -v psql   >/dev/null 2>&1 && HAS_PSQL=1
+command -v docker >/dev/null 2>&1 || die "Docker not found — install Docker Desktop from https://www.docker.com/products/docker-desktop"
+docker info >/dev/null 2>&1       || die "Docker daemon is not running — please start Docker Desktop and retry"
 
-USE_DOCKER_DB="${USE_DOCKER_DB:-0}"
+ok "Docker $(docker --version | awk '{print $3}' | tr -d ',')"
 
-if [[ "$HAS_DOCKER" -eq 1 && "$USE_DOCKER_DB" -eq 1 ]]; then
-  DB_BACKEND="docker"
-elif [[ "$HAS_PSQL" -eq 1 ]]; then
-  DB_BACKEND="local"
-elif [[ "$HAS_DOCKER" -eq 1 ]]; then
-  DB_BACKEND="docker"
-else
-  die "Neither psql nor a running Docker daemon found. Install one and retry."
-fi
-
-ok "Database backend: $DB_BACKEND"
 
 # ─── 2. .env ──────────────────────────────────────────────────────────────────
 step "Environment file"
 
 if [[ ! -f .env ]]; then
   cp .env.example .env
-  warn ".env created from .env.example — review DATABASE_URL before continuing"
-
-  if [[ "$DB_BACKEND" == "docker" ]]; then
-    # Patch DATABASE_URL to match docker-compose credentials
-    sed -i.bak 's|DATABASE_URL=.*|DATABASE_URL="postgresql://cikka:cikka_dev@localhost:5433/cikka_dashboard?schema=public"|' .env
-    rm -f .env.bak
-    ok ".env patched for Docker Postgres (cikka:cikka_dev)"
-  else
-    # Use socket auth with current OS user (Homebrew convention)
-    CURRENT_USER="$(whoami)"
-    sed -i.bak "s|DATABASE_URL=.*|DATABASE_URL=\"postgresql://${CURRENT_USER}@localhost:5432/cikka_dashboard?schema=public\"|" .env
-    rm -f .env.bak
-    ok ".env patched for local Postgres (user: ${CURRENT_USER})"
-  fi
+  # Always patch for Docker Compose credentials
+  sed -i.bak 's|DATABASE_URL=.*|DATABASE_URL="postgresql://cikka:cikka_dev@localhost:5433/cikka_dashboard?schema=public"|' .env
+  rm -f .env.bak
+  ok ".env created and configured for Docker Postgres"
 else
   ok ".env already exists — skipping"
 fi
@@ -86,28 +63,16 @@ fi
 # ─── 3. Database ──────────────────────────────────────────────────────────────
 step "Database"
 
-if [[ "$DB_BACKEND" == "docker" ]]; then
-  ok "Starting Postgres via docker compose"
-  docker compose up -d db
-  echo "  Waiting for Postgres to be healthy..."
-  for i in $(seq 1 30); do
-    if docker compose exec db pg_isready -U cikka -d cikka_dashboard >/dev/null 2>&1; then
-      ok "Postgres is ready"; break
-    fi
-    [[ "$i" -eq 30 ]] && die "Postgres did not become ready in 30 seconds"
-    sleep 1
-  done
-else
-  # Local Postgres — try to create DB. "already exists" is fine.
-  DB_OUT=$(psql postgres -c "CREATE DATABASE cikka_dashboard;" 2>&1)
-  if echo "$DB_OUT" | grep -qE "CREATE DATABASE|already exists"; then
-    ok "Database cikka_dashboard ready"
-  else
-    warn "Could not create database. Output: $DB_OUT"
-    warn "Start Postgres first: pg_ctl start -D \$(brew --prefix)/var/postgres"
-    die "Cannot continue without a running Postgres"
+ok "Starting Postgres via Docker Compose"
+docker compose up -d db
+echo "  Waiting for Postgres to be healthy..."
+for i in $(seq 1 30); do
+  if docker compose exec db pg_isready -U cikka -d cikka_dashboard >/dev/null 2>&1; then
+    ok "Postgres is ready"; break
   fi
-fi
+  [[ "$i" -eq 30 ]] && die "Postgres did not become ready in 30 seconds — check: docker compose logs db"
+  sleep 1
+done
 
 # ─── 4. Install dependencies ──────────────────────────────────────────────────
 step "Installing npm dependencies"

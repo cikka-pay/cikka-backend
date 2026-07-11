@@ -41,7 +41,15 @@ export const getSettings = asyncHandler(async (req: Request, res: Response) => {
 
 export const updateSettings = asyncHandler(async (req: Request, res: Response) => {
   const sellerId = req.seller!.id;
-  const { notifyLowStock, notifyNewOrder, notifySettlement } = req.body;
+  const {
+    notifyLowStock,
+    notifyNewOrder,
+    notifySettlement,
+    settlementCycle,
+    returnPolicy,
+    fulfillmentType,
+    lowStockDefault,
+  } = req.body;
 
   const updated = await prisma.sellerSettings.upsert({
     where: { sellerId },
@@ -49,14 +57,23 @@ export const updateSettings = asyncHandler(async (req: Request, res: Response) =
       notifyLowStock,
       notifyNewOrder,
       notifySettlement,
+      settlementCycle,
+      returnPolicy,
+      fulfillmentType,
+      lowStockDefault,
     },
     create: {
       sellerId,
       notifyLowStock,
       notifyNewOrder,
       notifySettlement,
+      settlementCycle,
+      returnPolicy,
+      fulfillmentType,
+      lowStockDefault,
     },
   });
 
   res.json(updated);
 });
+

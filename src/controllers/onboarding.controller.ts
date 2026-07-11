@@ -2,6 +2,7 @@ import { Request, Response } from "express";
 import { prisma } from "../config/prisma";
 import { asyncHandler } from "../utils/asyncHandler";
 import * as onboardingService from "../services/onboarding.service";
+import { BUSINESS_TYPE_MAP, FULFILLMENT_TYPE_MAP, SETTLEMENT_CYCLE_MAP } from "../utils/enumMaps";
 
 export const getOnboardingState = asyncHandler(async (req: Request, res: Response) => {
   const sellerId = req.seller!.id;
@@ -30,7 +31,8 @@ export const updateStep1 = asyncHandler(async (req: Request, res: Response) => {
     where: { sellerId },
     data: {
       businessName: data.businessName,
-      businessType: data.businessType,
+      // Map UI human-readable label → Prisma enum (e.g. "Private Limited (Pvt Ltd)" → PRIVATE_LIMITED)
+      businessType: data.businessType ? BUSINESS_TYPE_MAP[data.businessType] ?? data.businessType : undefined,
       yearEstablished: data.yearEstablished,
       businessCategory: data.businessCategory,
       description: data.description,
@@ -153,8 +155,15 @@ export const updateStep5 = asyncHandler(async (req: Request, res: Response) => {
       logoUrl: data.logoUrl,
       productCategories: data.productCategories,
       returnPolicy: data.returnPolicy,
-      settlementCycle: data.settlementCycle,
-      fulfillmentType: data.fulfillmentType,
+      avgOrderValue: data.avgOrderValue,
+      monthlySalesTarget: data.monthlySalesTarget,
+      // Map UI values → Prisma enums
+      settlementCycle: data.settlementCycle
+        ? SETTLEMENT_CYCLE_MAP[data.settlementCycle] ?? data.settlementCycle
+        : undefined,
+      fulfillmentType: data.fulfillmentType
+        ? FULFILLMENT_TYPE_MAP[data.fulfillmentType] ?? data.fulfillmentType
+        : undefined,
       pickupAddress: data.pickupAddress,
       completedSteps: 5,
     },

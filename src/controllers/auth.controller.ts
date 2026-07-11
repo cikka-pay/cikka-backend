@@ -4,13 +4,15 @@ import { signToken } from "../utils/jwt";
 import { asyncHandler } from "../utils/asyncHandler";
 import { otpService } from "../external";
 import { generateOtp, isOtpValid, hashPassword } from "../services/auth.service";
+import { normalizePhone } from "../utils/phone";
 
 // ==========================================
 // SIGNUP FLOW (5 Steps)
 // ==========================================
 
 export const signupSendPhoneOtp = asyncHandler(async (req: Request, res: Response) => {
-  const { phone } = req.body;
+  const { phone: phoneRaw } = req.body;
+  const { phone, countryCode, phoneNumber } = normalizePhone(phoneRaw);
 
   let seller = await prisma.seller.findUnique({ where: { phone } });
   if (seller && seller.onboardingStatus !== "INCOMPLETE") {
@@ -25,6 +27,8 @@ export const signupSendPhoneOtp = asyncHandler(async (req: Request, res: Respons
     seller = await prisma.seller.create({
       data: {
         phone,
+        countryCode,
+        phoneNumber,
         phoneOtpCode: otp,
         phoneOtpExpiresAt: expiresAt,
       },
@@ -33,6 +37,8 @@ export const signupSendPhoneOtp = asyncHandler(async (req: Request, res: Respons
     seller = await prisma.seller.update({
       where: { phone },
       data: {
+        countryCode,
+        phoneNumber,
         phoneOtpCode: otp,
         phoneOtpExpiresAt: expiresAt,
       },
@@ -44,7 +50,8 @@ export const signupSendPhoneOtp = asyncHandler(async (req: Request, res: Respons
 });
 
 export const signupVerifyPhoneOtp = asyncHandler(async (req: Request, res: Response) => {
-  const { phone, otp } = req.body;
+  const { phone: phoneRaw, otp } = req.body;
+  const { phone } = normalizePhone(phoneRaw);
 
   const seller = await prisma.seller.findUnique({ where: { phone } });
   if (!seller) {
@@ -147,6 +154,8 @@ export const signupSetPassword = asyncHandler(async (req: Request, res: Response
     seller: {
       id: seller.id,
       phone: seller.phone,
+      countryCode: seller.countryCode,
+      phoneNumber: seller.phoneNumber,
       email: seller.email,
       onboardingStatus: seller.onboardingStatus,
     },
@@ -158,7 +167,8 @@ export const signupSetPassword = asyncHandler(async (req: Request, res: Response
 // ==========================================
 
 export const signinSendOtp = asyncHandler(async (req: Request, res: Response) => {
-  const { phone } = req.body;
+  const { phone: phoneRaw } = req.body;
+  const { phone, countryCode, phoneNumber } = normalizePhone(phoneRaw);
 
   const seller = await prisma.seller.findUnique({ where: { phone } });
   if (!seller) {
@@ -172,6 +182,8 @@ export const signinSendOtp = asyncHandler(async (req: Request, res: Response) =>
   await prisma.seller.update({
     where: { phone },
     data: {
+      countryCode,
+      phoneNumber,
       phoneOtpCode: otp,
       phoneOtpExpiresAt: expiresAt,
     },
@@ -182,7 +194,8 @@ export const signinSendOtp = asyncHandler(async (req: Request, res: Response) =>
 });
 
 export const signinVerifyOtp = asyncHandler(async (req: Request, res: Response) => {
-  const { phone, otp } = req.body;
+  const { phone: phoneRaw, otp } = req.body;
+  const { phone } = normalizePhone(phoneRaw);
 
   const seller = await prisma.seller.findUnique({ where: { phone } });
   if (!seller) {
@@ -209,6 +222,8 @@ export const signinVerifyOtp = asyncHandler(async (req: Request, res: Response) 
     seller: {
       id: seller.id,
       phone: seller.phone,
+      countryCode: seller.countryCode,
+      phoneNumber: seller.phoneNumber,
       email: seller.email,
       businessName: seller.businessName,
       kycVerified: seller.kycVerified,
@@ -222,7 +237,8 @@ export const signinVerifyOtp = asyncHandler(async (req: Request, res: Response) 
 // ==========================================
 
 export const forgotPasswordSendOtp = asyncHandler(async (req: Request, res: Response) => {
-  const { phone } = req.body;
+  const { phone: phoneRaw } = req.body;
+  const { phone, countryCode, phoneNumber } = normalizePhone(phoneRaw);
 
   const seller = await prisma.seller.findUnique({ where: { phone } });
   if (!seller) {
@@ -236,6 +252,8 @@ export const forgotPasswordSendOtp = asyncHandler(async (req: Request, res: Resp
   await prisma.seller.update({
     where: { phone },
     data: {
+      countryCode,
+      phoneNumber,
       resetOtpCode: otp,
       resetOtpExpiresAt: expiresAt,
     },
@@ -246,7 +264,8 @@ export const forgotPasswordSendOtp = asyncHandler(async (req: Request, res: Resp
 });
 
 export const forgotPasswordVerifyOtp = asyncHandler(async (req: Request, res: Response) => {
-  const { phone, otp } = req.body;
+  const { phone: phoneRaw, otp } = req.body;
+  const { phone } = normalizePhone(phoneRaw);
 
   const seller = await prisma.seller.findUnique({ where: { phone } });
   if (!seller) {
@@ -299,6 +318,8 @@ export const getMe = asyncHandler(async (req: Request, res: Response) => {
   res.json({
     id: seller.id,
     phone: seller.phone,
+    countryCode: seller.countryCode,
+    phoneNumber: seller.phoneNumber,
     email: seller.email,
     businessName: seller.businessName,
     kycVerified: seller.kycVerified,

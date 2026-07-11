@@ -88,7 +88,9 @@ enum SettlementCycle {
 
 model Seller {
   id              String            @id @default(uuid())
-  phone           String            @unique
+  phone           String            @unique  // Full E.164 key e.g. +919876543210
+  countryCode     String            @default("91")  // Numeric country code, e.g. "91"
+  phoneNumber     String?           // 10-digit number only, e.g. "9876543210"
   phoneVerified   Boolean           @default(false)
   email           String?           @unique
   emailVerified   Boolean           @default(false)
@@ -243,6 +245,7 @@ model Product {
   seller            Seller        @relation(fields: [sellerId], references: [id])
 
   name              String
+  brandName         String?       // Brand name as shown in the Add Product UI
   sku               String        @unique
   category          String?
   description       String?       // @db.Text
