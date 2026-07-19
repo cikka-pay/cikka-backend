@@ -12,9 +12,10 @@ export const listOrders = asyncHandler(async (req: Request, res: Response) => {
   const skip = (pageNum - 1) * limitNum;
 
   const where: Prisma.OrderWhereInput = { sellerId };
+  const statusUpper = typeof status === "string" ? status.toUpperCase() : undefined;
 
-  if (status && status !== "ALL") {
-    where.status = status as OrderStatus;
+  if (statusUpper && statusUpper !== "ALL") {
+    where.status = statusUpper as OrderStatus;
   }
 
   const [data, total] = await Promise.all([

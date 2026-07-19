@@ -17,8 +17,28 @@ import {
   submitApplication,
 } from "../controllers/onboarding.controller";
 import { requireAuth } from "../middleware/auth.middleware";
+import multer from "multer";
+import path from "path";
+import fs from "fs";
 
 const router = Router();
+
+// Configure multer disk storage for uploads
+const storage = multer.diskStorage({
+  destination: (req, file, cb) => {
+    const dir = path.join(process.cwd(), "uploads");
+    if (!fs.existsSync(dir)) {
+      fs.mkdirSync(dir, { recursive: true });
+    }
+    cb(null, dir);
+  },
+  filename: (req, file, cb) => {
+    const uniqueSuffix = Date.now() + "-" + Math.round(Math.random() * 1e9);
+    cb(null, file.fieldname + "-" + uniqueSuffix + path.extname(file.originalname));
+  },
+});
+
+const upload = multer({ storage });
 
 // All onboarding endpoints require the user to be authenticated
 router.use(requireAuth);
@@ -46,8 +66,7 @@ router.post("/kyb/verify-bank", verifyBank);
 
 // Step 5: Brand & Logistics
 router.patch("/step/5", updateStep5);
-// NOTE: logo upload should ideally use multer middleware, skipping for now
-router.post("/upload/logo", uploadLogo);
+router.post("/upload/logo", upload.single("logo"), uploadLogo);
 
 // Step 6: Agreements
 router.patch("/step/6", updateStep6);
