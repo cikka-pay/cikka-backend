@@ -2,6 +2,7 @@ import express from "express";
 import cors from "cors";
 import morgan from "morgan";
 import routes from "./routes/index";
+import setuRoutes from "./routes/setu.routes";
 import { errorHandler } from "./middleware/error.middleware";
 
 const app = express();
@@ -14,6 +15,10 @@ app.use(morgan("dev"));
 
 app.get("/health", (_req, res) => res.json({ status: "ok" }));
 
+// Direct Setu endpoint matching POST {ourBaseURL}/setu/v1/*
+app.use("/setu/v1", setuRoutes);
+
+// API v1 routes
 app.use("/api", routes);
 
 app.use((_req, res) => {
@@ -23,3 +28,4 @@ app.use((_req, res) => {
 app.use(errorHandler);
 
 export default app;
+

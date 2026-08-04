@@ -449,3 +449,52 @@ model ApplicationSequence {
 
   @@map("application_sequence")
 }
+
+// ============================================================
+// CUSTOMER — Mobile App User Identity
+// ============================================================
+
+model Customer {
+  id              String   @id @default(uuid())
+  phone           String   @unique // Full E.164 phone number
+  name            String?
+  email           String?  @unique
+  phoneVerified   Boolean  @default(false)
+  ciPointsBalance Int      @default(0) // Loyalty points earned via Setu transactions
+
+  // Auth OTP state
+  otpCode         String?
+  otpExpiresAt    DateTime?
+
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  transactions    PaymentTransaction[]
+
+  @@map("customers")
+}
+
+// ============================================================
+// PAYMENT TRANSACTION — Setu Payment & Refund Ledger
+// Stores uniquePaymentRefID for strict idempotency checks
+// ============================================================
+
+model PaymentTransaction {
+  id                 String   @id @default(uuid())
+  uniquePaymentRefID String   @unique // Dedup key provided by Setu
+  customerId         String?
+  customer           Customer? @relation(fields: [customerId], references: [id])
+  orderId            String?
+  amount             Decimal  @db.Decimal(10, 2)
+  status             String   // SUCCESS | FAILED | PENDING | REFUNDED
+  ciPointsAwarded    Int      @default(0)
+  rawPayload         Json?
+
+  createdAt          DateTime @default(now())
+  updatedAt          DateTime @updatedAt
+
+  @@index([uniquePaymentRefID])
+  @@index([customerId])
+  @@map("payment_transactions")
+}
+
