@@ -1,4 +1,5 @@
 import { Request, Response, NextFunction } from "express";
+import { AUTH_ERRORS, SETU_ERRORS } from "../constants/errors";
 
 /**
  * Middleware for validating Setu Webhook requests.
@@ -8,7 +9,7 @@ export function requireSetuAuth(req: Request, res: Response, next: NextFunction)
   const authHeader = req.headers.authorization;
 
   if (!authHeader) {
-    res.status(401).json({ success: false, error: "Missing Authorization header" });
+    res.status(401).json({ success: false, error: AUTH_ERRORS.MISSING_AUTH_HEADER });
     return;
   }
 
@@ -35,7 +36,7 @@ export function requireSetuAuth(req: Request, res: Response, next: NextFunction)
     }
   }
 
-  res.status(401).json({ success: false, error: "Invalid Setu authentication credentials" });
+  res.status(401).json({ success: false, error: SETU_ERRORS.INVALID_CREDENTIALS });
 }
 
 /**
@@ -61,9 +62,10 @@ export function requireSetuIpWhitelist(req: Request, res: Response, next: NextFu
     "";
 
   if (!allowedIps.includes(clientIp)) {
-    res.status(403).json({ success: false, error: `IP ${clientIp} not authorized for Setu webhook calls` });
+    res.status(403).json({ success: false, error: SETU_ERRORS.UNAUTHORIZED_IP(clientIp) });
     return;
   }
 
   next();
 }
+

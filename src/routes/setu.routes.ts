@@ -1,9 +1,10 @@
 import { Router } from "express";
 import { getPaymentStatus, processRefund } from "../controllers/setu.controller";
 import { requireSetuAuth, requireSetuIpWhitelist } from "../middleware/setu-auth.middleware";
+import { validate } from "../middleware/validate.middleware";
+import { getPaymentStatusSchema, processRefundSchema } from "../validations/setu.validation";
 
 const router = Router();
-
 
 // Apply Setu Webhook Auth & IP Whitelisting to all Setu routes
 router.use(requireSetuAuth);
@@ -15,13 +16,14 @@ router.use(requireSetuIpWhitelist);
  * - Respond within 30 seconds
  * - Idempotent, dedup check on uniquePaymentRefID
  */
-router.post("/getPaymentStatus", getPaymentStatus);
+router.post("/getPaymentStatus", validate({ body: getPaymentStatusSchema }), getPaymentStatus);
 
 /**
  * Endpoint: POST /setu/v1/refund
  * Requirements:
  * - Same idempotency rules apply
  */
-router.post("/refund", processRefund);
+router.post("/refund", validate({ body: processRefundSchema }), processRefund);
 
 export default router;
+

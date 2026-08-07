@@ -1,10 +1,11 @@
 import { describe, it, expect, beforeEach } from "vitest";
 import {
   signSellerToken,
-  signCustomerToken,
+  signUserToken,
   verifySellerToken,
-  verifyCustomerToken,
+  verifyUserToken,
 } from "../../utils/jwt";
+import { AUTH_ERRORS } from "../../constants/errors";
 
 describe("Role-Based JWT Isolation Tests", () => {
   beforeEach(() => {
@@ -19,21 +20,22 @@ describe("Role-Based JWT Isolation Tests", () => {
     expect(payload.aud).toBe("cikka-seller-web");
   });
 
-  it("should successfully sign and verify customer token", () => {
-    const token = signCustomerToken("customer-uuid-456");
-    const payload = verifyCustomerToken(token);
-    expect(payload.sub).toBe("customer-uuid-456");
-    expect(payload.role).toBe("customer");
+  it("should successfully sign and verify user token", () => {
+    const token = signUserToken("user-uuid-456");
+    const payload = verifyUserToken(token);
+    expect(payload.sub).toBe("user-uuid-456");
+    expect(payload.role).toBe("user");
     expect(payload.aud).toBe("cikka-mobile-app");
   });
 
-  it("should reject customer token when attempting to verify as seller", () => {
-    const customerToken = signCustomerToken("customer-uuid-456");
-    expect(() => verifySellerToken(customerToken)).toThrow("Invalid token role: expected seller");
+  it("should reject user token when attempting to verify as seller", () => {
+    const userToken = signUserToken("user-uuid-456");
+    expect(() => verifySellerToken(userToken)).toThrow(AUTH_ERRORS.INVALID_SELLER_TOKEN);
   });
 
-  it("should reject seller token when attempting to verify as customer", () => {
+  it("should reject seller token when attempting to verify as user", () => {
     const sellerToken = signSellerToken("seller-uuid-123");
-    expect(() => verifyCustomerToken(sellerToken)).toThrow("Invalid token role: expected customer");
+    expect(() => verifyUserToken(sellerToken)).toThrow(AUTH_ERRORS.INVALID_USER_TOKEN);
   });
 });
+

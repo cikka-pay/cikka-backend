@@ -1,7 +1,7 @@
 import { Router } from "express";
 import { requireSellerAuth } from "../middleware/auth.middleware";
 import authRoutes from "./auth.routes";
-import customerAuthRoutes from "./customer-auth.routes";
+import userAuthRoutes from "./user-auth.routes";
 import setuRoutes from "./setu.routes";
 import onboardingRoutes from "./onboarding.routes";
 
@@ -18,8 +18,10 @@ const router = Router();
 
 // Public / Non-Seller Auth Routes
 router.use("/auth", authRoutes);
-router.use("/customer-auth", customerAuthRoutes);
+router.use("/user-auth", userAuthRoutes);
+router.use("/customer-auth", userAuthRoutes); // Backward compatibility alias
 router.use("/setu/v1", setuRoutes);
+
 
 // Protected Seller Routes — require valid Seller JWT
 router.use(requireSellerAuth);

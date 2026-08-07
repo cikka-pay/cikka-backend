@@ -1,12 +1,13 @@
 import jwt, { JwtPayload } from "jsonwebtoken";
+import { AUTH_ERRORS } from "../constants/errors";
 
 const SELLER_SECRET = process.env.JWT_SELLER_SECRET || process.env.JWT_SECRET;
-const CUSTOMER_SECRET = process.env.JWT_CUSTOMER_SECRET || process.env.JWT_SECRET;
+const USER_SECRET = process.env.JWT_USER_SECRET || process.env.JWT_CUSTOMER_SECRET || process.env.JWT_SECRET;
 const EXPIRES_IN = process.env.JWT_EXPIRES_IN || "7d";
 
 export interface CustomJwtPayload extends JwtPayload {
   sub: string;
-  role?: "seller" | "customer";
+  role?: "seller" | "user";
   aud?: string;
 }
 
@@ -24,11 +25,11 @@ export function signSellerToken(sellerId: string, expiresIn?: string): string {
   );
 }
 
-export function signCustomerToken(customerId: string, expiresIn?: string): string {
-  if (!CUSTOMER_SECRET) throw new Error("JWT_CUSTOMER_SECRET or JWT_SECRET is not set");
+export function signUserToken(userId: string, expiresIn?: string): string {
+  if (!USER_SECRET) throw new Error("JWT_USER_SECRET or JWT_SECRET is not set");
   return jwt.sign(
-    { sub: customerId, role: "customer", aud: "cikka-mobile-app" },
-    CUSTOMER_SECRET,
+    { sub: userId, role: "user", aud: "cikka-mobile-app" },
+    USER_SECRET,
     { expiresIn: expiresIn || EXPIRES_IN } as jwt.SignOptions
   );
 }
@@ -41,17 +42,18 @@ export function verifySellerToken(token: string): CustomJwtPayload {
   if (!SELLER_SECRET) throw new Error("JWT_SELLER_SECRET or JWT_SECRET is not set");
   const payload = jwt.verify(token, SELLER_SECRET) as CustomJwtPayload;
   if (payload.role && payload.role !== "seller") {
-    throw new Error("Invalid token role: expected seller");
+    throw new Error(AUTH_ERRORS.INVALID_SELLER_TOKEN);
   }
   return payload;
 }
 
-export function verifyCustomerToken(token: string): CustomJwtPayload {
-  if (!CUSTOMER_SECRET) throw new Error("JWT_CUSTOMER_SECRET or JWT_SECRET is not set");
-  const payload = jwt.verify(token, CUSTOMER_SECRET) as CustomJwtPayload;
-  if (payload.role && payload.role !== "customer") {
-    throw new Error("Invalid token role: expected customer");
+export function verifyUserToken(token: string): CustomJwtPayload {
+  if (!USER_SECRET) throw new Error("JWT_USER_SECRET or JWT_SECRET is not set");
+  const payload = jwt.verify(token, USER_SECRET) as CustomJwtPayload;
+  if (payload.role && payload.role !== "user") {
+    throw new Error(AUTH_ERRORS.INVALID_USER_TOKEN);
   }
   return payload;
 }
+
 

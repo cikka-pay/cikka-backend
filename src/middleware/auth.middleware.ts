@@ -1,5 +1,6 @@
 import { Request, Response, NextFunction } from "express";
-import { verifySellerToken, verifyCustomerToken } from "../utils/jwt";
+import { verifySellerToken, verifyUserToken } from "../utils/jwt";
+import { AUTH_ERRORS } from "../constants/errors";
 
 // Verifies the seller JWT on protected seller routes and attaches `req.seller = { id }`.
 export function requireSellerAuth(req: Request, res: Response, next: NextFunction): void {
@@ -7,7 +8,7 @@ export function requireSellerAuth(req: Request, res: Response, next: NextFunctio
   const [scheme, token] = header.split(" ");
 
   if (scheme !== "Bearer" || !token) {
-    res.status(401).json({ error: "Missing or malformed Authorization header" });
+    res.status(401).json({ error: AUTH_ERRORS.MISSING_AUTH_HEADER });
     return;
   }
 
@@ -16,29 +17,33 @@ export function requireSellerAuth(req: Request, res: Response, next: NextFunctio
     req.seller = { id: payload.sub as string };
     next();
   } catch (err: any) {
-    res.status(401).json({ error: err.message || "Invalid or expired seller token" });
+    res.status(401).json({ error: err.message || AUTH_ERRORS.INVALID_SELLER_TOKEN });
   }
 }
 
 // Alias for backward compatibility with existing seller routes
 export const requireAuth = requireSellerAuth;
 
-// Verifies the customer JWT on protected mobile app routes and attaches `req.customer = { id }`.
-export function requireCustomerAuth(req: Request, res: Response, next: NextFunction): void {
+// Verifies the user JWT on protected mobile app routes and attaches `req.user = { id }`.
+export function requireUserAuth(req: Request, res: Response, next: NextFunction): void {
   const header = req.headers.authorization || "";
   const [scheme, token] = header.split(" ");
 
   if (scheme !== "Bearer" || !token) {
-    res.status(401).json({ error: "Missing or malformed Authorization header" });
+    res.status(401).json({ error: AUTH_ERRORS.MISSING_AUTH_HEADER });
     return;
   }
 
   try {
-    const payload = verifyCustomerToken(token);
-    req.customer = { id: payload.sub as string };
+    const payload = verifyUserToken(token);
+    req.user = { id: payload.sub as string };
     next();
   } catch (err: any) {
-    res.status(401).json({ error: err.message || "Invalid or expired customer token" });
+    res.status(401).json({ error: err.message || AUTH_ERRORS.INVALID_USER_TOKEN });
   }
 }
+
+// Alias for backward compatibility
+export const requireCustomerAuth = requireUserAuth;
+
 
