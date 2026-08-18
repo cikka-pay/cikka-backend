@@ -5,5 +5,5 @@ export const phoneSchema = z.object({
 });
 
 export const otpSchema = phoneSchema.extend({
-  otp: z.string().length(6, "OTP must be 6 digits"),
+  otp: z.string().length(4, "OTP must be 4 digits"),
 });
