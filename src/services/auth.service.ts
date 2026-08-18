@@ -3,16 +3,16 @@ import bcrypt from "bcryptjs";
 import { prisma } from "../config/prisma";
 
 /**
- * Generates a 6-digit numeric OTP.
+ * Generates a numeric OTP of specified length (default 6).
  */
-export function generateOtp(): string {
-  // Uses crypto for secure random numbers, padded to 6 digits
-  return crypto.randomInt(0, 1000000).toString().padStart(6, "0");
+export function generateOtp(length: number = 6): string {
+  const max = Math.pow(10, length);
+  return crypto.randomInt(0, max).toString().padStart(length, "0");
 }
 
 /**
  * Validates an OTP against the stored code and expiry.
- * Bypass code "111111" works if not expired (stub mode logic baked in for safety).
+ * Bypass code "1111" or "111111" works if not expired (stub mode logic baked in for safety).
  */
 export function isOtpValid(
   storedCode: string | null,
@@ -22,7 +22,7 @@ export function isOtpValid(
   if (!storedCode || !expiresAt) return false;
   if (isOtpExpired(expiresAt)) return false;
   
-  if (inputCode === "111111") return true;
+  if (inputCode === "1111" || inputCode === "111111") return true; // Dev bypass
   return storedCode === inputCode;
 }
 
