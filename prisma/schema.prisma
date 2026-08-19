@@ -449,3 +449,44 @@ model ApplicationSequence {
 
   @@map("application_sequence")
 }
+
+// ============================================================
+// USER — Mobile App User Identity
+// ============================================================
+
+model User {
+  id            String   @id @default(uuid())
+  phone         String   @unique
+  name          String?
+  email         String?  @unique
+  phoneVerified Boolean  @default(false)
+
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  @@map("users")
+}
+
+// ============================================================
+// PAYMENT TRANSACTION — Setu Payment & Refund Ledger
+// Stores uniquePaymentRefID for strict idempotency checks
+// ============================================================
+
+model PaymentTransaction {
+  id                 String   @id @default(uuid())
+  uniquePaymentRefID String   @unique // Dedup key provided by Setu
+  userId             String?
+  orderId            String?
+  amount             Decimal  @db.Decimal(10, 2)
+  status             String   // SUCCESS | FAILED | PENDING | REFUNDED
+  rawPayload         Json?
+
+  createdAt          DateTime @default(now())
+  updatedAt          DateTime @updatedAt
+
+  @@index([uniquePaymentRefID])
+  @@index([userId])
+  @@map("payment_transactions")
+}
+
+

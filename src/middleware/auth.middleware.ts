@@ -1,22 +1,49 @@
 import { Request, Response, NextFunction } from "express";
-import { verifyToken } from "../utils/jwt";
+import { verifySellerToken, verifyUserToken } from "../utils/jwt";
+import { AUTH_ERRORS } from "../constants/errors";
 
-// Verifies the JWT on every protected route and attaches `req.seller = { id }`.
-// Every downstream query must filter by req.seller.id — see specs/AGENTS.md.
-export function requireAuth(req: Request, res: Response, next: NextFunction): void {
+// Verifies the seller JWT on protected seller routes and attaches `req.seller = { id }`.
+export function requireSellerAuth(req: Request, res: Response, next: NextFunction): void {
   const header = req.headers.authorization || "";
   const [scheme, token] = header.split(" ");
 
   if (scheme !== "Bearer" || !token) {
-    res.status(401).json({ error: "Missing or malformed Authorization header" });
+    res.status(401).json({ error: AUTH_ERRORS.MISSING_AUTH_HEADER });
     return;
   }
 
   try {
-    const payload = verifyToken(token);
+    const payload = verifySellerToken(token);
     req.seller = { id: payload.sub as string };
     next();
-  } catch {
-    res.status(401).json({ error: "Invalid or expired token" });
+  } catch (err: any) {
+    res.status(401).json({ error: err.message || AUTH_ERRORS.INVALID_SELLER_TOKEN });
   }
 }
+
+// Alias for backward compatibility with existing seller routes
+export const requireAuth = requireSellerAuth;
+
+// Verifies the user JWT on protected mobile app routes and attaches `req.user = { id }`.
+export function requireUserAuth(req: Request, res: Response, next: NextFunction): void {
+  const header = req.headers.authorization || "";
+  const [scheme, token] = header.split(" ");
+
+  if (scheme !== "Bearer" || !token) {
+    res.status(401).json({ error: AUTH_ERRORS.MISSING_AUTH_HEADER });
+    return;
+  }
+
+  try {
+    const payload = verifyUserToken(token);
+    req.user = { id: payload.sub as string };
+    next();
+  } catch (err: any) {
+    res.status(401).json({ error: err.message || AUTH_ERRORS.INVALID_USER_TOKEN });
+  }
+}
+
+// Alias for backward compatibility
+export const requireCustomerAuth = requireUserAuth;
+
+

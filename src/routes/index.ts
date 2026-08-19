@@ -1,7 +1,10 @@
 import { Router } from "express";
-import { requireAuth } from "../middleware/auth.middleware";
+import { requireSellerAuth } from "../middleware/auth.middleware";
 import authRoutes from "./auth.routes";
+import userAuthRoutes from "./user-auth.routes";
+import setuRoutes from "./setu.routes";
 import onboardingRoutes from "./onboarding.routes";
+
 import dashboardRoutes from "./dashboard.routes";
 import productsRoutes from "./products.routes";
 import ordersRoutes from "./orders.routes";
@@ -13,11 +16,15 @@ import settingsRoutes from "./settings.routes";
 
 const router = Router();
 
-// Public
+// Public / Non-Seller Auth Routes
 router.use("/auth", authRoutes);
+router.use("/user-auth", userAuthRoutes);
+router.use("/customer-auth", userAuthRoutes); // Backward compatibility alias
+router.use("/setu/v1", setuRoutes);
 
-// Everything below requires a valid JWT
-router.use(requireAuth);
+
+// Protected Seller Routes — require valid Seller JWT
+router.use(requireSellerAuth);
 router.use("/onboarding", onboardingRoutes);
 router.use("/dashboard", dashboardRoutes);
 router.use("/products", productsRoutes);
@@ -29,3 +36,4 @@ router.use("/notifications", notificationsRoutes);
 router.use("/settings", settingsRoutes);
 
 export default router;
+
