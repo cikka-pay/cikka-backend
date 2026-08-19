@@ -1,14 +1,25 @@
 import { Router } from "express";
-import { getPaymentStatus, processRefund } from "../controllers/setu.controller";
+import { getPaymentStatus, processRefund, checkStatus } from "../controllers/setu.controller";
 import { requireSetuAuth, requireSetuIpWhitelist } from "../middleware/setu-auth.middleware";
 import { validate } from "../middleware/validate.middleware";
-import { getPaymentStatusSchema, processRefundSchema } from "../validations/setu.validation";
+import {
+  getPaymentStatusSchema,
+  processRefundSchema,
+  setuCheckStatusSchema,
+} from "../validations/setu.validation";
 
 const router = Router();
 
 // Apply Setu Webhook Auth & IP Whitelisting to all Setu routes
 router.use(requireSetuAuth);
 router.use(requireSetuIpWhitelist);
+
+/**
+ * Endpoint: POST /setu/v1/checkStatus & GET /setu/v1/checkStatus
+ * Check Status URL specified in Whitelabel + Custom implementation documentation.
+ */
+router.post("/checkStatus", validate({ body: setuCheckStatusSchema }), checkStatus);
+router.get("/checkStatus", checkStatus);
 
 /**
  * Endpoint: POST /setu/v1/getPaymentStatus
@@ -26,4 +37,5 @@ router.post("/getPaymentStatus", validate({ body: getPaymentStatusSchema }), get
 router.post("/refund", validate({ body: processRefundSchema }), processRefund);
 
 export default router;
+
 

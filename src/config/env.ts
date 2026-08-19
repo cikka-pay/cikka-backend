@@ -30,7 +30,15 @@ export const config = {
   setuBearerToken: process.env.SETU_BEARER_TOKEN,
   setuAllowedIps: process.env.SETU_ALLOWED_IPS ? process.env.SETU_ALLOWED_IPS.split(",").map((ip) => ip.trim()) : [],
 
+  // Setu BBPS Whitelabel & Custom Payment config
+  setuBbpsSchemeId: process.env.SETU_BBPS_SCHEME_ID || "setu_bbps_scheme_id",
+  setuBbpsSecret: process.env.SETU_BBPS_SECRET || "setu_bbps_secret",
+  setuBbpsProductInstanceId: process.env.SETU_BBPS_PRODUCT_INSTANCE_ID || "setu_bbps_instance",
+  setuBbpsBaseUrl: process.env.SETU_BBPS_BASE_URL || "https://kms.setu.co/api/v2",
+  setuCheckStatusUrl: process.env.SETU_CHECK_STATUS_URL || "http://localhost:4000/setu/v1/checkStatus",
+
   // MSG91 OTP credentials
   msg91AuthKey: process.env.MSG91_AUTH_KEY,
   msg91TemplateId: process.env.MSG91_TEMPLATE_ID,
 } as const;
+
