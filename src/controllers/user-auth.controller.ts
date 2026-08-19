@@ -12,11 +12,6 @@ import {
  */
 export const userSendOtp = asyncHandler(async (req: Request, res: Response) => {
   const { phone: phoneRaw } = req.body;
-  if (!phoneRaw) {
-    res.status(400).json({ error: AUTH_ERRORS.PHONE_REQUIRED });
-    return;
-  }
-
   const { otp, isDev } = await sendUserOtpService(phoneRaw);
 
   res.status(200).json({
@@ -31,11 +26,6 @@ export const userSendOtp = asyncHandler(async (req: Request, res: Response) => {
 export const userVerifyOtp = asyncHandler(async (req: Request, res: Response) => {
   const { phone: phoneRaw, otp } = req.body;
 
-  if (!phoneRaw || !otp) {
-    res.status(400).json({ error: AUTH_ERRORS.PHONE_AND_OTP_REQUIRED });
-    return;
-  }
-
   try {
     const result = await verifyUserOtpService(phoneRaw, otp);
     res.status(200).json({
@@ -47,6 +37,7 @@ export const userVerifyOtp = asyncHandler(async (req: Request, res: Response) =>
     res.status(400).json({ error: err.message || AUTH_ERRORS.INVALID_OTP });
   }
 });
+
 
 /**
  * Mobile App Auth: Get current user profile
