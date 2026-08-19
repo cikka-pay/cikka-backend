@@ -20,6 +20,8 @@ app.use("/setu/v1", setuRoutes);
 
 // API v1 routes
 app.use("/api", routes);
+app.use("/api/v1", routes);
+
 
 app.use((_req, res) => {
   res.status(404).json({ error: "Not found" });

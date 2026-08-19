@@ -23,7 +23,17 @@ export const SETU_ERRORS = {
   UNAUTHORIZED_IP: (ip: string) => `IP ${ip} not authorized for Setu webhook calls`,
 } as const;
 
+export const BBPS_ERRORS = {
+  BILLER_NOT_FOUND: "Specified BBPS biller was not found",
+  BILL_FETCH_FAILED: "Unable to fetch bill from BBPS gateway",
+  INVALID_CUSTOMER_PARAMS: "Invalid or missing biller customer parameters",
+  PAYMENT_FAILED: "Bill payment processing failed at BBPS gateway",
+  TRANSACTION_NOT_FOUND: "BBPS transaction refID not found",
+  REFUND_FAILED: "BBPS refund processing failed",
+} as const;
+
 export const COMMON_ERRORS = {
   NOT_FOUND: "Not found",
   INTERNAL_SERVER_ERROR: "Internal server error",
 } as const;
+

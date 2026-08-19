@@ -26,12 +26,18 @@ export async function recordPaymentStatusService(dto: PaymentStatusDTO) {
     throw new Error(SETU_ERRORS.MISSING_REF_ID);
   }
 
-  // 1. Idempotency & Deduplication Check
+  const paymentStatus = (status || "SUCCESS").toUpperCase();
+  const txAmount = amount !== undefined && amount !== null ? parseFloat(amount.toString()) : 0;
+
+  // 1. Idempotency & Deduplication Check on PaymentTransaction
   const existingTransaction = await prisma.paymentTransaction.findUnique({
     where: { uniquePaymentRefID },
   });
 
   if (existingTransaction) {
+    // Also update BbpsTransaction if it exists
+    await syncBbpsTransactionStatus(uniquePaymentRefID, paymentStatus, rawPayload);
+
     return {
       isDuplicate: true,
       uniquePaymentRefID,
@@ -40,9 +46,6 @@ export async function recordPaymentStatusService(dto: PaymentStatusDTO) {
   }
 
   // 2. Process new transaction
-  const txAmount = amount !== undefined && amount !== null ? parseFloat(amount.toString()) : 0;
-  const paymentStatus = (status || "SUCCESS").toUpperCase();
-
   await prisma.paymentTransaction.create({
     data: {
       uniquePaymentRefID,
@@ -53,6 +56,9 @@ export async function recordPaymentStatusService(dto: PaymentStatusDTO) {
       rawPayload: rawPayload || null,
     },
   });
+
+  // 3. Sync status to BbpsTransaction ledger if matching refID exists
+  await syncBbpsTransactionStatus(uniquePaymentRefID, paymentStatus, rawPayload);
 
   return {
     isDuplicate: false,
@@ -97,6 +103,11 @@ export async function processRefundService(dto: RefundDTO) {
     },
   });
 
+  // Sync to BBPS ledger
+  if (uniquePaymentRefID) {
+    await syncBbpsTransactionStatus(uniquePaymentRefID, "REFUNDED", rawPayload);
+  }
+
   return {
     isDuplicate: false,
     uniquePaymentRefID: dedupKey,
@@ -104,3 +115,99 @@ export async function processRefundService(dto: RefundDTO) {
     refundAmount,
   };
 }
+
+export interface CheckStatusDTO {
+  uniquePaymentRefID?: string;
+  refID?: string;
+  setuTxnId?: string;
+}
+
+export async function checkPaymentStatusService(dto: CheckStatusDTO) {
+  const refID = dto.uniquePaymentRefID || dto.refID || dto.setuTxnId;
+
+  if (!refID) {
+    throw new Error(SETU_ERRORS.MISSING_REF_ID);
+  }
+
+  // 1. Check BBPS Transactions table
+  const bbpsTx = await prisma.bbpsTransaction.findUnique({
+    where: { refID },
+  });
+
+  if (bbpsTx) {
+    return {
+      found: true,
+      uniquePaymentRefID: bbpsTx.refID,
+      refID: bbpsTx.refID,
+      status: bbpsTx.status,
+      amount: parseFloat(bbpsTx.amount.toString()),
+      billerId: bbpsTx.billerId,
+      billerName: bbpsTx.billerName,
+      category: bbpsTx.category,
+      bbpsRefNo: bbpsTx.bbpsRefNo,
+      updatedAt: bbpsTx.updatedAt,
+      rawPayload: bbpsTx.rawPayload,
+    };
+  }
+
+  // 2. Check general Payment Transactions table
+  const genTx = await prisma.paymentTransaction.findUnique({
+    where: { uniquePaymentRefID: refID },
+  });
+
+  if (genTx) {
+    return {
+      found: true,
+      uniquePaymentRefID: genTx.uniquePaymentRefID,
+      refID: genTx.uniquePaymentRefID,
+      status: genTx.status,
+      amount: parseFloat(genTx.amount.toString()),
+      updatedAt: genTx.updatedAt,
+      rawPayload: genTx.rawPayload,
+    };
+  }
+
+  // 3. Fallback: Query Setu gateway service
+  try {
+    const gatewayResult = await setuBbpsService.checkStatus(refID);
+    if (gatewayResult) {
+      return {
+        found: true,
+        uniquePaymentRefID: gatewayResult.refID,
+        refID: gatewayResult.refID,
+        status: gatewayResult.status,
+        amount: gatewayResult.amount,
+        bbpsRefNo: gatewayResult.bbpsRefNo,
+        rawPayload: gatewayResult.rawPayload,
+      };
+    }
+  } catch (_err) {
+    // Gateway fallback failed or refID unknown
+  }
+
+  return {
+    found: false,
+    uniquePaymentRefID: refID,
+    refID,
+    status: "PENDING",
+    message: "Transaction refID not found in local ledger",
+  };
+}
+
+async function syncBbpsTransactionStatus(refID: string, status: string, rawPayload?: any) {
+  try {
+    const bbpsTx = await prisma.bbpsTransaction.findUnique({ where: { refID } });
+    if (bbpsTx) {
+      await prisma.bbpsTransaction.update({
+        where: { refID },
+        data: {
+          status,
+          rawPayload: rawPayload || bbpsTx.rawPayload,
+        },
+      });
+    }
+  } catch (_err) {
+    // Ignore if table or row not present
+  }
+}
+

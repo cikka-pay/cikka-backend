@@ -489,4 +489,36 @@ model PaymentTransaction {
   @@map("payment_transactions")
 }
 
+// ============================================================
+// BBPS TRANSACTION — Setu Bharat BillPay Transaction Ledger
+// Stores refID (uniquePaymentRefID) for strict idempotency checks
+// ============================================================
+
+model BbpsTransaction {
+  id                 String   @id @default(uuid())
+  refID              String   @unique // Dedup key provided by Setu (uniquePaymentRefID / refID)
+  userId             String?
+  billerId           String
+  billerName         String
+  category           String
+  customerParams     Json?    // Key-value object of biller inputs e.g. { "Consumer Number": "12345678" }
+  amount             Decimal  @db.Decimal(10, 2)
+  status             String   // PENDING | SUCCESS | FAILED | REFUNDED
+  setuBillId         String?
+  setuPaymentId      String?
+  bbpsRefNo          String?  // BBPS trace / reference number
+  rawPayload         Json?
+  errorMessage       String?
+
+  createdAt          DateTime @default(now())
+  updatedAt          DateTime @updatedAt
+
+  @@index([refID])
+  @@index([userId])
+  @@index([status])
+  @@index([category])
+  @@map("bbps_transactions")
+}
+
+
 

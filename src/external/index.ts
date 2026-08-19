@@ -8,9 +8,11 @@ import { otpReal } from "./otp/otp.real";
 import { kybStub } from "./kyb/kyb.stub";
 import { kybReal } from "./kyb/kyb.real";
 import { storageStub, storageReal } from "./storage/storage";
+import { setuBbpsStub, setuBbpsReal } from "./setu/setu-bbps.client";
 import type { OtpService } from "./otp/otp.interface";
 import type { KybService } from "./kyb/kyb.interface";
 import type { StorageService } from "./storage/storage";
+import type { SetuBbpsService } from "./setu/setu-bbps.interface";
 
 const mode = process.env.EXTERNAL_SERVICES_MODE ?? "stub";
 
@@ -21,5 +23,7 @@ if (mode !== "stub" && mode !== "real") {
 export const otpService: OtpService = mode === "real" ? otpReal : otpStub;
 export const kybService: KybService = mode === "real" ? kybReal : kybStub;
 export const storageService: StorageService = mode === "real" ? storageReal : storageStub;
+export const setuBbpsService: SetuBbpsService = mode === "real" ? setuBbpsReal : setuBbpsStub;
 
 console.log(`[External Services] Mode: ${mode}`);
+

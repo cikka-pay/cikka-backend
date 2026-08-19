@@ -4,13 +4,51 @@ import { SETU_ERRORS } from "../constants/errors";
 import {
   recordPaymentStatusService,
   processRefundService,
+  checkPaymentStatusService,
 } from "../services/setu.service";
+
+/**
+ * POST /setu/v1/checkStatus (Check Status URL for WL + Custom Payment)
+ * Accepts status query from Setu system and responds with standardized transaction status.
+ */
+export const checkStatus = asyncHandler(async (req: Request, res: Response) => {
+  const uniquePaymentRefID =
+    req.body?.uniquePaymentRefID ||
+    req.body?.refID ||
+    req.body?.setuTxnId ||
+    (req.query?.uniquePaymentRefID as string) ||
+    (req.query?.refID as string);
+
+  if (!uniquePaymentRefID) {
+    res.status(400).json({
+      success: false,
+      error: SETU_ERRORS.MISSING_REF_ID,
+    });
+    return;
+  }
+
+  const result = await checkPaymentStatusService({ uniquePaymentRefID });
+
+  res.status(200).json({
+    success: true,
+    uniquePaymentRefID: result.uniquePaymentRefID,
+    refID: result.refID,
+    status: result.status,
+    amount: result.amount,
+    billerId: result.billerId,
+    billerName: result.billerName,
+    category: result.category,
+    bbpsRefNo: result.bbpsRefNo,
+    found: result.found,
+  });
+});
 
 /**
  * POST /setu/v1/getPaymentStatus
  * Handle payment status notifications from Setu.
  */
 export const getPaymentStatus = asyncHandler(async (req: Request, res: Response) => {
+
   const { uniquePaymentRefID } = req.body;
 
   if (!uniquePaymentRefID) {
