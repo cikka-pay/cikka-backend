@@ -3,13 +3,19 @@
 
 export interface OtpService {
   /**
-   * Send a 6-digit OTP via SMS to the given phone number.
+   * Send an OTP via SMS to the given phone number.
    * Format: +91XXXXXXXXXX
    */
   sendSms(phone: string, code: string): Promise<void>;
 
   /**
-   * Send a 6-digit OTP via email.
+   * Resend an OTP via SMS (or voice call retry) to the given phone number using MSG91 Retry API.
+   */
+  resendSms(phone: string, retryType?: "text" | "voice"): Promise<{ success: boolean; message?: string; requestId?: string }>;
+
+  /**
+   * Send an OTP via email.
    */
   sendEmail(email: string, code: string): Promise<void>;
 }
+

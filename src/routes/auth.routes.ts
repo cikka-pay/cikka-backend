@@ -10,11 +10,13 @@ import {
   forgotPasswordSendOtp,
   forgotPasswordVerifyOtp,
   forgotPasswordReset,
+  resendSellerOtp,
   getMe,
 } from "../controllers/auth.controller";
 import { requireAuth } from "../middleware/auth.middleware";
 import { z } from "zod";
 import { validate } from "../middleware/validate.middleware";
+import { sellerResendOtpSchema } from "../validations/auth.validation";
 
 const router = Router();
 
@@ -51,6 +53,9 @@ router.post("/signup/set-password", requireAuth, validate({ body: passwordSchema
 router.post("/signin/send-otp", validate({ body: phoneSchema }), signinSendOtp);
 router.post("/signin/verify-otp", validate({ body: phoneOtpSchema }), signinVerifyOtp);
 
+// Common Resend OTP endpoint
+router.post("/resend-otp", validate({ body: sellerResendOtpSchema }), resendSellerOtp);
+
 // Forgot Password Flow
 router.post("/forgot-password/send-otp", validate({ body: phoneSchema }), forgotPasswordSendOtp);
 router.post("/forgot-password/verify-otp", validate({ body: phoneOtpSchema }), forgotPasswordVerifyOtp);
@@ -61,3 +66,4 @@ router.post("/forgot-password/reset", requireAuth, validate({ body: passwordSche
 router.get("/me", requireAuth, getMe);
 
 export default router;
+
