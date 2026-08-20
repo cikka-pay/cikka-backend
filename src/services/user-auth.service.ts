@@ -55,6 +55,41 @@ export async function sendUserOtpService(phoneRaw: string) {
   };
 }
 
+export async function resendUserOtpService(phoneRaw: string, retryType: "text" | "voice" = "text") {
+  const { phone } = normalizePhone(phoneRaw);
+  let pending = pendingOtps.get(phone);
+
+  let otp = pending?.code;
+  if (!otp || (pending && pending.expiresAt < new Date())) {
+    otp = generateOtp(4);
+  }
+
+  const expiresAt = new Date(Date.now() + 10 * 60 * 1000);
+  pendingOtps.set(phone, { code: otp, expiresAt });
+
+  let resendResult = { success: true, message: "OTP resent successfully" };
+  try {
+    resendResult = await otpService.resendSms(phone, retryType);
+  } catch (err: any) {
+    if (config.isProduction) {
+      throw err;
+    }
+    console.log('\n' + '='.repeat(50));
+    console.log(`  📱 CIKKA DEV RESEND OTP (${retryType})`);
+    console.log(`  Phone : ${phone}`);
+    console.log(`  OTP   : ${otp}`);
+    console.log('='.repeat(50) + '\n');
+  }
+
+  const isDev = !config.isProduction && !config.isRealExternalServices;
+  return {
+    otp,
+    isDev,
+    message: resendResult.message || "OTP resent successfully",
+  };
+}
+
+
 
 export async function verifyUserOtpService(phoneRaw: string, otp: string) {
   const { phone } = normalizePhone(phoneRaw);

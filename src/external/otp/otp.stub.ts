@@ -12,7 +12,13 @@ export const otpStub: OtpService = {
     console.log(`[OTP STUB] SMS to ${phone}: ${code}  (bypass: 111111)`);
   },
 
+  async resendSms(phone: string, retryType: "text" | "voice" = "text") {
+    console.log(`[OTP STUB] Resent SMS (${retryType}) to ${phone}  (bypass: 111111)`);
+    return { success: true, message: "OTP resent successfully (stub mode)", requestId: `stub-retry-${Date.now()}` };
+  },
+
   async sendEmail(email: string, code: string) {
     console.log(`[OTP STUB] Email to ${email}: ${code}  (bypass: 111111)`);
   },
 };
+

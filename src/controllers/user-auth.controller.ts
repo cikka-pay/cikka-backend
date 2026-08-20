@@ -3,6 +3,7 @@ import { asyncHandler } from "../utils/asyncHandler";
 import { AUTH_ERRORS } from "../constants/errors";
 import {
   sendUserOtpService,
+  resendUserOtpService,
   verifyUserOtpService,
   getUserProfileService,
 } from "../services/user-auth.service";
@@ -16,6 +17,19 @@ export const userSendOtp = asyncHandler(async (req: Request, res: Response) => {
 
   res.status(200).json({
     message: "OTP sent successfully to mobile app user",
+    ...(isDev && { devOtp: otp }),
+  });
+});
+
+/**
+ * Mobile App Auth: Resend OTP to user phone (SMS or Voice)
+ */
+export const userResendOtp = asyncHandler(async (req: Request, res: Response) => {
+  const { phone: phoneRaw, retryType } = req.body;
+  const { otp, isDev, message } = await resendUserOtpService(phoneRaw, retryType);
+
+  res.status(200).json({
+    message,
     ...(isDev && { devOtp: otp }),
   });
 });
@@ -60,5 +74,7 @@ export const getUserMe = asyncHandler(async (req: Request, res: Response) => {
 
 // Backward compatibility exports
 export const customerSendOtp = userSendOtp;
+export const customerResendOtp = userResendOtp;
 export const customerVerifyOtp = userVerifyOtp;
 export const getCustomerMe = getUserMe;
+

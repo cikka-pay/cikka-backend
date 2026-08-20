@@ -232,6 +232,40 @@ export const signinVerifyOtp = asyncHandler(async (req: Request, res: Response) 
   });
 });
 
+export const resendSellerOtp = asyncHandler(async (req: Request, res: Response) => {
+  const { phone: phoneRaw, retryType = "text", purpose = "signin" } = req.body;
+  const { phone, countryCode, phoneNumber } = normalizePhone(phoneRaw);
+
+  const seller = await prisma.seller.findUnique({ where: { phone } });
+  if (!seller && purpose !== "signup") {
+    res.status(404).json({ error: "Seller account not found" });
+    return;
+  }
+
+  const otp = generateOtp(6);
+  const expiresAt = new Date(Date.now() + 10 * 60 * 1000);
+
+  if (seller) {
+    const updateField =
+      purpose === "reset"
+        ? { resetOtpCode: otp, resetOtpExpiresAt: expiresAt }
+        : { phoneOtpCode: otp, phoneOtpExpiresAt: expiresAt };
+
+    await prisma.seller.update({
+      where: { phone },
+      data: {
+        countryCode,
+        phoneNumber,
+        ...updateField,
+      },
+    });
+  }
+
+  const resendResult = await otpService.resendSms(phone, retryType as "text" | "voice");
+  res.json({ message: resendResult.message || "OTP resent successfully" });
+});
+
+
 // ==========================================
 // FORGOT PASSWORD FLOW
 // ==========================================
