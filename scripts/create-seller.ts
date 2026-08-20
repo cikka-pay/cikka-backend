@@ -18,7 +18,7 @@ async function main() {
   const passwordHash = await bcrypt.hash(plainPassword, 10);
 
   const seller = await prisma.seller.create({
-    data: { businessName, loginId, passwordHash },
+    data: { businessName, phone: loginId, passwordHash },
   });
 
   console.log(`Seller created: ${seller.businessName} (${seller.id})\n`);

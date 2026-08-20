@@ -8,7 +8,7 @@ const EXTERNAL_SERVICES_MODE = process.env.EXTERNAL_SERVICES_MODE || "stub";
 export const config = {
   env: NODE_ENV,
   isProduction: NODE_ENV === "production",
-  isDevelopment: NODE_ENV === "development" || NODE_ENV === "dev",
+  isDevelopment: NODE_ENV === "development" || (NODE_ENV as string) === "dev",
   isTest: NODE_ENV === "test",
 
   port: parseInt(process.env.PORT || "4000", 10),

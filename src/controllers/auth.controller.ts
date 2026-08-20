@@ -1,9 +1,9 @@
 import { Request, Response } from "express";
 import { prisma } from "../config/prisma";
-import { signToken } from "../utils/jwt";
-import { asyncHandler } from "../utils/asyncHandler";
 import { otpService } from "../external";
-import { generateOtp, isOtpValid, hashPassword } from "../services/auth.service";
+import { generateOtp, hashPassword, isOtpValid } from "../services/auth.service";
+import { asyncHandler } from "../utils/asyncHandler";
+import { signToken } from "../utils/jwt";
 import { normalizePhone } from "../utils/phone";
 
 // ==========================================
@@ -309,7 +309,7 @@ export const getMe = asyncHandler(async (req: Request, res: Response) => {
     where: { id: req.seller!.id },
     include: { onboarding: true },
   });
-  
+
   if (!seller) {
     res.status(404).json({ error: "Seller not found" });
     return;
