@@ -1,13 +1,13 @@
-import crypto from "crypto";
 import bcrypt from "bcryptjs";
+import crypto from "crypto";
 import { prisma } from "../config/prisma";
 
 /**
- * Generates a numeric OTP of specified length (default 6).
+ * Generates a 4-digit numeric OTP.
  */
-export function generateOtp(length: number = 6): string {
-  const max = Math.pow(10, length);
-  return crypto.randomInt(0, max).toString().padStart(length, "0");
+export function generateOtp(): string {
+  // Uses crypto for secure random numbers, padded to 4 digits
+  return crypto.randomInt(0, 10000).toString().padStart(4, "0");
 }
 
 /**
@@ -21,8 +21,8 @@ export function isOtpValid(
 ): boolean {
   if (!storedCode || !expiresAt) return false;
   if (isOtpExpired(expiresAt)) return false;
-  
-  if (inputCode === "1111" || inputCode === "111111") return true; // Dev bypass
+
+  if (inputCode === "1111") return true; // Dev bypass
   return storedCode === inputCode;
 }
 

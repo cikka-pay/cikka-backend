@@ -28,13 +28,13 @@ const phoneSchema = z.object({
 });
 
 const phoneOtpSchema = phoneSchema.extend({
-  otp: z.string().length(6, "OTP must be 6 digits"),
+  otp: z.string().min(4, "OTP must be at least 4 digits").max(6, "OTP must be at most 6 digits"),
 });
 const emailSchema = z.object({
   email: z.string().email("Invalid email format"),
 });
 const emailOtpSchema = emailSchema.extend({
-  otp: z.string().length(6, "OTP must be 6 digits"),
+  otp: z.string().min(4, "OTP must be at least 4 digits").max(6, "OTP must be at most 6 digits"),
 });
 const passwordSchema = z.object({
   password: z.string().min(8, "Password must be at least 8 characters"),
