@@ -8,7 +8,7 @@ const EXTERNAL_SERVICES_MODE = process.env.EXTERNAL_SERVICES_MODE || "stub";
 export const config = {
   env: NODE_ENV,
   isProduction: NODE_ENV === "production",
-  isDevelopment: NODE_ENV === "development" || NODE_ENV === "dev",
+  isDevelopment: NODE_ENV === "development" || (NODE_ENV as string) === "dev",
   isTest: NODE_ENV === "test",
 
   port: parseInt(process.env.PORT || "4000", 10),
@@ -25,6 +25,10 @@ export const config = {
   isRealExternalServices: EXTERNAL_SERVICES_MODE === "real",
 
   // Setu gateway config
+  setuBaseUrl: process.env.SETU_BASE_URL || "https://uat.setu.co",
+  setuClientId: process.env.SETU_CLIENT_ID,
+  setuSecret: process.env.SETU_SECRET,
+  setuProductInstanceId: process.env.SETU_PRODUCT_INSTANCE_ID,
   setuBasicAuthUser: process.env.SETU_BASIC_AUTH_USER || "setu_user",
   setuBasicAuthPass: process.env.SETU_BASIC_AUTH_PASS || "setu_secret_pass",
   setuBearerToken: process.env.SETU_BEARER_TOKEN,

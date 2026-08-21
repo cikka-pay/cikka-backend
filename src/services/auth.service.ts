@@ -1,5 +1,5 @@
-import crypto from "crypto";
 import bcrypt from "bcryptjs";
+import crypto from "crypto";
 import { prisma } from "../config/prisma";
 
 /**
@@ -21,7 +21,7 @@ export function isOtpValid(
 ): boolean {
   if (!storedCode || !expiresAt) return false;
   if (isOtpExpired(expiresAt)) return false;
-  
+
   if (inputCode === "1111" || inputCode === "111111") return true; // Dev bypass
   return storedCode === inputCode;
 }

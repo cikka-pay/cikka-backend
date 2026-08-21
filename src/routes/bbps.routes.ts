@@ -5,24 +5,37 @@ import {
   getBillerDetails,
   fetchBill,
   initiateBbpsPayment,
+  createPaymentOrder,
   getPaymentStatus,
   getBbpsHistory,
 } from "../controllers/bbps.controller";
 import { requireUserAuth, optionalUserAuth } from "../middleware/auth.middleware";
 import { validate } from "../middleware/validate.middleware";
-import { fetchBillSchema, initiateBbpsPaymentSchema } from "../validations/bbps.validation";
+import {
+  getBillersSchema,
+  fetchBillSchema,
+  initiateBbpsPaymentSchema,
+  createPaymentOrderSchema,
+} from "../validations/bbps.validation";
 
 const router = Router();
 
 // Category and Biller discovery (Public)
 router.get("/categories", getCategories);
-router.get("/billers", getBillers);
+router.get("/billers", validate({ query: getBillersSchema }), getBillers);
 router.get("/billers/:billerId", getBillerDetails);
 
 // Fetch Bill (Public / Optional User Auth)
+router.post("/fetch-bill", optionalUserAuth, validate({ body: fetchBillSchema }), fetchBill);
 router.post("/bills/fetch", optionalUserAuth, validate({ body: fetchBillSchema }), fetchBill);
 
-// Initiate Payment (Optional User Auth)
+// Create Payment Order / Initiate Payment
+router.post(
+  "/create-payment-order",
+  optionalUserAuth,
+  validate({ body: createPaymentOrderSchema }),
+  createPaymentOrder
+);
 router.post(
   "/payments/initiate",
   optionalUserAuth,
