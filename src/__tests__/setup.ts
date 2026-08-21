@@ -6,10 +6,22 @@ import { prisma } from "../config/prisma";
 import { afterAll, beforeAll } from "vitest";
 
 beforeAll(async () => {
-  // Ensure Prisma is connected
-  await prisma.$connect();
+  // Ensure Prisma connection if DB is available
+  try {
+    if (process.env.DATABASE_URL) {
+      await prisma.$connect();
+    }
+  } catch (err: any) {
+    console.warn(`[Test Setup Warning] Prisma $connect skipped: ${err.message}`);
+  }
 });
 
 afterAll(async () => {
-  await prisma.$disconnect();
+  try {
+    if (process.env.DATABASE_URL) {
+      await prisma.$disconnect();
+    }
+  } catch (err: any) {
+    // Ignore disconnect error in test setup
+  }
 });

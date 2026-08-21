@@ -489,4 +489,73 @@ model PaymentTransaction {
   @@map("payment_transactions")
 }
 
+// ============================================================
+// BBPS BILLER — Supported Bharat BillPay Billers & Categories
+// ============================================================
+
+model BbpsBiller {
+  id              String   @id @default(uuid())
+  billerId        String   @unique // e.g. "BESCOM000KAR01", "HDFCCARD00001"
+  billerName      String
+  category        String   // ELECTRICITY | CREDIT_CARD | WATER | GAS | DTH | MOBILE_POSTPAID | BROADBAND
+  logoUrl         String?
+  coverageArea    String?
+  paramsSchema    Json     // Array of required input field keys [{ name: "accountNumber", label: "Account Number", regex: "..." }]
+  isActive        Boolean  @default(true)
+
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  @@index([category])
+  @@map("bbps_billers")
+}
+
+// ============================================================
+// BBPS BILL FETCH — Customer Bill Fetch Records
+// ============================================================
+
+model BbpsBillFetch {
+  id              String   @id @default(uuid())
+  userId          String
+  billerId        String
+  customerParams  Json     // Map of entered params e.g. { accountNumber: "123456789" }
+  billNumber      String?
+  billAmount      Decimal  @db.Decimal(10, 2)
+  dueDate         DateTime?
+  customerName    String?
+  status          String   @default("FETCHED") // FETCHED | PAID | EXPIRED
+
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  @@index([userId])
+  @@index([billerId])
+  @@map("bbps_bill_fetches")
+}
+
+// ============================================================
+// BBPS BILL PAYMENT — Payment Intent & Setu Integration Orders
+// ============================================================
+
+model BbpsBillPayment {
+  id                 String   @id @default(uuid())
+  userId             String
+  billFetchId        String?
+  billerId           String
+  amount             Decimal  @db.Decimal(10, 2)
+  paymentMode        String   @default("UPI") // UPI | DEBIT_CARD | CREDIT_CARD | NET_BANKING
+  setuPaymentLink    String?
+  setuQrCode         String?
+  uniquePaymentRefID String?  @unique // Setu payment reference key
+  status             String   @default("INITIATED") // INITIATED | SUCCESS | FAILED | PENDING | REFUNDED
+
+  createdAt          DateTime @default(now())
+  updatedAt          DateTime @updatedAt
+
+  @@index([userId])
+  @@index([uniquePaymentRefID])
+  @@map("bbps_bill_payments")
+}
+
+
 
