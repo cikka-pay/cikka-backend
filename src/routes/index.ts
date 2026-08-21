@@ -25,7 +25,6 @@ router.use("/setu/v1", setuRoutes);
 router.use("/bbps", bbpsRoutes);
 
 
-
 // Protected Seller Routes — require valid Seller JWT
 router.use(requireSellerAuth);
 router.use("/onboarding", onboardingRoutes);

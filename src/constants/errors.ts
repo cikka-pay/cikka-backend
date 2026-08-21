@@ -24,8 +24,13 @@ export const SETU_ERRORS = {
 } as const;
 
 export const BBPS_ERRORS = {
-  BILLER_NOT_FOUND: "Specified BBPS biller was not found",
-  BILL_FETCH_FAILED: "Unable to fetch bill from BBPS gateway",
+  BILLER_NOT_FOUND: "Selected BBPS biller not found",
+  BILLER_ID_REQUIRED: "Biller ID is required",
+  CUSTOMER_PARAMS_REQUIRED: "Customer account parameters are required",
+  BILL_NOT_FOUND: "No active bill found for the provided customer details",
+  BILL_FETCH_FAILED: "Failed to fetch bill details from Setu BBPS Gateway",
+  PAYMENT_INITIATION_FAILED: "Failed to initiate BBPS payment order",
+  INVALID_PAYMENT_AMOUNT: "Payment amount must be greater than zero",
   INVALID_CUSTOMER_PARAMS: "Invalid or missing biller customer parameters",
   PAYMENT_FAILED: "Bill payment processing failed at BBPS gateway",
   TRANSACTION_NOT_FOUND: "BBPS transaction refID not found",

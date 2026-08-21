@@ -24,6 +24,7 @@ export const otpService: OtpService = mode === "real" ? otpReal : otpStub;
 export const kybService: KybService = mode === "real" ? kybReal : kybStub;
 export const storageService: StorageService = mode === "real" ? storageReal : storageStub;
 export const setuBbpsService: SetuBbpsService = mode === "real" ? setuBbpsReal : setuBbpsStub;
+export const setuClient: SetuBbpsClient = mode === "real" ? setuReal : setuStub;
 
 console.log(`[External Services] Mode: ${mode}`);
 
