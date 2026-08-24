@@ -4,6 +4,7 @@ import authRoutes from "./auth.routes";
 import userAuthRoutes from "./user-auth.routes";
 import setuRoutes from "./setu.routes";
 import bbpsRoutes from "./bbps.routes";
+import instantpayRoutes from "./instantpay.routes";
 import onboardingRoutes from "./onboarding.routes";
 
 import dashboardRoutes from "./dashboard.routes";
@@ -23,6 +24,8 @@ router.use("/user-auth", userAuthRoutes);
 router.use("/customer-auth", userAuthRoutes); // Backward compatibility alias
 router.use("/setu/v1", setuRoutes);
 router.use("/bbps", bbpsRoutes);
+router.use("/kyc", instantpayRoutes);
+router.use("/instantpay", instantpayRoutes);
 
 
 // Protected Seller Routes — require valid Seller JWT

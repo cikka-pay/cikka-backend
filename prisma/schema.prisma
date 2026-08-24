@@ -589,5 +589,28 @@ model BbpsBillPayment {
   @@map("bbps_bill_payments")
 }
 
+// ============================================================
+// PAN VERIFICATION RECORD — InstantPay Identity Verification Ledger
+// ============================================================
+
+model PanVerificationRecord {
+  id             String   @id @default(uuid())
+  userId         String?
+  pan            String
+  registeredName String?
+  category       String?  // INDIVIDUAL | COMPANY | FIRM | HUF | TRUST | GOVT
+  status         String   // VALID | INVALID | FAILED
+  provider       String   @default("INSTANTPAY")
+  rawResponse    Json?
+
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  @@index([pan])
+  @@index([userId])
+  @@map("pan_verification_records")
+}
+
+
 
 

@@ -37,6 +37,14 @@ export const BBPS_ERRORS = {
   REFUND_FAILED: "BBPS refund processing failed",
 } as const;
 
+export const INSTANTPAY_ERRORS = {
+  PAN_REQUIRED: "PAN number is required",
+  INVALID_PAN_FORMAT: "Invalid PAN format. Example: ABCDE1234F",
+  VERIFICATION_FAILED: "InstantPay PAN verification failed",
+  CREDENTIALS_MISSING: "InstantPay API credentials are not configured",
+  API_ERROR: (msg: string) => `InstantPay API error: ${msg}`,
+} as const;
+
 export const COMMON_ERRORS = {
   NOT_FOUND: "Not found",
   INTERNAL_SERVER_ERROR: "Internal server error",

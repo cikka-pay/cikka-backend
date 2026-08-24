@@ -79,7 +79,7 @@ export async function resendUserOtpService(phoneRaw: string, retryType: "text" |
   const expiresAt = new Date(Date.now() + 10 * 60 * 1000);
   pendingOtps.set(phone, { code: otp, expiresAt });
 
-  let resendResult = { success: true, message: "OTP resent successfully" };
+  let resendResult: { success: boolean; message?: string } = { success: true, message: "OTP resent successfully" };
   try {
     resendResult = await otpService.resendSms(phone, retryType);
   } catch (err: any) {

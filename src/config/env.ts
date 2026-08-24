@@ -41,6 +41,13 @@ export const config = {
   setuBbpsBaseUrl: process.env.SETU_BBPS_BASE_URL || "https://kms.setu.co/api/v2",
   setuCheckStatusUrl: process.env.SETU_CHECK_STATUS_URL || "http://localhost:4000/setu/v1/checkStatus",
 
+  // InstantPay Identity & Verification Config
+  instantpayBaseUrl: process.env.INSTANTPAY_BASE_URL || "https://sandbox.instantpay.in/v1",
+  instantpayClientId: process.env.INSTANTPAY_CLIENT_ID,
+  instantpayClientSecret: process.env.INSTANTPAY_CLIENT_SECRET,
+  instantpayAuthSecret: process.env.INSTANTPAY_AUTH_SECRET,
+  instantpayEndpointIp: process.env.INSTANTPAY_ENDPOINT_IP || "127.0.0.1",
+
   // MSG91 OTP credentials
   msg91AuthKey: process.env.MSG91_AUTH_KEY,
   msg91TemplateId: process.env.MSG91_TEMPLATE_ID,

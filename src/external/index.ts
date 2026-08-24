@@ -9,10 +9,16 @@ import { kybStub } from "./kyb/kyb.stub";
 import { kybReal } from "./kyb/kyb.real";
 import { storageStub, storageReal } from "./storage/storage";
 import { setuBbpsStub, setuBbpsReal } from "./setu/setu-bbps.client";
+import { setuStub } from "./setu/setu.stub";
+import { setuReal } from "./setu/setu.real";
+import { instantpayStub } from "./instantpay/instantpay.stub";
+import { instantpayReal } from "./instantpay/instantpay.real";
 import type { OtpService } from "./otp/otp.interface";
 import type { KybService } from "./kyb/kyb.interface";
 import type { StorageService } from "./storage/storage";
 import type { SetuBbpsService } from "./setu/setu-bbps.interface";
+import type { SetuBbpsClient } from "./setu/setu.interface";
+import type { InstantPayClient } from "./instantpay/instantpay.interface";
 
 const mode = process.env.EXTERNAL_SERVICES_MODE ?? "stub";
 
@@ -25,6 +31,7 @@ export const kybService: KybService = mode === "real" ? kybReal : kybStub;
 export const storageService: StorageService = mode === "real" ? storageReal : storageStub;
 export const setuBbpsService: SetuBbpsService = mode === "real" ? setuBbpsReal : setuBbpsStub;
 export const setuClient: SetuBbpsClient = mode === "real" ? setuReal : setuStub;
+export const instantpayClient: InstantPayClient = mode === "real" ? instantpayReal : instantpayStub;
 
 console.log(`[External Services] Mode: ${mode}`);
 
