@@ -3,10 +3,7 @@ import { AUTH_ERRORS } from "../constants/errors";
 
 export const sellerPhoneSchema = z.object({
   phone: z
-    .string({
-      required_error: AUTH_ERRORS.PHONE_REQUIRED,
-      invalid_type_error: AUTH_ERRORS.PHONE_REQUIRED,
-    })
+    .string({ message: AUTH_ERRORS.PHONE_REQUIRED })
     .min(1, AUTH_ERRORS.PHONE_REQUIRED)
     .regex(/^(\+91)?[6-9]\d{9}$/, "Enter a valid 10-digit Indian mobile number"),
 });
