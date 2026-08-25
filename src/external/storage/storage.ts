@@ -9,7 +9,7 @@ export interface StorageService {
   uploadFile(buffer: Buffer, filename: string, mimeType: string): Promise<{ url: string }>;
 }
 
-const UPLOADS_DIR = path.join(process.cwd(), "uploads");
+const UPLOADS_DIR = path.join("/tmp", "uploads");
 
 export const storageStub: StorageService = {
   async uploadFile(buffer, filename) {

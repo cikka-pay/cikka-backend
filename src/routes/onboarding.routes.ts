@@ -20,7 +20,7 @@ import { requireAuth } from "../middleware/auth.middleware";
 import multer from "multer";
 
 const router = Router();
-const upload = multer({ dest: "uploads/", limits: { fileSize: 2 * 1024 * 1024 } });
+const upload = multer({ dest: "/tmp/uploads/", limits: { fileSize: 2 * 1024 * 1024 } });
 
 
 // All onboarding endpoints require the user to be authenticated
