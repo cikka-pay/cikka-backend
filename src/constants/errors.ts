@@ -41,6 +41,12 @@ export const INSTANTPAY_ERRORS = {
   PAN_REQUIRED: "PAN number is required",
   INVALID_PAN_FORMAT: "Invalid PAN format. Example: ABCDE1234F",
   VERIFICATION_FAILED: "InstantPay PAN verification failed",
+  GSTIN_REQUIRED: "GSTIN number is required",
+  INVALID_GSTIN_FORMAT: "Invalid GSTIN format. Example: 24DACP2435DZY",
+  GSTIN_VERIFICATION_FAILED: "InstantPay GSTIN verification failed",
+  CIN_REQUIRED: "CIN number is required",
+  INVALID_CIN_FORMAT: "Invalid CIN format. Example: U74999MH2019PTC123456",
+  CIN_VERIFICATION_FAILED: "InstantPay CIN verification failed",
   CREDENTIALS_MISSING: "InstantPay API credentials are not configured",
   API_ERROR: (msg: string) => `InstantPay API error: ${msg}`,
 } as const;

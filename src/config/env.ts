@@ -42,7 +42,7 @@ export const config = {
   setuCheckStatusUrl: process.env.SETU_CHECK_STATUS_URL || "http://localhost:4000/setu/v1/checkStatus",
 
   // InstantPay Identity & Verification Config
-  instantpayBaseUrl: process.env.INSTANTPAY_BASE_URL || "https://sandbox.instantpay.in/v1",
+  instantpayBaseUrl: process.env.INSTANTPAY_BASE_URL || "https://api.instantpay.in",
   instantpayClientId: process.env.INSTANTPAY_CLIENT_ID,
   instantpayClientSecret: process.env.INSTANTPAY_CLIENT_SECRET,
   instantpayAuthSecret: process.env.INSTANTPAY_AUTH_SECRET,
