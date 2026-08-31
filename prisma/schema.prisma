@@ -520,7 +520,6 @@ model BbpsTransaction {
   @@map("bbps_transactions")
 }
 
-
 // ============================================================
 // BBPS BILLER — Supported Bharat BillPay Billers & Categories
 // ============================================================
@@ -609,6 +608,57 @@ model PanVerificationRecord {
   @@index([pan])
   @@index([userId])
   @@map("pan_verification_records")
+}
+
+// ============================================================
+// GSTIN VERIFICATION RECORD — InstantPay Identity Verification Ledger
+// ============================================================
+
+model GstinVerificationRecord {
+  id             String   @id @default(uuid())
+  sellerId       String?
+  userId         String?
+  gstin          String
+  legalName      String?  // Legal Name of Business (lgnm)
+  tradeName      String?  // Trade Name (tradeNam)
+  status         String   // Active | Suspended | Canceled | INVALID | FAILED
+  businessType   String?  // Proprietorship | Pvt Ltd | LLP | Partnership
+  state          String?  // State Name (stj)
+  address        Json?    // Primary Address object (pradr)
+  provider       String   @default("INSTANTPAY")
+  rawResponse    Json?
+
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  @@index([gstin])
+  @@index([sellerId])
+  @@index([userId])
+  @@map("gstin_verification_records")
+}
+
+// ============================================================
+// CIN VERIFICATION RECORD — InstantPay Company Verification Ledger
+// ============================================================
+
+model CinVerificationRecord {
+  id             String   @id @default(uuid())
+  sellerId       String?
+  userId         String?
+  cin            String
+  companyName    String?  // Company Name
+  companyStatus  String?  // Active | Inactive | Strike Off
+  companyType    String?  // Private Limited | Public | LLP
+  state          String?  // RoC State
+  rawResponse    Json?
+
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  @@index([cin])
+  @@index([sellerId])
+  @@index([userId])
+  @@map("cin_verification_records")
 }
 
 
