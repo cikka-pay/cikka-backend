@@ -12,7 +12,7 @@ const pendingOtps = new Map<string, { code: string; expiresAt: Date }>();
 
 export async function sendUserOtpService(phoneRaw: string) {
   const { phone } = normalizePhone(phoneRaw);
-  const otp = generateOtp(4);
+  const otp = generateOtp(6);
   const expiresAt = new Date(Date.now() + 10 * 60 * 1000); // 10 minutes
 
   // Prune expired OTP entries
@@ -57,7 +57,7 @@ export async function sendUserOtpService(phoneRaw: string) {
   console.log('\n' + '='.repeat(50));
   console.log(`  📱 CIKKA DEV OTP GENERATED`);
   console.log(`  Phone : ${phone}`);
-  console.log(`  OTP   : ${otp}  (Dev bypass: 1111)`);
+  console.log(`  OTP   : ${otp}  (Dev bypass: 111111)`);
   console.log('='.repeat(50) + '\n');
 
   const isDev = !config.isProduction && !config.isRealExternalServices;
@@ -73,7 +73,7 @@ export async function resendUserOtpService(phoneRaw: string, retryType: "text" |
 
   let otp = pending?.code;
   if (!otp || (pending && pending.expiresAt < new Date())) {
-    otp = generateOtp(4);
+    otp = generateOtp(6);
   }
 
   const expiresAt = new Date(Date.now() + 10 * 60 * 1000);
