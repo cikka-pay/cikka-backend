@@ -1,9 +1,10 @@
 import jwt, { JwtPayload } from "jsonwebtoken";
 import { AUTH_ERRORS } from "../constants/errors";
+import { config } from "../config/env";
 
-const SELLER_SECRET = process.env.JWT_SELLER_SECRET || process.env.JWT_SECRET;
-const USER_SECRET = process.env.JWT_USER_SECRET || process.env.JWT_CUSTOMER_SECRET || process.env.JWT_SECRET;
-const EXPIRES_IN = process.env.JWT_EXPIRES_IN || "7d";
+const SELLER_SECRET = config.jwtSellerSecret;
+const USER_SECRET = config.jwtUserSecret;
+const EXPIRES_IN = config.jwtExpiresIn;
 
 export interface CustomJwtPayload extends JwtPayload {
   sub: string;

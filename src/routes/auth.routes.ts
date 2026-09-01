@@ -10,11 +10,13 @@ import {
   forgotPasswordSendOtp,
   forgotPasswordVerifyOtp,
   forgotPasswordReset,
+  resendSellerOtp,
   getMe,
 } from "../controllers/auth.controller";
 import { requireAuth } from "../middleware/auth.middleware";
 import { z } from "zod";
 import { validate } from "../middleware/validate.middleware";
+import { sellerResendOtpSchema } from "../validations/auth.validation";
 
 const router = Router();
 
@@ -26,13 +28,13 @@ const phoneSchema = z.object({
 });
 
 const phoneOtpSchema = phoneSchema.extend({
-  otp: z.string().length(6, "OTP must be 6 digits"),
+  otp: z.string().min(4, "OTP must be at least 4 digits").max(6, "OTP must be at most 6 digits"),
 });
 const emailSchema = z.object({
   email: z.string().email("Invalid email format"),
 });
 const emailOtpSchema = emailSchema.extend({
-  otp: z.string().length(6, "OTP must be 6 digits"),
+  otp: z.string().min(4, "OTP must be at least 4 digits").max(6, "OTP must be at most 6 digits"),
 });
 const passwordSchema = z.object({
   password: z.string().min(8, "Password must be at least 8 characters"),
@@ -51,6 +53,9 @@ router.post("/signup/set-password", requireAuth, validate({ body: passwordSchema
 router.post("/signin/send-otp", validate({ body: phoneSchema }), signinSendOtp);
 router.post("/signin/verify-otp", validate({ body: phoneOtpSchema }), signinVerifyOtp);
 
+// Common Resend OTP endpoint
+router.post("/resend-otp", validate({ body: sellerResendOtpSchema }), resendSellerOtp);
+
 // Forgot Password Flow
 router.post("/forgot-password/send-otp", validate({ body: phoneSchema }), forgotPasswordSendOtp);
 router.post("/forgot-password/verify-otp", validate({ body: phoneOtpSchema }), forgotPasswordVerifyOtp);
@@ -61,3 +66,4 @@ router.post("/forgot-password/reset", requireAuth, validate({ body: passwordSche
 router.get("/me", requireAuth, getMe);
 
 export default router;
+

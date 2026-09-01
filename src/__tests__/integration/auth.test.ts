@@ -9,7 +9,7 @@ describe("Auth Integration Tests", () => {
   const email = "testsignup@test.com";
 
   beforeEach(async () => {
-    await cleanTestData([phone]);
+    await cleanTestData([phone, "+919999900000"]);
   });
 
   describe("Signup Flow", () => {
@@ -109,7 +109,7 @@ describe("Auth Integration Tests", () => {
     });
 
     it("Should fail signin for unregistered phone", async () => {
-      const res = await request(app).post("/api/auth/signin/send-otp").send({ phone: "+910000000000" });
+      const res = await request(app).post("/api/auth/signin/send-otp").send({ phone: "+919999900000" });
       expect(res.status).toBe(404);
     });
   });

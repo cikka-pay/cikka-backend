@@ -3,6 +3,7 @@ import { asyncHandler } from "../utils/asyncHandler";
 import { AUTH_ERRORS } from "../constants/errors";
 import {
   sendUserOtpService,
+  resendUserOtpService,
   verifyUserOtpService,
   getUserProfileService,
 } from "../services/user-auth.service";
@@ -12,11 +13,6 @@ import {
  */
 export const userSendOtp = asyncHandler(async (req: Request, res: Response) => {
   const { phone: phoneRaw } = req.body;
-  if (!phoneRaw) {
-    res.status(400).json({ error: AUTH_ERRORS.PHONE_REQUIRED });
-    return;
-  }
-
   const { otp, isDev } = await sendUserOtpService(phoneRaw);
 
   res.status(200).json({
@@ -26,15 +22,23 @@ export const userSendOtp = asyncHandler(async (req: Request, res: Response) => {
 });
 
 /**
+ * Mobile App Auth: Resend OTP to user phone (SMS or Voice)
+ */
+export const userResendOtp = asyncHandler(async (req: Request, res: Response) => {
+  const { phone: phoneRaw, retryType } = req.body;
+  const { otp, isDev, message } = await resendUserOtpService(phoneRaw, retryType);
+
+  res.status(200).json({
+    message,
+    ...(isDev && { devOtp: otp }),
+  });
+});
+
+/**
  * Mobile App Auth: Verify OTP & issue User JWT
  */
 export const userVerifyOtp = asyncHandler(async (req: Request, res: Response) => {
   const { phone: phoneRaw, otp } = req.body;
-
-  if (!phoneRaw || !otp) {
-    res.status(400).json({ error: AUTH_ERRORS.PHONE_AND_OTP_REQUIRED });
-    return;
-  }
 
   try {
     const result = await verifyUserOtpService(phoneRaw, otp);
@@ -47,6 +51,7 @@ export const userVerifyOtp = asyncHandler(async (req: Request, res: Response) =>
     res.status(400).json({ error: err.message || AUTH_ERRORS.INVALID_OTP });
   }
 });
+
 
 /**
  * Mobile App Auth: Get current user profile
@@ -69,5 +74,7 @@ export const getUserMe = asyncHandler(async (req: Request, res: Response) => {
 
 // Backward compatibility exports
 export const customerSendOtp = userSendOtp;
+export const customerResendOtp = userResendOtp;
 export const customerVerifyOtp = userVerifyOtp;
 export const getCustomerMe = getUserMe;
+

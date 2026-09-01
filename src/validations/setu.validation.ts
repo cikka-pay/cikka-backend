@@ -20,3 +20,13 @@ export const processRefundSchema = z.object({
   message: "Either uniquePaymentRefID or refundRefID must be provided",
   path: ["uniquePaymentRefID"],
 });
+
+export const setuCheckStatusSchema = z.object({
+  uniquePaymentRefID: z.string().optional(),
+  refID: z.string().optional(),
+  setuTxnId: z.string().optional(),
+}).refine((data) => data.uniquePaymentRefID || data.refID || data.setuTxnId, {
+  message: "At least one reference ID (uniquePaymentRefID, refID, or setuTxnId) must be provided",
+  path: ["uniquePaymentRefID"],
+});
+

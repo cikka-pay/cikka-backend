@@ -46,4 +46,21 @@ export function requireUserAuth(req: Request, res: Response, next: NextFunction)
 // Alias for backward compatibility
 export const requireCustomerAuth = requireUserAuth;
 
+// Optionally verifies the user JWT if provided, attaches `req.user = { id }` if valid, proceeds regardless.
+export function optionalUserAuth(req: Request, res: Response, next: NextFunction): void {
+  const header = req.headers.authorization || "";
+  const [scheme, token] = header.split(" ");
+
+  if (scheme === "Bearer" && token) {
+    try {
+      const payload = verifyUserToken(token);
+      req.user = { id: payload.sub as string };
+    } catch (_err) {
+      // Token invalid or expired — proceed without req.user attached
+    }
+  }
+  next();
+}
+
+
 
