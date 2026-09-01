@@ -1,4 +1,4 @@
-import { InstantPayClient, InstantPayPanResult, InstantPayPanRequestOptions, InstantPayGstinResult, InstantPayGstinRequestOptions, InstantPayCinResult, InstantPayCinRequestOptions } from "./instantpay.interface";
+import { InstantPayAadhaarRequestOptions, InstantPayAadhaarResult, InstantPayBankAccountRequestOptions, InstantPayBankAccountResult, InstantPayCinRequestOptions, InstantPayCinResult, InstantPayClient, InstantPayGstinRequestOptions, InstantPayGstinResult, InstantPayPanRequestOptions, InstantPayPanResult, InstantPayVpaRequestOptions, InstantPayVpaResult } from "./instantpay.interface";
 
 export const instantpayStub: InstantPayClient = {
   async verifyPan(panOrOptions: string | InstantPayPanRequestOptions): Promise<InstantPayPanResult> {
@@ -26,6 +26,7 @@ export const instantpayStub: InstantPayClient = {
       pan: formattedPan,
       registeredName,
       category: "INDIVIDUAL",
+      address: "123, Civil Lines, Jaipur, Rajasthan - 302001",
       status: "VALID",
       rawResponse: {
         statuscode: "TXN",
@@ -141,6 +142,159 @@ export const instantpayStub: InstantPayClient = {
           rocState: "Maharashtra",
           registrationDate: "2019-06-15",
         },
+      },
+    };
+  },
+
+  async verifyAadhaar(aadhaarOrOptions: string | InstantPayAadhaarRequestOptions): Promise<InstantPayAadhaarResult> {
+    const options: InstantPayAadhaarRequestOptions =
+      typeof aadhaarOrOptions === "string" ? { aadhaarNumber: aadhaarOrOptions } : aadhaarOrOptions;
+
+    const aadhaarNumber = options.aadhaarNumber.trim();
+    console.log(`[INSTANTPAY STUB] Aadhaar Verification requested for: ${aadhaarNumber}`);
+
+    if (aadhaarNumber.endsWith("0")) {
+      return {
+        valid: false,
+        aadhaarNumber,
+        status: "INVALID",
+        rawResponse: {
+          statuscode: "ERR",
+          status: "Aadhaar Number Invalid or Inactive",
+        },
+      };
+    }
+
+    return {
+      valid: true,
+      aadhaarNumber,
+      aadhaarHolderName: options.name || "Sample Aadhaar Holder",
+      state: "Uttar Pradesh",
+      ageBand: "20-30",
+      gender: "M",
+      maskedMobile: "*******547",
+      status: "VALID",
+      rawResponse: {
+        statuscode: "TXN",
+        actcode: null,
+        status: "Aadhaar Verification Successful",
+        data: {
+          poolReferenceId: `pool_${Date.now()}`,
+          optional1Label: "Address",
+          optional1: "Uttar Pradesh",
+          optional2Label: "Age Band",
+          optional2: "20-30",
+          optional3Label: "Gender",
+          optional3: "M",
+          optional4Label: "Mobile Number",
+          optional4: "*******547",
+        },
+        timestamp: "2026-08-31 21:20:00",
+        environment: "SANDBOX",
+      },
+    };
+  },
+
+  async verifyVpa(vpaOrOptions: string | InstantPayVpaRequestOptions): Promise<InstantPayVpaResult> {
+    const options: InstantPayVpaRequestOptions =
+      typeof vpaOrOptions === "string" ? { vpa: vpaOrOptions } : vpaOrOptions;
+
+    const vpa = options.vpa.trim();
+    console.log(`[INSTANTPAY STUB] VPA Verification requested for: ${vpa}`);
+
+    if (vpa.includes("invalid")) {
+      return {
+        valid: false,
+        vpa,
+        status: "INVALID",
+        rawResponse: {
+          statuscode: "ERR",
+          status: "VPA handle not found or invalid",
+        },
+      };
+    }
+
+    return {
+      valid: true,
+      vpa,
+      accountHolderName: options.name || "Instantpay India Ltd",
+      ifsc: options.bankIfsc || "ICIC0000104",
+      accountType: "SAVINGS",
+      nameMatchPercent: 96,
+      status: "VALID",
+      rawResponse: {
+        statuscode: "TXN",
+        actcode: null,
+        status: "Transaction Successful",
+        data: {
+          externalRef: options.externalRef || `ref_${Date.now()}`,
+          poolReferenceId: `pool_${Date.now()}`,
+          payee: {
+            name: options.name || "Instantpay India Ltd",
+            account: vpa,
+            ifsc: options.bankIfsc || "ICIC0000104",
+            accountType: "SAVINGS",
+            nameMatchPercent: 96,
+          },
+          isCached: false,
+          isPennyDrop: false,
+        },
+        timestamp: "2026-08-31 22:25:00",
+        environment: "SANDBOX",
+      },
+    };
+  },
+
+  async verifyBankAccount(options: InstantPayBankAccountRequestOptions): Promise<InstantPayBankAccountResult> {
+    const acc = options.accountNumber.trim();
+    const ifsc = options.bankIfsc.trim().toUpperCase();
+
+    console.log(`[INSTANTPAY STUB] Penny Drop Verification requested for Account: ${acc}, IFSC: ${ifsc}`);
+
+    if (acc.endsWith("000")) {
+      return {
+        valid: false,
+        accountNumber: acc,
+        bankIfsc: ifsc,
+        status: "INVALID",
+        rawResponse: {
+          statuscode: "ERR",
+          status: "Bank Account verification failed or invalid details",
+        },
+      };
+    }
+
+    return {
+      valid: true,
+      accountNumber: acc,
+      bankIfsc: ifsc,
+      accountHolderName: options.name || "SHAHBAZ STORE",
+      txnReferenceId: `tx_pd_${Date.now()}`,
+      accountType: "SAVINGS",
+      nameMatchPercent: 98,
+      isPennyDrop: true,
+      status: "VALID",
+      rawResponse: {
+        statuscode: "TXN",
+        actcode: null,
+        status: "Transaction Successful",
+        data: {
+          externalRef: options.externalRef || `ref_${Date.now()}`,
+          poolReferenceId: `pool_${Date.now()}`,
+          txnValue: "1.00",
+          txnReferenceId: `tx_pd_${Date.now()}`,
+          payee: {
+            name: options.name || "SHAHBAZ STORE",
+            account: acc,
+            ifsc,
+            accountType: "SAVINGS",
+            nameMatchPercent: 98,
+          },
+          isCached: false,
+          isPennyDrop: true,
+        },
+        timestamp: "2026-08-31 22:37:00",
+        environment: "SANDBOX",
       },
     };
   },

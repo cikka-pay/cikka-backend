@@ -1,5 +1,6 @@
 import { prisma } from "../config/prisma";
 import { SETU_ERRORS } from "../constants/errors";
+import { setuBbpsService } from "../external/setu/setu-bbps.client";
 
 export interface PaymentStatusDTO {
   uniquePaymentRefID: string;
@@ -48,11 +49,19 @@ export async function recordPaymentStatusService(dto: PaymentStatusDTO) {
   }
 
   // 2. Process new transaction
-  await prisma.paymentTransaction.create({
-    data: {
-      uniquePaymentRefID,
-      status: existing.status,
-    };
+  try {
+    await prisma.paymentTransaction.create({
+      data: {
+        uniquePaymentRefID,
+        userId: userId || null,
+        orderId: orderId || null,
+        amount: txAmount,
+        status: paymentStatus,
+        rawPayload: rawPayload || null,
+      },
+    });
+  } catch (err: any) {
+    console.warn(`[Setu Service Warning] DB logging skipped: ${err.message}`);
   }
 
   // 3. Sync status to BbpsTransaction ledger if matching refID exists

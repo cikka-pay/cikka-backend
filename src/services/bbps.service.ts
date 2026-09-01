@@ -75,7 +75,7 @@ export async function initiateBbpsPaymentService(userId: string | null, dto: Ini
       setuBillId: dto.setuBillId || null,
       setuPaymentId: paymentResult.setuPaymentId || null,
       bbpsRefNo: paymentResult.bbpsRefNo || null,
-      rawPayload: paymentResult,
+      rawPayload: paymentResult as any,
     },
   });
 

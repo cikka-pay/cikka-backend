@@ -177,7 +177,7 @@ export const setuBbpsReal: SetuBbpsService = {
     if (!response.ok) {
       throw new Error(`Setu API HTTP Error: ${response.statusText}`);
     }
-    const data = await response.json();
+    const data: any = await response.json();
     return data.data || [];
   },
 
@@ -190,7 +190,7 @@ export const setuBbpsReal: SetuBbpsService = {
     if (!response.ok) {
       throw new Error(`Setu API HTTP Error: ${response.statusText}`);
     }
-    const data = await response.json();
+    const data: any = await response.json();
     return data.data || [];
   },
 
@@ -202,7 +202,7 @@ export const setuBbpsReal: SetuBbpsService = {
     if (!response.ok) {
       throw new Error(BBPS_ERRORS.BILLER_NOT_FOUND);
     }
-    const data = await response.json();
+    const data: any = await response.json();
     return data.data;
   },
 
@@ -218,7 +218,7 @@ export const setuBbpsReal: SetuBbpsService = {
     if (!response.ok) {
       throw new Error(BBPS_ERRORS.BILL_FETCH_FAILED);
     }
-    const data = await response.json();
+    const data: any = await response.json();
     return data.data;
   },
 
@@ -231,7 +231,7 @@ export const setuBbpsReal: SetuBbpsService = {
     if (!response.ok) {
       throw new Error(BBPS_ERRORS.PAYMENT_FAILED);
     }
-    const data = await response.json();
+    const data: any = await response.json();
     return data.data;
   },
 
@@ -243,7 +243,7 @@ export const setuBbpsReal: SetuBbpsService = {
     if (!response.ok) {
       throw new Error(BBPS_ERRORS.TRANSACTION_NOT_FOUND);
     }
-    const data = await response.json();
+    const data: any = await response.json();
     return data.data;
   },
 };
