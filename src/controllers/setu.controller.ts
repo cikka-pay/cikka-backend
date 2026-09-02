@@ -5,7 +5,9 @@ import {
   recordPaymentStatusService,
   processRefundService,
   checkPaymentStatusService,
+  generatePaymentLinkService,
 } from "../services/setu.service";
+
 
 /**
  * POST /setu/v1/checkStatus (Check Status URL for WL + Custom Payment)
@@ -126,3 +128,19 @@ export const processRefund = asyncHandler(async (req: Request, res: Response) =>
     });
   }
 });
+
+/**
+ * POST /setu/v1/generatePaymentLink
+ * Called by Setu system during White-Label Custom Payment flow to request a payment link.
+ */
+export const generatePaymentLink = asyncHandler(async (req: Request, res: Response) => {
+  const result = await generatePaymentLinkService(req.body);
+  res.status(200).json({
+    success: true,
+    paymentLink: result.paymentLink,
+    uniquePaymentRefID: result.uniquePaymentRefID,
+    status: result.status,
+    amount: result.amount,
+  });
+});
+

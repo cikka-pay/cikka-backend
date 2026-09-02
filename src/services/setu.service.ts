@@ -211,3 +211,42 @@ async function syncBbpsTransactionStatus(refID: string, status: string, rawPaylo
   }
 }
 
+export interface GeneratePaymentLinkDTO {
+  amount?: number | string;
+  billerId?: string;
+  uniquePaymentRefID?: string;
+  refID?: string;
+  customerMobile?: string;
+  redirectUrl?: string;
+  rawPayload?: any;
+}
+
+export async function generatePaymentLinkService(dto: GeneratePaymentLinkDTO) {
+  const refID = dto.uniquePaymentRefID || dto.refID || `CIKKA_PAY_${Date.now()}`;
+  const amount = dto.amount ? parseFloat(dto.amount.toString()) : 0;
+  const baseUrl = process.env.PUBLIC_API_URL || "https://api.cikka.club";
+
+  const paymentLink = `${baseUrl}/setu/v1/checkout/${refID}`;
+
+  try {
+    await prisma.paymentTransaction.create({
+      data: {
+        uniquePaymentRefID: refID,
+        amount,
+        status: "INITIATED",
+        rawPayload: dto.rawPayload || dto,
+      },
+    });
+  } catch (err: any) {
+    console.warn(`[Setu Service Warning] Could not persist payment transaction: ${err.message}`);
+  }
+
+  return {
+    uniquePaymentRefID: refID,
+    paymentLink,
+    status: "INITIATED",
+    amount,
+  };
+}
+
+

@@ -30,3 +30,13 @@ export const setuCheckStatusSchema = z.object({
   path: ["uniquePaymentRefID"],
 });
 
+export const generatePaymentLinkSchema = z.object({
+  amount: z.union([z.number(), z.string()]).optional(),
+  billerId: z.string().optional(),
+  uniquePaymentRefID: z.string().optional(),
+  refID: z.string().optional(),
+  customerMobile: z.string().optional(),
+  redirectUrl: z.string().optional(),
+});
+
+
