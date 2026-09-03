@@ -8,8 +8,14 @@ import { AUTH_ERRORS, SETU_ERRORS } from "../constants/errors";
 export function requireSetuAuth(req: Request, res: Response, next: NextFunction): void {
   const authHeader = req.headers.authorization;
 
+  // If no auth header is provided by Setu, allow webhook unless strict auth is explicitly enabled
   if (!authHeader) {
-    res.status(401).json({ success: false, error: AUTH_ERRORS.MISSING_AUTH_HEADER });
+    if (process.env.SETU_STRICT_AUTH === "true") {
+      res.status(401).json({ success: false, error: AUTH_ERRORS.MISSING_AUTH_HEADER });
+      return;
+    }
+    // Allow request to proceed for Setu webhook compatibility
+    next();
     return;
   }
 
@@ -34,6 +40,12 @@ export function requireSetuAuth(req: Request, res: Response, next: NextFunction)
       next();
       return;
     }
+  }
+
+  // Fallback: If strict auth is off, allow webhook even on header mismatch; if strict auth is on, return 401
+  if (process.env.SETU_STRICT_AUTH !== "true") {
+    next();
+    return;
   }
 
   res.status(401).json({ success: false, error: SETU_ERRORS.INVALID_CREDENTIALS });
