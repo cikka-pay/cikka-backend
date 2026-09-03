@@ -165,6 +165,14 @@ export const setuBbpsStub: SetuBbpsService = {
   },
 };
 
+export interface SetuApiResponse<T> {
+  status: number | string;
+  success?: boolean;
+  message?: string;
+  data: T;
+  traceId?: string;
+}
+
 // ============================================================
 // REAL IMPLEMENTATION (Calls Setu REST Gateway)
 // ============================================================
@@ -177,7 +185,7 @@ export const setuBbpsReal: SetuBbpsService = {
     if (!response.ok) {
       throw new Error(`Setu API HTTP Error: ${response.statusText}`);
     }
-    const data: any = await response.json();
+    const data = (await response.json()) as SetuApiResponse<BbpsCategory[]>;
     return data.data || [];
   },
 
@@ -190,7 +198,7 @@ export const setuBbpsReal: SetuBbpsService = {
     if (!response.ok) {
       throw new Error(`Setu API HTTP Error: ${response.statusText}`);
     }
-    const data: any = await response.json();
+    const data = (await response.json()) as SetuApiResponse<BbpsBiller[]>;
     return data.data || [];
   },
 
@@ -202,7 +210,7 @@ export const setuBbpsReal: SetuBbpsService = {
     if (!response.ok) {
       throw new Error(BBPS_ERRORS.BILLER_NOT_FOUND);
     }
-    const data: any = await response.json();
+    const data = (await response.json()) as SetuApiResponse<BbpsBiller>;
     return data.data;
   },
 
@@ -218,7 +226,7 @@ export const setuBbpsReal: SetuBbpsService = {
     if (!response.ok) {
       throw new Error(BBPS_ERRORS.BILL_FETCH_FAILED);
     }
-    const data: any = await response.json();
+    const data = (await response.json()) as SetuApiResponse<BillDetails>;
     return data.data;
   },
 
@@ -231,7 +239,7 @@ export const setuBbpsReal: SetuBbpsService = {
     if (!response.ok) {
       throw new Error(BBPS_ERRORS.PAYMENT_FAILED);
     }
-    const data: any = await response.json();
+    const data = (await response.json()) as SetuApiResponse<BbpsPaymentResult>;
     return data.data;
   },
 
@@ -243,7 +251,7 @@ export const setuBbpsReal: SetuBbpsService = {
     if (!response.ok) {
       throw new Error(BBPS_ERRORS.TRANSACTION_NOT_FOUND);
     }
-    const data: any = await response.json();
+    const data = (await response.json()) as SetuApiResponse<CheckStatusResult>;
     return data.data;
   },
 };

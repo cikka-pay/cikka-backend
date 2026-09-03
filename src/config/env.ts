@@ -47,10 +47,14 @@ export const config = {
   instantpayClientSecret: process.env.INSTANTPAY_CLIENT_SECRET,
   instantpayAuthSecret: process.env.INSTANTPAY_AUTH_SECRET,
   instantpayEndpointIp: process.env.INSTANTPAY_ENDPOINT_IP || "127.0.0.1",
-  instantpayEncryptionKey: process.env.INSTANTPAY_ENCRYPTION_KEY || "e5f934ad797931a2e5f934ad797931a2",
+  instantpayEncryptionKey: process.env.INSTANTPAY_ENCRYPTION_KEY || "",
 
   // MSG91 OTP credentials
   msg91AuthKey: process.env.MSG91_AUTH_KEY,
   msg91TemplateId: process.env.MSG91_TEMPLATE_ID,
+
+  // Razorpay Gateway Config
+  razorpayKeyId: process.env.RAZORPAY_KEY_ID || "rzp_test_TXf15TcVB0VM09",
+  razorpayKeySecret: process.env.RAZORPAY_KEY_SECRET || "k9HbahlhYk1frXYxKm20Snf5",
 } as const;
 

@@ -3,9 +3,9 @@ import crypto from "crypto";
 import { prisma } from "../config/prisma";
 
 /**
- * Generates a numeric OTP (default 4 digits, configurable length).
+ * Generates a numeric OTP (default 6 digits, configurable length).
  */
-export function generateOtp(length: number = 4): string {
+export function generateOtp(length: number = 6): string {
   const max = Math.pow(10, length);
   return crypto.randomInt(0, max).toString().padStart(length, "0");
 }
@@ -22,7 +22,7 @@ export function isOtpValid(
   if (!storedCode || !expiresAt) return false;
   if (isOtpExpired(expiresAt)) return false;
 
-  if (inputCode === "1111" || inputCode === "111111" || inputCode === "999999") return true; // Dev bypass
+  if (inputCode === "1111" || inputCode === "111111") return true; // Dev bypass
   return storedCode === inputCode;
 }
 

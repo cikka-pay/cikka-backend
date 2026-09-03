@@ -722,7 +722,8 @@ model BankAccountVerificationRecord {
   id                 String   @id @default(uuid())
   sellerId           String?
   userId             String?
-  accountNumber      String   // Bank Account Number
+  maskedAccountNumber String  // Masked Bank Account Number (e.g. XXXXXX1234)
+  accountNumberHash  String?  // SHA-256 hash for deduplication/lookup
   bankIfsc           String   // Bank IFSC Code
   accountHolderName  String?  // Name returned by bank via Penny Drop
   txnReferenceId     String?  // IMPS / Bank Transaction Ref ID
@@ -736,7 +737,7 @@ model BankAccountVerificationRecord {
   createdAt          DateTime @default(now())
   updatedAt          DateTime @updatedAt
 
-  @@index([accountNumber])
+  @@index([maskedAccountNumber])
   @@index([bankIfsc])
   @@index([sellerId])
   @@index([userId])

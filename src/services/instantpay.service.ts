@@ -1,3 +1,4 @@
+import crypto from "crypto";
 import { prisma } from "../config/prisma";
 import { INSTANTPAY_ERRORS } from "../constants/errors";
 import { instantpayClient } from "../external";
@@ -372,15 +373,19 @@ export async function verifyBankAccountService(dto: VerifyBankAccountDTO) {
     longitude,
   });
 
-  // Store verification record in Prisma DB for audit trail
+  // Store verification record in Prisma DB for audit trail (masked for privacy)
   let dbRecord = null;
+  const maskedAccountNumber = formattedAccount.replace(/^(\d+)(\d{4})$/, (_, p1, p2) => "X".repeat(p1.length) + p2);
+  const accountNumberHash = crypto.createHash("sha256").update(formattedAccount).digest("hex");
+
   try {
     if ((prisma as any).bankAccountVerificationRecord) {
       dbRecord = await (prisma as any).bankAccountVerificationRecord.create({
         data: {
           sellerId: sellerId || null,
           userId: userId || null,
-          accountNumber: formattedAccount,
+          maskedAccountNumber,
+          accountNumberHash,
           bankIfsc: formattedIfsc,
           accountHolderName: result.accountHolderName || name || null,
           txnReferenceId: result.txnReferenceId || null,
