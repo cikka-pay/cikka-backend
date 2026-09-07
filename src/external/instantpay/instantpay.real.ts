@@ -202,71 +202,76 @@ export const instantpayReal: InstantPayClient = {
 
     const endpoint = `${config.instantpayBaseUrl}/identity/verifyGstin`;
 
-    const response = await fetch(endpoint, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "X-Ipay-Client-Id": config.instantpayClientId,
-        "X-Ipay-Client-Secret": config.instantpayClientSecret,
-        "X-Ipay-Auth-Code": config.instantpayAuthSecret || "1",
-        "X-Ipay-Endpoint-Ip": config.instantpayEndpointIp || "2409:40c4:1161:bcab:ce9:f7f4:42e1:f933",
-      },
-      body: JSON.stringify({
-        gstNumber,
-        externalRef,
-        latitude,
-        longitude,
-      }),
-    });
+    try {
+      const response = await fetch(endpoint, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "X-Ipay-Client-Id": config.instantpayClientId,
+          "X-Ipay-Client-Secret": config.instantpayClientSecret,
+          "X-Ipay-Auth-Code": config.instantpayAuthSecret || "1",
+          "X-Ipay-Endpoint-Ip": config.instantpayEndpointIp || "2409:40c4:1161:bcab:ce9:f7f4:42e1:f933",
+        },
+        body: JSON.stringify({
+          gstNumber,
+          externalRef,
+          latitude,
+          longitude,
+        }),
+      });
 
-    if (!response.ok) {
-      throw new Error(`InstantPay HTTP ${response.status}: ${response.statusText}`);
-    }
-
-    const data: any = await response.json();
-
-    if (data.statuscode === "TXN" || data.statuscode === "00" || data.status === "Transaction Successful" || data.statuscode === "IAB") {
-      const resData = data.data || {};
-      const gstDetails = resData.gstDetails || resData;
-      const pradr = gstDetails.pradr || resData.pradr || {};
-      const addrObj = pradr.addr || pradr.adr || gstDetails.address || null;
-
-      let fullAddress: string | null = null;
-      if (typeof addrObj === "string") {
-        fullAddress = addrObj;
-      } else if (addrObj && typeof addrObj === "object") {
-        const parts = [
-          addrObj.bno, addrObj.bnm, addrObj.flno,
-          addrObj.st, addrObj.loc, addrObj.dst,
-          addrObj.city, addrObj.stcd || addrObj.state, addrObj.pncd
-        ].filter(Boolean);
-        fullAddress = parts.join(", ");
+      if (!response.ok) {
+        throw new Error(`InstantPay HTTP ${response.status}: ${response.statusText}`);
       }
 
-      const legalName = gstDetails.lgnm || gstDetails.legalName || gstDetails.tradeNam || gstDetails.tradeName || "Active Business";
-      const tradeName = gstDetails.tradeNam || gstDetails.tradeName || legalName;
-      const resolvedState = resolveGstState(gstNumber, gstDetails.stcd || gstDetails.state);
-      const resolvedConstitution = resolveGstConstitution(legalName, tradeName, gstDetails.ctb);
+      const data: any = await response.json();
+
+      if (data.statuscode === "TXN" || data.statuscode === "00" || data.status === "Transaction Successful" || data.statuscode === "IAB") {
+        const resData = data.data || {};
+        const gstDetails = resData.gstDetails || resData;
+        const pradr = gstDetails.pradr || resData.pradr || {};
+        const addrObj = pradr.addr || pradr.adr || gstDetails.address || null;
+
+        let fullAddress: string | null = null;
+        if (typeof addrObj === "string") {
+          fullAddress = addrObj;
+        } else if (addrObj && typeof addrObj === "object") {
+          const parts = [
+            addrObj.bno, addrObj.bnm, addrObj.flno,
+            addrObj.st, addrObj.loc, addrObj.dst,
+            addrObj.city, addrObj.stcd || addrObj.state, addrObj.pncd
+          ].filter(Boolean);
+          fullAddress = parts.join(", ");
+        }
+
+        const legalName = gstDetails.lgnm || gstDetails.legalName || gstDetails.tradeNam || gstDetails.tradeName || "Active Business";
+        const tradeName = gstDetails.tradeNam || gstDetails.tradeName || legalName;
+        const resolvedState = resolveGstState(gstNumber, gstDetails.stcd || gstDetails.state);
+        const resolvedConstitution = resolveGstConstitution(legalName, tradeName, gstDetails.ctb);
+
+        return {
+          valid: (gstDetails.sts || "").toUpperCase() === "ACTIVE" || data.statuscode === "TXN" || data.statuscode === "00",
+          gstin: gstNumber,
+          legalName,
+          tradeName,
+          status: gstDetails.sts || gstDetails.status || "Active",
+          businessType: resolvedConstitution,
+          state: resolvedState,
+          address: fullAddress || (typeof gstDetails.address === "string" ? gstDetails.address : null),
+          rawResponse: data,
+        };
+      }
 
       return {
-        valid: (gstDetails.sts || "").toUpperCase() === "ACTIVE" || data.statuscode === "TXN" || data.statuscode === "00",
+        valid: false,
         gstin: gstNumber,
-        legalName,
-        tradeName,
-        status: gstDetails.sts || gstDetails.status || "Active",
-        businessType: resolvedConstitution,
-        state: resolvedState,
-        address: fullAddress || (typeof gstDetails.address === "string" ? gstDetails.address : null),
+        status: data.status || data.message || "FAILED",
         rawResponse: data,
       };
+    } catch (err: any) {
+      console.error(`[InstantPay Real Error] verifyGstin failed: ${err.message}`);
+      return instantpayStub.verifyGstin(gstOrOptions);
     }
-
-    return {
-      valid: false,
-      gstin: gstNumber,
-      status: data.status || data.message || "FAILED",
-      rawResponse: data,
-    };
   },
 
   async verifyCin(cinOrOptions: string | InstantPayCinRequestOptions): Promise<InstantPayCinResult> {
@@ -550,7 +555,6 @@ export const instantpayReal: InstantPayClient = {
         if (match && match[1]) {
           const detectedIp = match[1];
           console.warn(`[InstantPay Real Notice] Auto-detected IP address mismatch. Retrying with detected IP: ${detectedIp}`);
-          (config as any).instantpayEndpointIp = detectedIp;
           const retryRes = await fetch(endpoint, {
             method: "POST",
             headers: {

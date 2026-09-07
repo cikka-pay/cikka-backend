@@ -18,19 +18,21 @@ export function signToken(sellerId: string, expiresIn?: string): string {
 }
 
 export function signSellerToken(sellerId: string, expiresIn?: string): string {
-  if (!SELLER_SECRET) throw new Error("JWT_SELLER_SECRET or JWT_SECRET is not set");
+  const secret = process.env.JWT_SELLER_SECRET || process.env.JWT_SECRET || SELLER_SECRET;
+  if (!secret) throw new Error("JWT_SELLER_SECRET or JWT_SECRET is not set");
   return jwt.sign(
     { sub: sellerId, role: "seller", aud: "cikka-seller-web" },
-    SELLER_SECRET,
+    secret,
     { expiresIn: expiresIn || EXPIRES_IN } as jwt.SignOptions
   );
 }
 
 export function signUserToken(userId: string, expiresIn?: string): string {
-  if (!USER_SECRET) throw new Error("JWT_USER_SECRET or JWT_SECRET is not set");
+  const secret = process.env.JWT_USER_SECRET || process.env.JWT_CUSTOMER_SECRET || process.env.JWT_SECRET || USER_SECRET;
+  if (!secret) throw new Error("JWT_USER_SECRET or JWT_SECRET is not set");
   return jwt.sign(
     { sub: userId, role: "user", aud: "cikka-mobile-app" },
-    USER_SECRET,
+    secret,
     { expiresIn: expiresIn || EXPIRES_IN } as jwt.SignOptions
   );
 }
@@ -40,21 +42,31 @@ export function verifyToken(token: string): CustomJwtPayload {
 }
 
 export function verifySellerToken(token: string): CustomJwtPayload {
-  if (!SELLER_SECRET) throw new Error("JWT_SELLER_SECRET or JWT_SECRET is not set");
-  const payload = jwt.verify(token, SELLER_SECRET) as CustomJwtPayload;
-  if (payload.role && payload.role !== "seller") {
+  const secret = process.env.JWT_SELLER_SECRET || process.env.JWT_SECRET || SELLER_SECRET;
+  if (!secret) throw new Error("JWT_SELLER_SECRET or JWT_SECRET is not set");
+  try {
+    const payload = jwt.verify(token, secret) as CustomJwtPayload;
+    if (payload.role && payload.role !== "seller") {
+      throw new Error(AUTH_ERRORS.INVALID_SELLER_TOKEN);
+    }
+    return payload;
+  } catch (_err) {
     throw new Error(AUTH_ERRORS.INVALID_SELLER_TOKEN);
   }
-  return payload;
 }
 
 export function verifyUserToken(token: string): CustomJwtPayload {
-  if (!USER_SECRET) throw new Error("JWT_USER_SECRET or JWT_SECRET is not set");
-  const payload = jwt.verify(token, USER_SECRET) as CustomJwtPayload;
-  if (payload.role && payload.role !== "user") {
+  const secret = process.env.JWT_USER_SECRET || process.env.JWT_CUSTOMER_SECRET || process.env.JWT_SECRET || USER_SECRET;
+  if (!secret) throw new Error("JWT_USER_SECRET or JWT_SECRET is not set");
+  try {
+    const payload = jwt.verify(token, secret) as CustomJwtPayload;
+    if (payload.role && payload.role !== "user") {
+      throw new Error(AUTH_ERRORS.INVALID_USER_TOKEN);
+    }
+    return payload;
+  } catch (_err) {
     throw new Error(AUTH_ERRORS.INVALID_USER_TOKEN);
   }
-  return payload;
 }
 
 

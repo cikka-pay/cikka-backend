@@ -42,12 +42,7 @@ export function requireSetuAuth(req: Request, res: Response, next: NextFunction)
     }
   }
 
-  // Fallback: If strict auth is off, allow webhook even on header mismatch; if strict auth is on, return 401
-  if (process.env.SETU_STRICT_AUTH !== "true") {
-    next();
-    return;
-  }
-
+  // If an Authorization header is provided but invalid, reject with 401
   res.status(401).json({ success: false, error: SETU_ERRORS.INVALID_CREDENTIALS });
 }
 

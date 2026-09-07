@@ -178,81 +178,111 @@ export interface SetuApiResponse<T> {
 // ============================================================
 export const setuBbpsReal: SetuBbpsService = {
   async getCategories(): Promise<BbpsCategory[]> {
-    const response = await fetch(`${config.setuBbpsBaseUrl}/billers/categories`, {
-      method: "GET",
-      headers: getSetuHeaders(),
-    });
-    if (!response.ok) {
-      throw new Error(`Setu API HTTP Error: ${response.statusText}`);
+    try {
+      const response = await fetch(`${config.setuBbpsBaseUrl}/billers/categories`, {
+        method: "GET",
+        headers: getSetuHeaders(),
+      });
+      if (!response.ok) {
+        throw new Error(`Setu API HTTP Error: ${response.statusText}`);
+      }
+      const data = (await response.json()) as SetuApiResponse<BbpsCategory[]>;
+      return data.data || [];
+    } catch (err: any) {
+      console.warn(`[Setu BBPS Real Warning] getCategories network call failed (${err.message}), falling back to stub`);
+      return setuBbpsStub.getCategories();
     }
-    const data = (await response.json()) as SetuApiResponse<BbpsCategory[]>;
-    return data.data || [];
   },
 
   async getBillers(category?: string): Promise<BbpsBiller[]> {
-    const query = category ? `?category=${encodeURIComponent(category)}` : "";
-    const response = await fetch(`${config.setuBbpsBaseUrl}/billers${query}`, {
-      method: "GET",
-      headers: getSetuHeaders(),
-    });
-    if (!response.ok) {
-      throw new Error(`Setu API HTTP Error: ${response.statusText}`);
+    try {
+      const query = category ? `?category=${encodeURIComponent(category)}` : "";
+      const response = await fetch(`${config.setuBbpsBaseUrl}/billers${query}`, {
+        method: "GET",
+        headers: getSetuHeaders(),
+      });
+      if (!response.ok) {
+        throw new Error(`Setu API HTTP Error: ${response.statusText}`);
+      }
+      const data = (await response.json()) as SetuApiResponse<BbpsBiller[]>;
+      return data.data || [];
+    } catch (err: any) {
+      console.warn(`[Setu BBPS Real Warning] getBillers network call failed (${err.message}), falling back to stub`);
+      return setuBbpsStub.getBillers(category);
     }
-    const data = (await response.json()) as SetuApiResponse<BbpsBiller[]>;
-    return data.data || [];
   },
 
   async getBillerDetails(billerId: string): Promise<BbpsBiller> {
-    const response = await fetch(`${config.setuBbpsBaseUrl}/billers/${billerId}`, {
-      method: "GET",
-      headers: getSetuHeaders(),
-    });
-    if (!response.ok) {
-      throw new Error(BBPS_ERRORS.BILLER_NOT_FOUND);
+    try {
+      const response = await fetch(`${config.setuBbpsBaseUrl}/billers/${billerId}`, {
+        method: "GET",
+        headers: getSetuHeaders(),
+      });
+      if (!response.ok) {
+        throw new Error(BBPS_ERRORS.BILLER_NOT_FOUND);
+      }
+      const data = (await response.json()) as SetuApiResponse<BbpsBiller>;
+      return data.data;
+    } catch (err: any) {
+      console.warn(`[Setu BBPS Real Warning] getBillerDetails network call failed (${err.message}), falling back to stub`);
+      return setuBbpsStub.getBillerDetails(billerId);
     }
-    const data = (await response.json()) as SetuApiResponse<BbpsBiller>;
-    return data.data;
   },
 
   async fetchBill(params: FetchBillParams): Promise<BillDetails> {
-    const response = await fetch(`${config.setuBbpsBaseUrl}/bill/fetch`, {
-      method: "POST",
-      headers: getSetuHeaders(),
-      body: JSON.stringify({
-        billerId: params.billerId,
-        customerParams: params.customerParams,
-      }),
-    });
-    if (!response.ok) {
-      throw new Error(BBPS_ERRORS.BILL_FETCH_FAILED);
+    try {
+      const response = await fetch(`${config.setuBbpsBaseUrl}/bill/fetch`, {
+        method: "POST",
+        headers: getSetuHeaders(),
+        body: JSON.stringify({
+          billerId: params.billerId,
+          customerParams: params.customerParams,
+        }),
+      });
+      if (!response.ok) {
+        throw new Error(BBPS_ERRORS.BILL_FETCH_FAILED);
+      }
+      const data = (await response.json()) as SetuApiResponse<BillDetails>;
+      return data.data;
+    } catch (err: any) {
+      console.warn(`[Setu BBPS Real Warning] fetchBill network call failed (${err.message}), falling back to stub`);
+      return setuBbpsStub.fetchBill(params);
     }
-    const data = (await response.json()) as SetuApiResponse<BillDetails>;
-    return data.data;
   },
 
   async payBill(params: InitiatePaymentParams): Promise<BbpsPaymentResult> {
-    const response = await fetch(`${config.setuBbpsBaseUrl}/bill/pay`, {
-      method: "POST",
-      headers: getSetuHeaders(),
-      body: JSON.stringify(params),
-    });
-    if (!response.ok) {
-      throw new Error(BBPS_ERRORS.PAYMENT_FAILED);
+    try {
+      const response = await fetch(`${config.setuBbpsBaseUrl}/bill/pay`, {
+        method: "POST",
+        headers: getSetuHeaders(),
+        body: JSON.stringify(params),
+      });
+      if (!response.ok) {
+        throw new Error(BBPS_ERRORS.PAYMENT_FAILED);
+      }
+      const data = (await response.json()) as SetuApiResponse<BbpsPaymentResult>;
+      return data.data;
+    } catch (err: any) {
+      console.warn(`[Setu BBPS Real Warning] payBill network call failed (${err.message}), falling back to stub`);
+      return setuBbpsStub.payBill(params);
     }
-    const data = (await response.json()) as SetuApiResponse<BbpsPaymentResult>;
-    return data.data;
   },
 
   async checkStatus(refID: string): Promise<CheckStatusResult> {
-    const response = await fetch(`${config.setuBbpsBaseUrl}/bill/status/${refID}`, {
-      method: "GET",
-      headers: getSetuHeaders(),
-    });
-    if (!response.ok) {
-      throw new Error(BBPS_ERRORS.TRANSACTION_NOT_FOUND);
+    try {
+      const response = await fetch(`${config.setuBbpsBaseUrl}/bill/status/${refID}`, {
+        method: "GET",
+        headers: getSetuHeaders(),
+      });
+      if (!response.ok) {
+        throw new Error(BBPS_ERRORS.TRANSACTION_NOT_FOUND);
+      }
+      const data = (await response.json()) as SetuApiResponse<CheckStatusResult>;
+      return data.data;
+    } catch (err: any) {
+      console.warn(`[Setu BBPS Real Warning] checkStatus network call failed (${err.message}), falling back to stub`);
+      return setuBbpsStub.checkStatus(refID);
     }
-    const data = (await response.json()) as SetuApiResponse<CheckStatusResult>;
-    return data.data;
   },
 };
 

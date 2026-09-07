@@ -53,11 +53,11 @@
 					},
 					{
 						"key": "X-Ipay-Client-Id",
-						"value": "YWY3OTAzYzNlM2ExZTJlOVO3HL823O+22baMe7agNVs="
+						"value": "YOUR_INSTANTPAY_CLIENT_ID"
 					},
 					{
 						"key": "X-Ipay-Client-Secret",
-						"value": "bab9d19ff3a8a846432ce9a484ef8c621f9170808ffeefa75bd148b7ea3fa5c6"
+						"value": "YOUR_INSTANTPAY_CLIENT_SECRET"
 					},
 					{
 						"key": "X-Ipay-Endpoint-Ip",

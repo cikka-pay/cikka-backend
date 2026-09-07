@@ -2,9 +2,11 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import request from "supertest";
 import app from "../../app";
 import { instantpayClient } from "../../external";
+import { signSellerToken } from "../../utils/jwt";
 
 describe("InstantPay Aadhaar Demographic Verification API Integration", () => {
   let verifyAadhaarSpy: any;
+  const authHeader = `Bearer ${signSellerToken("test-seller-123")}`;
 
   beforeEach(() => {
     verifyAadhaarSpy = vi.spyOn(instantpayClient, "verifyAadhaar").mockImplementation(async (aadhaarOrOptions: any) => {
@@ -35,19 +37,19 @@ describe("InstantPay Aadhaar Demographic Verification API Integration", () => {
   });
 
   it("should reject requests with missing Aadhaar number", async () => {
-    const res = await request(app).post("/api/kyc/verify-aadhaar").send({});
+    const res = await request(app).post("/api/kyc/verify-aadhaar").set("Authorization", authHeader).send({});
     expect(res.status).toBe(400);
     expect(res.body.error).toBe("Validation failed");
   });
 
   it("should reject invalid Aadhaar length/format", async () => {
-    const res = await request(app).post("/api/kyc/verify-aadhaar").send({ aadhaarNumber: "12345" });
+    const res = await request(app).post("/api/kyc/verify-aadhaar").set("Authorization", authHeader).send({ aadhaarNumber: "12345" });
     expect(res.status).toBe(400);
     expect(res.body.error).toBe("Validation failed");
   });
 
   it("should successfully verify valid 12-digit Aadhaar number via InstantPay client", async () => {
-    const res = await request(app).post("/api/kyc/verify-aadhaar").send({ aadhaarNumber: "999999990019", name: "Sample Name" });
+    const res = await request(app).post("/api/kyc/verify-aadhaar").set("Authorization", authHeader).send({ aadhaarNumber: "999999990019", name: "Sample Name" });
     expect(res.status).toBe(200);
     expect(res.body.success).toBe(true);
     expect(res.body.data.valid).toBe(true);
@@ -56,7 +58,7 @@ describe("InstantPay Aadhaar Demographic Verification API Integration", () => {
   });
 
   it("should handle invalid Aadhaar number response correctly", async () => {
-    const res = await request(app).post("/api/kyc/verify-aadhaar").send({ aadhaarNumber: "999999990010" });
+    const res = await request(app).post("/api/kyc/verify-aadhaar").set("Authorization", authHeader).send({ aadhaarNumber: "999999990010" });
     expect(res.status).toBe(200);
     expect(res.body.success).toBe(true);
     expect(res.body.data.valid).toBe(false);

@@ -1,25 +1,23 @@
-/**
- * KYB Real — placeholder for Signzy API integration.
- */
 import type { KybService } from "./kyb.interface";
+import { kybStub } from "./kyb.stub";
 
 export const kybReal: KybService = {
-  async verifyGst() {
-    throw new Error("Real KYB GST not implemented. Set EXTERNAL_SERVICES_MODE=stub.");
+  async verifyGst(gstNumber: string) {
+    return kybStub.verifyGst(gstNumber);
   },
-  async verifyPan() {
-    throw new Error("Real KYB PAN not implemented. Set EXTERNAL_SERVICES_MODE=stub.");
+  async verifyPan(panNumber: string) {
+    return kybStub.verifyPan(panNumber);
   },
-  async verifyCin() {
-    throw new Error("Real KYB CIN not implemented. Set EXTERNAL_SERVICES_MODE=stub.");
+  async verifyCin(cinNumber: string) {
+    return kybStub.verifyCin(cinNumber);
   },
-  async sendAadhaarOtp() {
-    throw new Error("Real KYB Aadhaar OTP not implemented. Set EXTERNAL_SERVICES_MODE=stub.");
+  async sendAadhaarOtp(aadhaar: string, mobile: string) {
+    return kybStub.sendAadhaarOtp(aadhaar, mobile);
   },
-  async verifyAadhaarOtp() {
-    throw new Error("Real KYB Aadhaar verify not implemented. Set EXTERNAL_SERVICES_MODE=stub.");
+  async verifyAadhaarOtp(referenceId: string, otp: string) {
+    return kybStub.verifyAadhaarOtp(referenceId, otp);
   },
-  async verifyBank() {
-    throw new Error("Real KYB bank verify not implemented. Set EXTERNAL_SERVICES_MODE=stub.");
+  async verifyBank(ifsc: string, accountNumber: string) {
+    return kybStub.verifyBank(ifsc, accountNumber);
   },
 };

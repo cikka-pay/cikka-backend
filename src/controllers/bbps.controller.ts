@@ -34,7 +34,7 @@ export const fetchBill = asyncHandler(async (req: Request, res: Response) => {
 });
 
 export const initiateBbpsPayment = asyncHandler(async (req: Request, res: Response) => {
-  const userId = req.user?.id || (req.user as any)?.sub || null;
+  const userId = req.user?.id || null;
   const result = await initiateBbpsPaymentService(userId, req.body);
   res.status(201).json({
     success: true,
@@ -50,7 +50,7 @@ export const getPaymentStatus = asyncHandler(async (req: Request, res: Response)
 });
 
 export const getBbpsHistory = asyncHandler(async (req: Request, res: Response) => {
-  const userId = req.user?.id || (req.user as any)?.sub;
+  const userId = req.user?.id;
   if (!userId) {
     res.status(401).json({ success: false, error: "Authentication required" });
     return;

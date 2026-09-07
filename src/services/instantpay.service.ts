@@ -46,8 +46,8 @@ export async function verifyPanService(dto: VerifyPanDTO) {
   // Store verification record in Prisma DB for audit trail
   let dbRecord = null;
   try {
-    if ((prisma as any).panVerificationRecord) {
-      dbRecord = await (prisma as any).panVerificationRecord.create({
+    if (prisma.panVerificationRecord) {
+      dbRecord = await prisma.panVerificationRecord.create({
         data: {
           userId: userId || null,
           pan: formattedPan,
@@ -99,8 +99,8 @@ export async function verifyGstinService(dto: VerifyGstinDTO) {
   // Store verification record in Prisma DB for audit trail
   let dbRecord = null;
   try {
-    if ((prisma as any).gstinVerificationRecord) {
-      dbRecord = await (prisma as any).gstinVerificationRecord.create({
+    if (prisma.gstinVerificationRecord) {
+      dbRecord = await prisma.gstinVerificationRecord.create({
         data: {
           sellerId: sellerId || null,
           userId: userId || null,
@@ -158,8 +158,8 @@ export async function verifyCinService(dto: VerifyCinDTO) {
   // Store verification record in Prisma DB for audit trail
   let dbRecord = null;
   try {
-    if ((prisma as any).cinVerificationRecord) {
-      dbRecord = await (prisma as any).cinVerificationRecord.create({
+    if (prisma.cinVerificationRecord) {
+      dbRecord = await prisma.cinVerificationRecord.create({
         data: {
           sellerId: sellerId || null,
           userId: userId || null,
@@ -225,8 +225,8 @@ export async function verifyAadhaarService(dto: VerifyAadhaarDTO) {
   // Store verification record in Prisma DB for audit trail
   let dbRecord = null;
   try {
-    if ((prisma as any).aadhaarVerificationRecord) {
-      dbRecord = await (prisma as any).aadhaarVerificationRecord.create({
+    if (prisma.aadhaarVerificationRecord) {
+      dbRecord = await prisma.aadhaarVerificationRecord.create({
         data: {
           sellerId: sellerId || null,
           userId: userId || null,
@@ -297,8 +297,8 @@ export async function verifyVpaService(dto: VerifyVpaDTO) {
   // Store verification record in Prisma DB for audit trail
   let dbRecord = null;
   try {
-    if ((prisma as any).vpaVerificationRecord) {
-      dbRecord = await (prisma as any).vpaVerificationRecord.create({
+    if (prisma.vpaVerificationRecord) {
+      dbRecord = await prisma.vpaVerificationRecord.create({
         data: {
           sellerId: sellerId || null,
           userId: userId || null,
@@ -379,8 +379,8 @@ export async function verifyBankAccountService(dto: VerifyBankAccountDTO) {
   const accountNumberHash = crypto.createHash("sha256").update(formattedAccount).digest("hex");
 
   try {
-    if ((prisma as any).bankAccountVerificationRecord) {
-      dbRecord = await (prisma as any).bankAccountVerificationRecord.create({
+    if (prisma.bankAccountVerificationRecord) {
+      dbRecord = await prisma.bankAccountVerificationRecord.create({
         data: {
           sellerId: sellerId || null,
           userId: userId || null,

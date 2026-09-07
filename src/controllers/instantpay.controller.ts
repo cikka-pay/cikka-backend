@@ -16,7 +16,7 @@ import { asyncHandler } from "../utils/asyncHandler";
  */
 export const verifyPan = asyncHandler(async (req: Request, res: Response) => {
   const { pan } = req.body;
-  const userId = req.user?.id || req.seller?.id || "guest_user";
+  const userId = req.user?.id || req.seller?.id;
 
   const result = await verifyPanService({ userId, pan });
 
@@ -34,8 +34,8 @@ export const verifyPan = asyncHandler(async (req: Request, res: Response) => {
  */
 export const verifyGstin = asyncHandler(async (req: Request, res: Response) => {
   const { gstNumber, externalRef, latitude, longitude } = req.body;
-  const sellerId = req.seller?.id || "guest_seller";
-  const userId = req.user?.id || "guest_user";
+  const sellerId = req.seller?.id;
+  const userId = req.user?.id;
 
   const result = await verifyGstinService({
     sellerId,
@@ -60,8 +60,8 @@ export const verifyGstin = asyncHandler(async (req: Request, res: Response) => {
  */
 export const verifyCin = asyncHandler(async (req: Request, res: Response) => {
   const { cin, externalRef, latitude, longitude } = req.body;
-  const sellerId = req.seller?.id || "guest_seller";
-  const userId = req.user?.id || "guest_user";
+  const sellerId = req.seller?.id;
+  const userId = req.user?.id;
 
   const result = await verifyCinService({
     sellerId,
@@ -86,8 +86,8 @@ export const verifyCin = asyncHandler(async (req: Request, res: Response) => {
  */
 export const verifyAadhaar = asyncHandler(async (req: Request, res: Response) => {
   const { aadhaarNumber, name, externalRef, latitude, longitude } = req.body;
-  const sellerId = req.seller?.id || "guest_seller";
-  const userId = req.user?.id || "guest_user";
+  const sellerId = req.seller?.id;
+  const userId = req.user?.id;
 
   const result = await verifyAadhaarService({
     sellerId,
@@ -113,8 +113,8 @@ export const verifyAadhaar = asyncHandler(async (req: Request, res: Response) =>
  */
 export const verifyVpa = asyncHandler(async (req: Request, res: Response) => {
   const { vpa, name, bankIfsc, externalRef, latitude, longitude } = req.body;
-  const sellerId = req.seller?.id || "guest_seller";
-  const userId = req.user?.id || "guest_user";
+  const sellerId = req.seller?.id;
+  const userId = req.user?.id;
 
   const result = await verifyVpaService({
     sellerId,
@@ -141,8 +141,8 @@ export const verifyVpa = asyncHandler(async (req: Request, res: Response) => {
  */
 export const verifyBankAccount = asyncHandler(async (req: Request, res: Response) => {
   const { accountNumber, bankIfsc, name, externalRef, latitude, longitude } = req.body;
-  const sellerId = req.seller?.id || "guest_seller";
-  const userId = req.user?.id || "guest_user";
+  const sellerId = req.seller?.id;
+  const userId = req.user?.id;
 
   const result = await verifyBankAccountService({
     sellerId,

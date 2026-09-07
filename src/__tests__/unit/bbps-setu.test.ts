@@ -78,7 +78,7 @@ describe("Setu BBPS & UAT Check Status Integration", () => {
       expect(res.status).toBe(200);
       expect(res.body.success).toBe(true);
       expect(Array.isArray(res.body.categories)).toBe(true);
-      expect(res.body.categories).toContain("ELECTRICITY");
+      expect(res.body.categories.some((c: any) => c.code === "ELECTRICITY")).toBe(true);
     });
 
     it("GET /api/bbps/billers should return billers filtered by category", async () => {
@@ -90,31 +90,32 @@ describe("Setu BBPS & UAT Check Status Integration", () => {
       expect(res.body.billers[0].category).toBe("ELECTRICITY");
     });
 
-    it("POST /api/bbps/fetch-bill should fetch live bill details", async () => {
+    it("POST /api/bbps/bills/fetch should fetch live bill details", async () => {
       const payload = {
         billerId: "BESCOM000KAR01",
         customerParams: { accountNumber: "1234567890" },
       };
 
-      const res = await request(app).post("/api/bbps/fetch-bill").send(payload);
+      const res = await request(app).post("/api/bbps/bills/fetch").send(payload);
       expect(res.status).toBe(200);
       expect(res.body.success).toBe(true);
-      expect(res.body.bill.billerId).toBe(payload.billerId);
-      expect(res.body.bill.billAmount).toBeGreaterThan(0);
+      expect(res.body.billDetails.billerId).toBe(payload.billerId);
+      expect(res.body.billDetails.billAmount).toBeGreaterThan(0);
     });
 
-    it("POST /api/bbps/create-payment-order should generate Setu payment order & link", async () => {
+    it("POST /api/bbps/payments/initiate should generate Setu payment order & link", async () => {
       const payload = {
         billerId: "BESCOM000KAR01",
+        billerName: "BESCOM Electricity",
+        category: "ELECTRICITY",
         amount: 850.0,
-        paymentMode: "UPI",
+        customerParams: { accountNumber: "1234567890" },
       };
 
-      const res = await request(app).post("/api/bbps/create-payment-order").send(payload);
-      expect(res.status).toBe(200);
+      const res = await request(app).post("/api/bbps/payments/initiate").send(payload);
+      expect(res.status).toBe(201);
       expect(res.body.success).toBe(true);
-      expect(res.body.order.uniquePaymentRefID).toBeDefined();
-      expect(res.body.order.setuPaymentLink).toBeDefined();
+      expect(res.body.payment.refID).toBeDefined();
     });
   });
 });

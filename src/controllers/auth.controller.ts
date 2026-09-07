@@ -177,24 +177,22 @@ export const signinSendOtp = asyncHandler(async (req: Request, res: Response) =>
   const { phone: phoneRaw } = req.body;
   const { phone, countryCode, phoneNumber } = normalizePhone(phoneRaw);
 
+  const seller = await prisma.seller.findUnique({ where: { phone } });
+  if (!seller) {
+    res.status(404).json({ success: false, error: AUTH_ERRORS.USER_NOT_FOUND });
+    return;
+  }
+
   const otp = generateOtp(6);
   const expiresAt = new Date(Date.now() + 10 * 60 * 1000);
 
-  await prisma.seller.upsert({
+  await prisma.seller.update({
     where: { phone },
-    update: {
+    data: {
       countryCode,
       phoneNumber,
       phoneOtpCode: otp,
       phoneOtpExpiresAt: expiresAt,
-    },
-    create: {
-      phone,
-      countryCode,
-      phoneNumber,
-      phoneOtpCode: otp,
-      phoneOtpExpiresAt: expiresAt,
-      onboardingStatus: OnboardingStatus.INCOMPLETE,
     },
   });
 
@@ -260,21 +258,26 @@ export const resendSellerOtp = asyncHandler(async (req: Request, res: Response) 
       ? { resetOtpCode: otp, resetOtpExpiresAt: expiresAt }
       : { phoneOtpCode: otp, phoneOtpExpiresAt: expiresAt };
 
-  await prisma.seller.upsert({
-    where: { phone },
-    update: {
-      countryCode,
-      phoneNumber,
-      ...updateData,
-    },
-    create: {
-      phone,
-      countryCode,
-      phoneNumber,
-      onboardingStatus: OnboardingStatus.INCOMPLETE,
-      ...updateData,
-    },
-  });
+  if (existingSeller) {
+    await prisma.seller.update({
+      where: { phone },
+      data: {
+        countryCode,
+        phoneNumber,
+        ...updateData,
+      },
+    });
+  } else {
+    await prisma.seller.create({
+      data: {
+        phone,
+        countryCode,
+        phoneNumber,
+        onboardingStatus: OnboardingStatus.INCOMPLETE,
+        ...updateData,
+      },
+    });
+  }
 
   const resendResult = await otpService.resendSms(phone, retryType as "text" | "voice");
   res.json({ success: true, message: resendResult.message || "OTP resent successfully" });

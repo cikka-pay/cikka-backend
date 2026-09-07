@@ -2,9 +2,11 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import request from "supertest";
 import app from "../../app";
 import { instantpayClient } from "../../external";
+import { signSellerToken } from "../../utils/jwt";
 
 describe("InstantPay Penny Drop Bank Account Verification API Integration", () => {
   let verifyBankSpy: any;
+  const authHeader = `Bearer ${signSellerToken("test-seller-123")}`;
 
   beforeEach(() => {
     verifyBankSpy = vi.spyOn(instantpayClient, "verifyBankAccount").mockImplementation(async (options: any) => {
@@ -41,19 +43,19 @@ describe("InstantPay Penny Drop Bank Account Verification API Integration", () =
   });
 
   it("should reject requests with missing account number or IFSC", async () => {
-    const res = await request(app).post("/api/kyc/verify-bank-account").send({});
+    const res = await request(app).post("/api/kyc/verify-bank-account").set("Authorization", authHeader).send({});
     expect(res.status).toBe(400);
     expect(res.body.error).toBe("Validation failed");
   });
 
   it("should reject invalid IFSC format", async () => {
-    const res = await request(app).post("/api/kyc/verify-bank-account").send({ accountNumber: "91234567890", bankIfsc: "INVALID_IFSC" });
+    const res = await request(app).post("/api/kyc/verify-bank-account").set("Authorization", authHeader).send({ accountNumber: "91234567890", bankIfsc: "INVALID_IFSC" });
     expect(res.status).toBe(400);
     expect(res.body.error).toBe("Validation failed");
   });
 
   it("should successfully verify valid Bank Account via InstantPay Penny Drop", async () => {
-    const res = await request(app).post("/api/kyc/verify-bank-account").send({ accountNumber: "91234567890", bankIfsc: "HDFC0001234", name: "SHAHBAZ STORE" });
+    const res = await request(app).post("/api/kyc/verify-bank-account").set("Authorization", authHeader).send({ accountNumber: "91234567890", bankIfsc: "HDFC0001234", name: "SHAHBAZ STORE" });
     expect(res.status).toBe(200);
     expect(res.body.success).toBe(true);
     expect(res.body.data.valid).toBe(true);
@@ -64,9 +66,9 @@ describe("InstantPay Penny Drop Bank Account Verification API Integration", () =
   });
 
   it("should handle failed Penny Drop response correctly", async () => {
-    const res = await request(app).post("/api/kyc/verify-bank-account").send({ accountNumber: "9123456000", bankIfsc: "HDFC0001234" });
+    const res = await request(app).post("/api/kyc/verify-bank-account").set("Authorization", authHeader).send({ accountNumber: "9123456000", bankIfsc: "HDFC0001234" });
     expect(res.status).toBe(200);
-    expect(res.body.success).toBe(true);
+    expect(res.body.success).toBe(false);
     expect(res.body.data.valid).toBe(false);
     expect(res.body.data.status).toBe("INVALID");
   });

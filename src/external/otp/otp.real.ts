@@ -62,7 +62,7 @@ export const otpReal: OtpService = {
 ==================================================
   📱 CIKKA DEV OTP GENERATED
   Phone : ${phone}
-  OTP   : ${code}  (Dev Bypass Code: 1111 or 111111)
+  OTP   : ${code}
 ==================================================
 `);
   },
@@ -108,7 +108,7 @@ export const otpReal: OtpService = {
 ==================================================
   📧 CIKKA EMAIL OTP GENERATED
   Email : ${email}
-  OTP   : ${code}  (Dev Bypass Code: 1111 or 111111)
+  OTP   : ${code}
 ==================================================
 `);
   },
