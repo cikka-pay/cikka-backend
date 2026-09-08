@@ -48,11 +48,16 @@ export const checkStatus = asyncHandler(async (req: Request, res: Response) => {
  * Handle payment status notifications from Setu.
  */
 export const getPaymentStatus = asyncHandler(async (req: Request, res: Response) => {
+  const refID =
+    req.body?.refId ||
+    req.body?.refID ||
+    req.body?.uniquePaymentRefID ||
+    req.body?.billId ||
+    req.body?.sessionId;
 
-  const { uniquePaymentRefID } = req.body;
-
-  if (!uniquePaymentRefID) {
+  if (!refID) {
     res.status(400).json({
+      status: 400,
       success: false,
       error: SETU_ERRORS.MISSING_REF_ID,
     });
@@ -63,20 +68,24 @@ export const getPaymentStatus = asyncHandler(async (req: Request, res: Response)
 
   if (result.isDuplicate) {
     res.status(200).json({
+      status: 200,
       success: true,
       message: "Transaction already processed (Idempotent response)",
       uniquePaymentRefID: result.uniquePaymentRefID,
-      status: result.status,
+      refId: result.refId || result.uniquePaymentRefID,
+      statusStr: result.status,
       isDuplicate: true,
     });
     return;
   }
 
   res.status(200).json({
+    status: 200,
     success: true,
     message: "Payment status recorded successfully",
     uniquePaymentRefID: result.uniquePaymentRefID,
-    status: result.status,
+    refId: result.refId || result.uniquePaymentRefID,
+    statusStr: result.status,
     isDuplicate: false,
   });
 });

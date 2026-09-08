@@ -661,6 +661,89 @@ model CinVerificationRecord {
   @@map("cin_verification_records")
 }
 
+// ============================================================
+// AADHAAR VERIFICATION RECORD — InstantPay Aadhaar Demographic Ledger
+// ============================================================
+
+model AadhaarVerificationRecord {
+  id                 String   @id @default(uuid())
+  sellerId           String?
+  userId             String?
+  aadhaarNumber      String   // Masked Aadhaar number
+  aadhaarHolderName  String?  // Name on Aadhaar
+  state              String?  // Address / State (optional1)
+  ageBand            String?  // Age Band e.g. 20-30 (optional2)
+  gender             String?  // Gender e.g. M / F (optional3)
+  maskedMobile       String?  // Masked Mobile e.g. *******547 (optional4)
+  status             String?  // VALID | INVALID | PENDING
+  valid              Boolean  @default(false)
+  rawResponse        Json?
+
+  createdAt          DateTime @default(now())
+  updatedAt          DateTime @updatedAt
+
+  @@index([aadhaarNumber])
+  @@index([sellerId])
+  @@index([userId])
+  @@map("aadhaar_verification_records")
+}
+
+// ============================================================
+// VPA VERIFICATION RECORD — InstantPay UPI VPA Verification Ledger
+// ============================================================
+
+model VpaVerificationRecord {
+  id                 String   @id @default(uuid())
+  sellerId           String?
+  userId             String?
+  vpa                String   // Payee VPA / UPI ID
+  accountHolderName  String?  // Name returned by bank
+  ifsc               String?  // Bank IFSC code
+  accountType        String?  // SAVINGS | CURRENT
+  nameMatchPercent   Float?   // Name match percentage
+  status             String?  // VALID | INVALID | PENDING
+  valid              Boolean  @default(false)
+  rawResponse        Json?
+
+  createdAt          DateTime @default(now())
+  updatedAt          DateTime @updatedAt
+
+  @@index([vpa])
+  @@index([sellerId])
+  @@index([userId])
+  @@map("vpa_verification_records")
+}
+
+// ============================================================
+// BANK ACCOUNT VERIFICATION RECORD — Penny Drop Verification Ledger
+// ============================================================
+
+model BankAccountVerificationRecord {
+  id                 String   @id @default(uuid())
+  sellerId           String?
+  userId             String?
+  maskedAccountNumber String  // Masked Bank Account Number (e.g. XXXXXX1234)
+  accountNumberHash  String?  // SHA-256 hash for deduplication/lookup
+  bankIfsc           String   // Bank IFSC Code
+  accountHolderName  String?  // Name returned by bank via Penny Drop
+  txnReferenceId     String?  // IMPS / Bank Transaction Ref ID
+  accountType        String?  // SAVINGS | CURRENT
+  nameMatchPercent   Float?   // Name match percentage
+  isPennyDrop        Boolean  @default(true)
+  status             String?  // VALID | INVALID | PENDING
+  valid              Boolean  @default(false)
+  rawResponse        Json?
+
+  createdAt          DateTime @default(now())
+  updatedAt          DateTime @updatedAt
+
+  @@index([maskedAccountNumber])
+  @@index([bankIfsc])
+  @@index([sellerId])
+  @@index([userId])
+  @@map("bank_account_verification_records")
+}
+
 
 
 

@@ -16,6 +16,8 @@ import returnsRoutes from "./returns.routes";
 import notificationsRoutes from "./notifications.routes";
 import settingsRoutes from "./settings.routes";
 
+import paymentRoutes from "./payment.routes";
+
 const router = Router();
 
 // Public / Non-Seller Auth Routes
@@ -26,6 +28,9 @@ router.use("/setu/v1", setuRoutes);
 router.use("/bbps", bbpsRoutes);
 router.use("/kyc", instantpayRoutes);
 router.use("/instantpay", instantpayRoutes);
+
+// Razorpay Payment Endpoints (/api/payment/create-order & /api/payment/verify-payment)
+router.use("/payment", paymentRoutes);
 
 
 // Protected Seller Routes — require valid Seller JWT

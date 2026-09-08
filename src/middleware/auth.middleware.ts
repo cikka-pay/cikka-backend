@@ -62,5 +62,33 @@ export function optionalUserAuth(req: Request, res: Response, next: NextFunction
   next();
 }
 
+// Verifies either seller JWT or user JWT for shared endpoints (e.g. KYC & Payment APIs).
+export function requireAnyAuth(req: Request, res: Response, next: NextFunction): void {
+  const header = req.headers.authorization || "";
+  const [scheme, token] = header.split(" ");
+
+  if (scheme !== "Bearer" || !token) {
+    res.status(401).json({ success: false, error: AUTH_ERRORS.MISSING_AUTH_HEADER });
+    return;
+  }
+
+  try {
+    const payload = verifySellerToken(token);
+    req.seller = { id: payload.sub as string };
+    next();
+    return;
+  } catch (_err) {
+    try {
+      const payload = verifyUserToken(token);
+      req.user = { id: payload.sub as string };
+      next();
+      return;
+    } catch (_err2) {
+      res.status(401).json({ success: false, error: "Invalid authentication token" });
+    }
+  }
+}
+
+
 
 

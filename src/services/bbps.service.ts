@@ -1,3 +1,4 @@
+import { Prisma } from "@prisma/client";
 import { prisma } from "../config/prisma";
 import { setuBbpsService } from "../external/setu/setu-bbps.client";
 import { BBPS_ERRORS } from "../constants/errors";
@@ -75,7 +76,7 @@ export async function initiateBbpsPaymentService(userId: string | null, dto: Ini
       setuBillId: dto.setuBillId || null,
       setuPaymentId: paymentResult.setuPaymentId || null,
       bbpsRefNo: paymentResult.bbpsRefNo || null,
-      rawPayload: paymentResult,
+      rawPayload: paymentResult as unknown as Prisma.InputJsonValue,
     },
   });
 

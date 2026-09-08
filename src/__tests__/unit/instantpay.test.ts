@@ -2,9 +2,11 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import request from "supertest";
 import app from "../../app";
 import { instantpayClient } from "../../external";
+import { signSellerToken } from "../../utils/jwt";
 
 describe("InstantPay PAN Verification API Integration", () => {
   let verifyPanSpy: any;
+  const authHeader = `Bearer ${signSellerToken("test-seller-123")}`;
 
   beforeEach(() => {
     verifyPanSpy = vi.spyOn(instantpayClient, "verifyPan").mockImplementation(async (panOrOptions: any) => {
@@ -36,19 +38,19 @@ describe("InstantPay PAN Verification API Integration", () => {
   });
 
   it("should reject requests with missing PAN number", async () => {
-    const res = await request(app).post("/api/kyc/verify-pan").send({});
+    const res = await request(app).post("/api/kyc/verify-pan").set("Authorization", authHeader).send({});
     expect(res.status).toBe(400);
     expect(res.body.error).toBe("Validation failed");
   });
 
   it("should reject invalid PAN format (e.g. 12345)", async () => {
-    const res = await request(app).post("/api/kyc/verify-pan").send({ pan: "12345" });
+    const res = await request(app).post("/api/kyc/verify-pan").set("Authorization", authHeader).send({ pan: "12345" });
     expect(res.status).toBe(400);
     expect(res.body.error).toBe("Validation failed");
   });
 
   it("should successfully verify valid PAN via InstantPay client", async () => {
-    const res = await request(app).post("/api/kyc/verify-pan").send({ pan: "ABCDE1234F" });
+    const res = await request(app).post("/api/kyc/verify-pan").set("Authorization", authHeader).send({ pan: "ABCDE1234F" });
     expect(res.status).toBe(200);
     expect(res.body.success).toBe(true);
     expect(res.body.data.valid).toBe(true);
@@ -57,7 +59,7 @@ describe("InstantPay PAN Verification API Integration", () => {
   });
 
   it("should handle invalid PAN response correctly", async () => {
-    const res = await request(app).post("/api/kyc/verify-pan").send({ pan: "ABCDE1234X" });
+    const res = await request(app).post("/api/kyc/verify-pan").set("Authorization", authHeader).send({ pan: "ABCDE1234X" });
     expect(res.status).toBe(200);
     expect(res.body.success).toBe(true);
     expect(res.body.data.valid).toBe(false);

@@ -62,6 +62,7 @@ describe("Setu BBPS & Check Status Integration Tests", () => {
     it("should reject unauthorized Setu requests without valid Basic Auth", async () => {
       const res = await supertest(app)
         .post("/setu/v1/checkStatus")
+        .set("Authorization", "Basic invalid_credentials")
         .send({ uniquePaymentRefID: testRefID });
 
       expect(res.status).toBe(401);

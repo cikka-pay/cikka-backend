@@ -58,7 +58,13 @@ export const otpReal: OtpService = {
     }
 
     // 3. Fallback check for missing credentials
-    console.warn(`[SMS Real Mode] Sent OTP ${code} to ${phone} (No SMS API keys configured in .env)`);
+    console.log(`
+==================================================
+  📱 CIKKA DEV OTP GENERATED
+  Phone : ${phone}
+  OTP   : ${code}
+==================================================
+`);
   },
 
   async resendSms(phone: string, retryType: "text" | "voice" = "text"): Promise<{ success: boolean; message?: string; requestId?: string }> {
@@ -98,7 +104,13 @@ export const otpReal: OtpService = {
   },
 
   async sendEmail(email: string, code: string): Promise<void> {
-    console.log(`[Real Email Service] Sending OTP ${code} to ${email}`);
+    console.log(`
+==================================================
+  📧 CIKKA EMAIL OTP GENERATED
+  Email : ${email}
+  OTP   : ${code}
+==================================================
+`);
   },
 };
 

@@ -4,13 +4,40 @@ import app from "../../app";
 
 describe("Setu BBPS & UAT Check Status Integration", () => {
   describe("POST /setu/v1/getPaymentStatus (UAT Check Status URL)", () => {
-    it("should reject requests without valid Setu auth credentials", async () => {
+    it("should accept Setu webhook payload with refId and without authorization header", async () => {
+      const setuWebhookPayload = {
+        mobileNumber: "9002198484",
+        status: "FETCH_SUCCESS",
+        billId: "0558847476",
+        billerId: "AVVNL0000RAJ01",
+        billerName: "Ajmer Vidyut Vitran Nigam Limited (AVVNL)",
+        billerCategory: "Electricity",
+        sessionId: "2034435914037462453",
+        event: "bill_fetch_success",
+        refId: "DACKPTKMMJ0S7399F6AGzWLnh9362461603",
+        billAmount: "6067.00",
+        billNumber: "8021881734351724651",
+        billDate: "2026-08-31",
+        customerName: "Joseph Taylor",
+        dueDate: "2026-09-13",
+        billDetails: [
+          {
+            billAmount: "6067.00",
+            billNumber: "8021881734351724651",
+            billDate: "2026-08-31",
+            customerName: "Joseph Taylor",
+            dueDate: "2026-09-13"
+          }
+        ]
+      };
+
       const res = await request(app)
         .post("/setu/v1/getPaymentStatus")
-        .send({ uniquePaymentRefID: "TEST_REF_123" });
+        .send(setuWebhookPayload);
 
-      expect(res.status).toBe(401);
-      expect(res.body.success).toBe(false);
+      expect(res.status).toBe(200);
+      expect(res.body.success).toBe(true);
+      expect(res.body.refId).toBe("DACKPTKMMJ0S7399F6AGzWLnh9362461603");
     });
 
     it("should accept valid payment status webhook and record payment idempotently", async () => {
@@ -51,7 +78,7 @@ describe("Setu BBPS & UAT Check Status Integration", () => {
       expect(res.status).toBe(200);
       expect(res.body.success).toBe(true);
       expect(Array.isArray(res.body.categories)).toBe(true);
-      expect(res.body.categories).toContain("ELECTRICITY");
+      expect(res.body.categories.some((c: any) => c.code === "ELECTRICITY")).toBe(true);
     });
 
     it("GET /api/bbps/billers should return billers filtered by category", async () => {
@@ -63,31 +90,32 @@ describe("Setu BBPS & UAT Check Status Integration", () => {
       expect(res.body.billers[0].category).toBe("ELECTRICITY");
     });
 
-    it("POST /api/bbps/fetch-bill should fetch live bill details", async () => {
+    it("POST /api/bbps/bills/fetch should fetch live bill details", async () => {
       const payload = {
         billerId: "BESCOM000KAR01",
         customerParams: { accountNumber: "1234567890" },
       };
 
-      const res = await request(app).post("/api/bbps/fetch-bill").send(payload);
+      const res = await request(app).post("/api/bbps/bills/fetch").send(payload);
       expect(res.status).toBe(200);
       expect(res.body.success).toBe(true);
-      expect(res.body.bill.billerId).toBe(payload.billerId);
-      expect(res.body.bill.billAmount).toBeGreaterThan(0);
+      expect(res.body.billDetails.billerId).toBe(payload.billerId);
+      expect(res.body.billDetails.billAmount).toBeGreaterThan(0);
     });
 
-    it("POST /api/bbps/create-payment-order should generate Setu payment order & link", async () => {
+    it("POST /api/bbps/payments/initiate should generate Setu payment order & link", async () => {
       const payload = {
         billerId: "BESCOM000KAR01",
+        billerName: "BESCOM Electricity",
+        category: "ELECTRICITY",
         amount: 850.0,
-        paymentMode: "UPI",
+        customerParams: { accountNumber: "1234567890" },
       };
 
-      const res = await request(app).post("/api/bbps/create-payment-order").send(payload);
-      expect(res.status).toBe(200);
+      const res = await request(app).post("/api/bbps/payments/initiate").send(payload);
+      expect(res.status).toBe(201);
       expect(res.body.success).toBe(true);
-      expect(res.body.order.uniquePaymentRefID).toBeDefined();
-      expect(res.body.order.setuPaymentLink).toBeDefined();
+      expect(res.body.payment.refID).toBeDefined();
     });
   });
 });

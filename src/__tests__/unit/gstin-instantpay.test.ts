@@ -2,9 +2,11 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import request from "supertest";
 import app from "../../app";
 import { instantpayClient } from "../../external";
+import { signSellerToken } from "../../utils/jwt";
 
 describe("InstantPay GSTIN Verification API Integration", () => {
   let verifyGstinSpy: any;
+  const authHeader = `Bearer ${signSellerToken("test-seller-123")}`;
 
   beforeEach(() => {
     verifyGstinSpy = vi.spyOn(instantpayClient, "verifyGstin").mockImplementation(async (gstOrOptions: any) => {
@@ -43,19 +45,19 @@ describe("InstantPay GSTIN Verification API Integration", () => {
   });
 
   it("should reject requests with missing GSTIN number", async () => {
-    const res = await request(app).post("/api/kyc/verify-gstin").send({});
+    const res = await request(app).post("/api/kyc/verify-gstin").set("Authorization", authHeader).send({});
     expect(res.status).toBe(400);
     expect(res.body.error).toBe("Validation failed");
   });
 
   it("should reject invalid GSTIN format (e.g. 12345)", async () => {
-    const res = await request(app).post("/api/kyc/verify-gstin").send({ gstNumber: "12345" });
+    const res = await request(app).post("/api/kyc/verify-gstin").set("Authorization", authHeader).send({ gstNumber: "12345" });
     expect(res.status).toBe(400);
     expect(res.body.error).toBe("Validation failed");
   });
 
   it("should successfully verify valid GSTIN via InstantPay client", async () => {
-    const res = await request(app).post("/api/kyc/verify-gstin").send({ gstNumber: "24DACP2435DZY" });
+    const res = await request(app).post("/api/kyc/verify-gstin").set("Authorization", authHeader).send({ gstNumber: "24DACP2435DZY" });
     expect(res.status).toBe(200);
     expect(res.body.success).toBe(true);
     expect(res.body.data.valid).toBe(true);
@@ -65,7 +67,7 @@ describe("InstantPay GSTIN Verification API Integration", () => {
   });
 
   it("should handle canceled or invalid GSTIN response correctly", async () => {
-    const res = await request(app).post("/api/kyc/verify-gstin").send({ gstNumber: "24DACP2435DZX" });
+    const res = await request(app).post("/api/kyc/verify-gstin").set("Authorization", authHeader).send({ gstNumber: "24DACP2435DZX" });
     expect(res.status).toBe(200);
     expect(res.body.success).toBe(true);
     expect(res.body.data.valid).toBe(false);

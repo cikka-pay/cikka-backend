@@ -1,5 +1,7 @@
 import { Request, Response } from "express";
+import { OnboardingStatus } from "@prisma/client";
 import { prisma } from "../config/prisma";
+import { AUTH_ERRORS } from "../constants/errors";
 import { otpService } from "../external";
 import { generateOtp, hashPassword, isOtpValid } from "../services/auth.service";
 import { asyncHandler } from "../utils/asyncHandler";
@@ -14,39 +16,35 @@ export const signupSendPhoneOtp = asyncHandler(async (req: Request, res: Respons
   const { phone: phoneRaw } = req.body;
   const { phone, countryCode, phoneNumber } = normalizePhone(phoneRaw);
 
-  let seller = await prisma.seller.findUnique({ where: { phone } });
-  if (seller && seller.onboardingStatus !== "INCOMPLETE") {
-    res.status(400).json({ error: "Phone number already registered" });
+  const existingSeller = await prisma.seller.findUnique({ where: { phone } });
+  if (existingSeller && existingSeller.onboardingStatus !== OnboardingStatus.INCOMPLETE && existingSeller.phoneVerified) {
+    res.status(400).json({ success: false, error: "Phone number already registered" });
     return;
   }
 
-  const otp = generateOtp();
+  const otp = generateOtp(6);
   const expiresAt = new Date(Date.now() + 10 * 60 * 1000); // 10 mins
 
-  if (!seller) {
-    seller = await prisma.seller.create({
-      data: {
-        phone,
-        countryCode,
-        phoneNumber,
-        phoneOtpCode: otp,
-        phoneOtpExpiresAt: expiresAt,
-      },
-    });
-  } else {
-    seller = await prisma.seller.update({
-      where: { phone },
-      data: {
-        countryCode,
-        phoneNumber,
-        phoneOtpCode: otp,
-        phoneOtpExpiresAt: expiresAt,
-      },
-    });
-  }
+  await prisma.seller.upsert({
+    where: { phone },
+    update: {
+      countryCode,
+      phoneNumber,
+      phoneOtpCode: otp,
+      phoneOtpExpiresAt: expiresAt,
+    },
+    create: {
+      phone,
+      countryCode,
+      phoneNumber,
+      phoneOtpCode: otp,
+      phoneOtpExpiresAt: expiresAt,
+      onboardingStatus: OnboardingStatus.INCOMPLETE,
+    },
+  });
 
   await otpService.sendSms(phone, otp);
-  res.json({ message: "OTP sent" });
+  res.json({ success: true, message: "OTP sent" });
 });
 
 export const signupVerifyPhoneOtp = asyncHandler(async (req: Request, res: Response) => {
@@ -55,17 +53,17 @@ export const signupVerifyPhoneOtp = asyncHandler(async (req: Request, res: Respo
 
   const seller = await prisma.seller.findUnique({ where: { phone } });
   if (!seller) {
-    res.status(404).json({ error: "Seller not found" });
+    res.status(404).json({ success: false, error: AUTH_ERRORS.USER_NOT_FOUND });
     return;
   }
 
-  if (!isOtpValid(seller.phoneOtpCode, otp, seller.phoneOtpExpiresAt)) {
-    res.status(400).json({ error: "Invalid or expired OTP" });
+  if (!isOtpValid(seller.phoneOtpCode || null, otp, seller.phoneOtpExpiresAt || null)) {
+    res.status(400).json({ success: false, error: AUTH_ERRORS.INVALID_OTP });
     return;
   }
 
-  await prisma.seller.update({
-    where: { id: seller.id },
+  const updatedSeller = await prisma.seller.update({
+    where: { phone },
     data: {
       phoneVerified: true,
       phoneOtpCode: null,
@@ -74,21 +72,27 @@ export const signupVerifyPhoneOtp = asyncHandler(async (req: Request, res: Respo
   });
 
   // Issue a temporary token for the rest of the signup flow
-  const signupToken = signToken(seller.id, "1h");
-  res.json({ message: "Phone verified", signupToken });
+  const signupToken = signToken(updatedSeller.id, "1h");
+  res.json({ success: true, message: "Phone verified", signupToken });
 });
 
 export const signupSendEmailOtp = asyncHandler(async (req: Request, res: Response) => {
   const sellerId = req.seller!.id;
   const { email } = req.body;
 
-  const existing = await prisma.seller.findUnique({ where: { email } });
-  if (existing && existing.id !== sellerId) {
-    res.status(400).json({ error: "Email already in use by another account" });
+  const existingEmailSeller = await prisma.seller.findUnique({ where: { email } });
+  if (existingEmailSeller && existingEmailSeller.id !== sellerId) {
+    res.status(400).json({ success: false, error: "Email already in use by another account" });
     return;
   }
 
-  const otp = generateOtp();
+  const seller = await prisma.seller.findUnique({ where: { id: sellerId } });
+  if (!seller) {
+    res.status(404).json({ success: false, error: AUTH_ERRORS.USER_NOT_FOUND });
+    return;
+  }
+
+  const otp = generateOtp(6);
   const expiresAt = new Date(Date.now() + 10 * 60 * 1000);
 
   await prisma.seller.update({
@@ -101,7 +105,7 @@ export const signupSendEmailOtp = asyncHandler(async (req: Request, res: Respons
   });
 
   await otpService.sendEmail(email, otp);
-  res.json({ message: "OTP sent to email" });
+  res.json({ success: true, message: "OTP sent to email" });
 });
 
 export const signupVerifyEmailOtp = asyncHandler(async (req: Request, res: Response) => {
@@ -110,12 +114,12 @@ export const signupVerifyEmailOtp = asyncHandler(async (req: Request, res: Respo
 
   const seller = await prisma.seller.findUnique({ where: { id: sellerId } });
   if (!seller || seller.email !== email) {
-    res.status(400).json({ error: "Email mismatch or seller not found" });
+    res.status(400).json({ success: false, error: "Email mismatch or seller not found" });
     return;
   }
 
-  if (!isOtpValid(seller.emailOtpCode, otp, seller.emailOtpExpiresAt)) {
-    res.status(400).json({ error: "Invalid or expired OTP" });
+  if (!isOtpValid(seller.emailOtpCode || null, otp, seller.emailOtpExpiresAt || null)) {
+    res.status(400).json({ success: false, error: AUTH_ERRORS.INVALID_OTP });
     return;
   }
 
@@ -128,7 +132,7 @@ export const signupVerifyEmailOtp = asyncHandler(async (req: Request, res: Respo
     },
   });
 
-  res.json({ message: "Email verified" });
+  res.json({ success: true, message: "Email verified" });
 });
 
 export const signupSetPassword = asyncHandler(async (req: Request, res: Response) => {
@@ -136,28 +140,31 @@ export const signupSetPassword = asyncHandler(async (req: Request, res: Response
   const { password } = req.body;
 
   const seller = await prisma.seller.findUnique({ where: { id: sellerId } });
-  if (!seller || !seller.phoneVerified || !seller.emailVerified) {
-    res.status(400).json({ error: "Phone and email must be verified first" });
+  if (!seller) {
+    res.status(404).json({ success: false, error: AUTH_ERRORS.USER_NOT_FOUND });
     return;
   }
 
   const hash = await hashPassword(password);
-  await prisma.seller.update({
+  const updatedSeller = await prisma.seller.update({
     where: { id: sellerId },
-    data: { passwordHash: hash },
+    data: {
+      passwordHash: hash,
+    },
   });
 
   // Issue final session token
-  const token = signToken(seller.id);
+  const token = signToken(updatedSeller.id);
   res.json({
+    success: true,
     token,
     seller: {
-      id: seller.id,
-      phone: seller.phone,
-      countryCode: seller.countryCode,
-      phoneNumber: seller.phoneNumber,
-      email: seller.email,
-      onboardingStatus: seller.onboardingStatus,
+      id: updatedSeller.id,
+      phone: updatedSeller.phone,
+      countryCode: updatedSeller.countryCode,
+      phoneNumber: updatedSeller.phoneNumber,
+      email: updatedSeller.email,
+      onboardingStatus: updatedSeller.onboardingStatus,
     },
   });
 });
@@ -172,11 +179,11 @@ export const signinSendOtp = asyncHandler(async (req: Request, res: Response) =>
 
   const seller = await prisma.seller.findUnique({ where: { phone } });
   if (!seller) {
-    res.status(404).json({ error: "Phone number not registered" });
+    res.status(404).json({ success: false, error: AUTH_ERRORS.USER_NOT_FOUND });
     return;
   }
 
-  const otp = generateOtp();
+  const otp = generateOtp(6);
   const expiresAt = new Date(Date.now() + 10 * 60 * 1000);
 
   await prisma.seller.update({
@@ -190,7 +197,7 @@ export const signinSendOtp = asyncHandler(async (req: Request, res: Response) =>
   });
 
   await otpService.sendSms(phone, otp);
-  res.json({ message: "OTP sent" });
+  res.json({ success: true, message: "OTP sent" });
 });
 
 export const signinVerifyOtp = asyncHandler(async (req: Request, res: Response) => {
@@ -199,35 +206,36 @@ export const signinVerifyOtp = asyncHandler(async (req: Request, res: Response) 
 
   const seller = await prisma.seller.findUnique({ where: { phone } });
   if (!seller) {
-    res.status(404).json({ error: "Seller not found" });
+    res.status(404).json({ success: false, error: AUTH_ERRORS.USER_NOT_FOUND });
     return;
   }
 
-  if (!isOtpValid(seller.phoneOtpCode, otp, seller.phoneOtpExpiresAt)) {
-    res.status(401).json({ error: "Invalid or expired OTP" });
+  if (!isOtpValid(seller.phoneOtpCode || null, otp, seller.phoneOtpExpiresAt || null)) {
+    res.status(401).json({ success: false, error: AUTH_ERRORS.INVALID_OTP });
     return;
   }
 
-  await prisma.seller.update({
-    where: { id: seller.id },
+  const updatedSeller = await prisma.seller.update({
+    where: { phone },
     data: {
       phoneOtpCode: null,
       phoneOtpExpiresAt: null,
     },
   });
 
-  const token = signToken(seller.id);
+  const token = signToken(updatedSeller.id);
   res.json({
+    success: true,
     token,
     seller: {
-      id: seller.id,
-      phone: seller.phone,
-      countryCode: seller.countryCode,
-      phoneNumber: seller.phoneNumber,
-      email: seller.email,
-      businessName: seller.businessName,
-      kycVerified: seller.kycVerified,
-      onboardingStatus: seller.onboardingStatus,
+      id: updatedSeller.id,
+      phone: updatedSeller.phone,
+      countryCode: updatedSeller.countryCode,
+      phoneNumber: updatedSeller.phoneNumber,
+      email: updatedSeller.email,
+      businessName: updatedSeller.businessName,
+      kycVerified: updatedSeller.kycVerified,
+      onboardingStatus: updatedSeller.onboardingStatus,
     },
   });
 });
@@ -236,35 +244,44 @@ export const resendSellerOtp = asyncHandler(async (req: Request, res: Response) 
   const { phone: phoneRaw, retryType = "text", purpose = "signin" } = req.body;
   const { phone, countryCode, phoneNumber } = normalizePhone(phoneRaw);
 
-  const seller = await prisma.seller.findUnique({ where: { phone } });
-  if (!seller && purpose !== "signup") {
-    res.status(404).json({ error: "Seller account not found" });
+  const existingSeller = await prisma.seller.findUnique({ where: { phone } });
+  if (!existingSeller && purpose !== "signup") {
+    res.status(404).json({ success: false, error: AUTH_ERRORS.USER_NOT_FOUND });
     return;
   }
 
   const otp = generateOtp(6);
   const expiresAt = new Date(Date.now() + 10 * 60 * 1000);
 
-  if (seller) {
-    const updateField =
-      purpose === "reset"
-        ? { resetOtpCode: otp, resetOtpExpiresAt: expiresAt }
-        : { phoneOtpCode: otp, phoneOtpExpiresAt: expiresAt };
+  const updateData: any =
+    purpose === "reset"
+      ? { resetOtpCode: otp, resetOtpExpiresAt: expiresAt }
+      : { phoneOtpCode: otp, phoneOtpExpiresAt: expiresAt };
 
+  if (existingSeller) {
     await prisma.seller.update({
       where: { phone },
       data: {
         countryCode,
         phoneNumber,
-        ...updateField,
+        ...updateData,
+      },
+    });
+  } else {
+    await prisma.seller.create({
+      data: {
+        phone,
+        countryCode,
+        phoneNumber,
+        onboardingStatus: OnboardingStatus.INCOMPLETE,
+        ...updateData,
       },
     });
   }
 
   const resendResult = await otpService.resendSms(phone, retryType as "text" | "voice");
-  res.json({ message: resendResult.message || "OTP resent successfully" });
+  res.json({ success: true, message: resendResult.message || "OTP resent successfully" });
 });
-
 
 // ==========================================
 // FORGOT PASSWORD FLOW
@@ -276,11 +293,11 @@ export const forgotPasswordSendOtp = asyncHandler(async (req: Request, res: Resp
 
   const seller = await prisma.seller.findUnique({ where: { phone } });
   if (!seller) {
-    res.status(404).json({ error: "Account not found" });
+    res.status(404).json({ success: false, error: AUTH_ERRORS.USER_NOT_FOUND });
     return;
   }
 
-  const otp = generateOtp();
+  const otp = generateOtp(6);
   const expiresAt = new Date(Date.now() + 10 * 60 * 1000);
 
   await prisma.seller.update({
@@ -294,7 +311,7 @@ export const forgotPasswordSendOtp = asyncHandler(async (req: Request, res: Resp
   });
 
   await otpService.sendSms(phone, otp);
-  res.json({ message: "OTP sent" });
+  res.json({ success: true, message: "OTP sent" });
 });
 
 export const forgotPasswordVerifyOtp = asyncHandler(async (req: Request, res: Response) => {
@@ -303,17 +320,17 @@ export const forgotPasswordVerifyOtp = asyncHandler(async (req: Request, res: Re
 
   const seller = await prisma.seller.findUnique({ where: { phone } });
   if (!seller) {
-    res.status(404).json({ error: "Account not found" });
+    res.status(404).json({ success: false, error: AUTH_ERRORS.USER_NOT_FOUND });
     return;
   }
 
-  if (!isOtpValid(seller.resetOtpCode, otp, seller.resetOtpExpiresAt)) {
-    res.status(400).json({ error: "Invalid or expired OTP" });
+  if (!isOtpValid(seller.resetOtpCode || null, otp, seller.resetOtpExpiresAt || null)) {
+    res.status(400).json({ success: false, error: AUTH_ERRORS.INVALID_OTP });
     return;
   }
 
-  await prisma.seller.update({
-    where: { id: seller.id },
+  const updatedSeller = await prisma.seller.update({
+    where: { phone },
     data: {
       resetOtpCode: null,
       resetOtpExpiresAt: null,
@@ -321,43 +338,49 @@ export const forgotPasswordVerifyOtp = asyncHandler(async (req: Request, res: Re
   });
 
   // Issue a reset token valid for 15 mins
-  const resetToken = signToken(seller.id, "15m");
-  res.json({ message: "OTP verified", resetToken });
+  const resetToken = signToken(updatedSeller.id, "15m");
+  res.json({ success: true, message: "OTP verified", resetToken });
 });
 
 export const forgotPasswordReset = asyncHandler(async (req: Request, res: Response) => {
   const sellerId = req.seller!.id;
   const { password } = req.body;
 
+  const seller = await prisma.seller.findUnique({ where: { id: sellerId } });
+  if (!seller) {
+    res.status(404).json({ success: false, error: AUTH_ERRORS.USER_NOT_FOUND });
+    return;
+  }
+
   const hash = await hashPassword(password);
   await prisma.seller.update({
     where: { id: sellerId },
-    data: { passwordHash: hash },
+    data: {
+      passwordHash: hash,
+    },
   });
 
-  res.json({ message: "Password reset successfully" });
+  res.json({ success: true, message: "Password reset successfully" });
 });
 
 export const getMe = asyncHandler(async (req: Request, res: Response) => {
-  const seller = await prisma.seller.findUnique({
-    where: { id: req.seller!.id },
-    include: { onboarding: true },
-  });
-
+  const seller = await prisma.seller.findUnique({ where: { id: req.seller!.id } });
   if (!seller) {
-    res.status(404).json({ error: "Seller not found" });
+    res.status(404).json({ success: false, error: AUTH_ERRORS.USER_NOT_FOUND });
     return;
   }
 
   res.json({
-    id: seller.id,
-    phone: seller.phone,
-    countryCode: seller.countryCode,
-    phoneNumber: seller.phoneNumber,
-    email: seller.email,
-    businessName: seller.businessName,
-    kycVerified: seller.kycVerified,
-    onboardingStatus: seller.onboardingStatus,
-    onboarding: seller.onboarding,
+    success: true,
+    seller: {
+      id: seller.id,
+      phone: seller.phone,
+      countryCode: seller.countryCode,
+      phoneNumber: seller.phoneNumber,
+      email: seller.email,
+      businessName: seller.businessName,
+      kycVerified: seller.kycVerified,
+      onboardingStatus: seller.onboardingStatus,
+    },
   });
 });

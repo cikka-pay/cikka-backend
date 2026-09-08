@@ -1,0 +1,87 @@
+{
+	"info": {
+		"_postman_id": "instantpay-verify-aadhaar-collection",
+		"name": "InstantPay & Cikka Aadhaar Verification API",
+		"schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+	},
+	"item": [
+		{
+			"name": "1. Cikka Backend - Verify Aadhaar Endpoint",
+			"request": {
+				"method": "POST",
+				"header": [
+					{
+						"key": "Content-Type",
+						"value": "application/json"
+					}
+				],
+				"body": {
+					"mode": "raw",
+					"raw": "{\n  \"aadhaarNumber\": \"439382179844\",\n  \"name\": \"Vedant Vyas\"\n}"
+				},
+				"url": {
+					"raw": "http://localhost:4000/api/kyc/verify-aadhaar",
+					"protocol": "http",
+					"host": [
+						"localhost"
+					],
+					"port": "4000",
+					"path": [
+						"api",
+						"kyc",
+						"verify-aadhaar"
+					]
+				}
+			}
+		},
+		{
+			"name": "2. Direct InstantPay - verifyAadhaar API",
+			"request": {
+				"method": "POST",
+				"header": [
+					{
+						"key": "Accept",
+						"value": "application/json"
+					},
+					{
+						"key": "Content-Type",
+						"value": "application/json"
+					},
+					{
+						"key": "X-Ipay-Auth-Code",
+						"value": "1"
+					},
+					{
+						"key": "X-Ipay-Client-Id",
+						"value": "YOUR_INSTANTPAY_CLIENT_ID"
+					},
+					{
+						"key": "X-Ipay-Client-Secret",
+						"value": "YOUR_INSTANTPAY_CLIENT_SECRET"
+					},
+					{
+						"key": "X-Ipay-Endpoint-Ip",
+						"value": "2409:40c4:1161:bcab:ce9:f7f4:42e1:f933"
+					}
+				],
+				"body": {
+					"mode": "raw",
+					"raw": "{\n  \"aadhaarNumber\": \"439382179844\",\n  \"latitude\": \"23.0000\",\n  \"longitude\": \"45.0000\",\n  \"externalRef\": \"ref_1787641200000\",\n  \"consent\": \"Y\"\n}"
+				},
+				"url": {
+					"raw": "https://api.instantpay.in/identity/verifyAadhaar",
+					"protocol": "https",
+					"host": [
+						"api",
+						"instantpay",
+						"in"
+					],
+					"path": [
+						"identity",
+						"verifyAadhaar"
+					]
+				}
+			}
+		}
+	]
+}

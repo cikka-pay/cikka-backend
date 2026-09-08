@@ -1,6 +1,13 @@
 import { Request, Response } from "express";
+import {
+  verifyAadhaarService,
+  verifyBankAccountService,
+  verifyCinService,
+  verifyGstinService,
+  verifyPanService,
+  verifyVpaService,
+} from "../services/instantpay.service";
 import { asyncHandler } from "../utils/asyncHandler";
-import { verifyPanService, verifyGstinService, verifyCinService } from "../services/instantpay.service";
 
 /**
  * POST /api/kyc/verify-pan
@@ -9,7 +16,7 @@ import { verifyPanService, verifyGstinService, verifyCinService } from "../servi
  */
 export const verifyPan = asyncHandler(async (req: Request, res: Response) => {
   const { pan } = req.body;
-  const userId = req.user?.id || req.seller?.id || "guest_user";
+  const userId = req.user?.id || req.seller?.id;
 
   const result = await verifyPanService({ userId, pan });
 
@@ -27,8 +34,8 @@ export const verifyPan = asyncHandler(async (req: Request, res: Response) => {
  */
 export const verifyGstin = asyncHandler(async (req: Request, res: Response) => {
   const { gstNumber, externalRef, latitude, longitude } = req.body;
-  const sellerId = req.seller?.id || "guest_seller";
-  const userId = req.user?.id || "guest_user";
+  const sellerId = req.seller?.id;
+  const userId = req.user?.id;
 
   const result = await verifyGstinService({
     sellerId,
@@ -53,8 +60,8 @@ export const verifyGstin = asyncHandler(async (req: Request, res: Response) => {
  */
 export const verifyCin = asyncHandler(async (req: Request, res: Response) => {
   const { cin, externalRef, latitude, longitude } = req.body;
-  const sellerId = req.seller?.id || "guest_seller";
-  const userId = req.user?.id || "guest_user";
+  const sellerId = req.seller?.id;
+  const userId = req.user?.id;
 
   const result = await verifyCinService({
     sellerId,
@@ -67,7 +74,93 @@ export const verifyCin = asyncHandler(async (req: Request, res: Response) => {
 
   res.status(200).json({
     success: true,
-    message: result.valid ? "CIN verified successfully" : "CIN verification failed",
+    message: result.valid ? "CIN verification completed" : "CIN verification failed",
+    data: result,
+  });
+});
+
+/**
+ * POST /api/kyc/verify-aadhaar
+ * POST /api/instantpay/verify-aadhaar
+ * Perform Aadhaar Demographic verification via InstantPay API.
+ */
+export const verifyAadhaar = asyncHandler(async (req: Request, res: Response) => {
+  const { aadhaarNumber, name, externalRef, latitude, longitude } = req.body;
+  const sellerId = req.seller?.id;
+  const userId = req.user?.id;
+
+  const result = await verifyAadhaarService({
+    sellerId,
+    userId,
+    aadhaarNumber,
+    name,
+    externalRef,
+    latitude,
+    longitude,
+  });
+
+  res.status(200).json({
+    success: true,
+    message: result.valid ? "Aadhaar verified successfully" : "Aadhaar verification failed",
+    data: result,
+  });
+});
+
+/**
+ * POST /api/kyc/verify-vpa
+ * POST /api/instantpay/verify-vpa
+ * Perform UPI VPA / Handle verification via InstantPay verifyBankAccount API.
+ */
+export const verifyVpa = asyncHandler(async (req: Request, res: Response) => {
+  const { vpa, name, bankIfsc, externalRef, latitude, longitude } = req.body;
+  const sellerId = req.seller?.id;
+  const userId = req.user?.id;
+
+  const result = await verifyVpaService({
+    sellerId,
+    userId,
+    vpa,
+    name,
+    bankIfsc,
+    externalRef,
+    latitude,
+    longitude,
+  });
+
+  res.status(200).json({
+    success: true,
+    message: result.valid ? "UPI VPA verified successfully" : "UPI VPA verification failed",
+    data: result,
+  });
+});
+
+/**
+ * POST /api/kyc/verify-bank-account
+ * POST /api/instantpay/verify-bank-account
+ * Perform Bank Account Penny Drop verification via InstantPay verifyBankAccount API.
+ */
+export const verifyBankAccount = asyncHandler(async (req: Request, res: Response) => {
+  const { accountNumber, bankIfsc, name, externalRef, latitude, longitude } = req.body;
+  const sellerId = req.seller?.id;
+  const userId = req.user?.id;
+
+  const result = await verifyBankAccountService({
+    sellerId,
+    userId,
+    accountNumber,
+    bankIfsc,
+    name,
+    externalRef,
+    latitude,
+    longitude,
+  });
+
+  const errorReason = (result as any).rawResponse?.message || (result as any).rawResponse?.status || (result.status !== "INVALID" ? result.status : null);
+  res.status(200).json({
+    success: result.valid,
+    message: result.valid
+      ? "Bank Account verified via Penny Drop successfully"
+      : (errorReason ? `Penny Drop Failed: ${errorReason}` : "Bank Account Penny Drop verification failed"),
     data: result,
   });
 });

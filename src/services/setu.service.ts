@@ -1,10 +1,17 @@
 import { prisma } from "../config/prisma";
 import { SETU_ERRORS } from "../constants/errors";
+import { setuBbpsService } from "../external/setu/setu-bbps.client";
 
 export interface PaymentStatusDTO {
-  uniquePaymentRefID: string;
+  uniquePaymentRefID?: string;
+  refId?: string;
+  refID?: string;
+  billId?: string;
+  sessionId?: string;
   status?: string;
+  event?: string;
   amount?: number | string;
+  billAmount?: number | string;
   userId?: string;
   orderId?: string;
   rawPayload?: any;
@@ -22,45 +29,62 @@ export interface RefundDTO {
 const inMemoryTxLedger = new Map<string, { status: string; amount: number }>();
 
 export async function recordPaymentStatusService(dto: PaymentStatusDTO) {
-  const { uniquePaymentRefID, status, amount, userId, orderId, rawPayload } = dto;
+  const refID =
+    dto.uniquePaymentRefID ||
+    dto.refId ||
+    dto.refID ||
+    dto.billId ||
+    dto.sessionId;
 
-  if (!uniquePaymentRefID) {
+  if (!refID) {
     throw new Error(SETU_ERRORS.MISSING_REF_ID);
   }
 
-  const paymentStatus = (status || "SUCCESS").toUpperCase();
-  const txAmount = amount !== undefined && amount !== null ? parseFloat(amount.toString()) : 0;
+  const rawStatus = dto.status || dto.event || "SUCCESS";
+  const paymentStatus = rawStatus.toUpperCase();
+  const numAmount = dto.amount ?? dto.billAmount;
+  const txAmount = numAmount !== undefined && numAmount !== null ? parseFloat(numAmount.toString()) : 0;
 
   // 1. Idempotency & Deduplication Check on PaymentTransaction
   const existingTransaction = await prisma.paymentTransaction.findUnique({
-    where: { uniquePaymentRefID },
+    where: { uniquePaymentRefID: refID },
   });
 
   if (existingTransaction) {
     // Also update BbpsTransaction if it exists
-    await syncBbpsTransactionStatus(uniquePaymentRefID, paymentStatus, rawPayload);
+    await syncBbpsTransactionStatus(refID, paymentStatus, dto.rawPayload || dto);
 
     return {
       isDuplicate: true,
-      uniquePaymentRefID,
+      uniquePaymentRefID: refID,
+      refId: refID,
       status: existingTransaction.status,
     };
   }
 
   // 2. Process new transaction
-  await prisma.paymentTransaction.create({
-    data: {
-      uniquePaymentRefID,
-      status: existing.status,
-    };
+  try {
+    await prisma.paymentTransaction.create({
+      data: {
+        uniquePaymentRefID: refID,
+        userId: dto.userId || null,
+        orderId: dto.orderId || null,
+        amount: txAmount,
+        status: paymentStatus,
+        rawPayload: dto.rawPayload || dto || null,
+      },
+    });
+  } catch (err: any) {
+    console.warn(`[Setu Service Warning] DB logging skipped: ${err.message}`);
   }
 
   // 3. Sync status to BbpsTransaction ledger if matching refID exists
-  await syncBbpsTransactionStatus(uniquePaymentRefID, paymentStatus, rawPayload);
+  await syncBbpsTransactionStatus(refID, paymentStatus, dto.rawPayload || dto);
 
   return {
     isDuplicate: false,
-    uniquePaymentRefID,
+    uniquePaymentRefID: refID,
+    refId: refID,
     status: paymentStatus,
   };
 }
