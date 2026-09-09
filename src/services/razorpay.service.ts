@@ -29,7 +29,7 @@ export interface RazorpayOrderResult {
 
 export const razorpayService = {
   /**
-   * Create a Razorpay Order
+   * Create an Actual Live Razorpay Order via official SDK
    * Minimum amount: 100 paise (₹1)
    */
   async createOrder(data: CreateRazorpayOrderDTO): Promise<RazorpayOrderResult> {
@@ -56,23 +56,14 @@ export const razorpayService = {
         key_id,
       };
     } catch (err: any) {
-      console.warn(
-        `[Razorpay API Notice] Live Razorpay order creation returned: ${
-          err.message || err.error?.description || "Authentication failed"
-        }. Using dev fallback order for seamless testing.`
-      );
-      const devOrderId = `order_dev_${Date.now()}`;
-      return {
-        order_id: devOrderId,
-        amount: amountInPaise,
-        currency,
-        key_id,
-      };
+      const errorMsg = err.error?.description || err.message || "Failed to create Razorpay Order";
+      console.error(`[Razorpay Service Error] client.orders.create failed: ${errorMsg}`);
+      throw new Error(`Razorpay Gateway Error: ${errorMsg}`);
     }
   },
 
   /**
-   * Verify Razorpay Payment Signature
+   * Verify Actual Razorpay Payment Signature
    * Algorithm: HMAC-SHA256(order_id + "|" + payment_id, KEY_SECRET)
    */
   verifyPaymentSignature(
@@ -82,11 +73,6 @@ export const razorpayService = {
   ): boolean {
     if (!razorpay_order_id || !razorpay_payment_id || !razorpay_signature) {
       return false;
-    }
-
-    // Dev test order bypass
-    if (razorpay_order_id.startsWith("order_dev_") || razorpay_payment_id.startsWith("pay_app_")) {
-      return true;
     }
 
     const { key_secret } = getRazorpayClient();

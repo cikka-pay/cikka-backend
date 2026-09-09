@@ -2,6 +2,7 @@ import { Router } from "express";
 import {
   listOrders,
   getOrder,
+  createOrder,
   updateOrderStatus,
 } from "../controllers/orders.controller";
 import { z } from "zod";
@@ -23,6 +24,7 @@ const updateStatusSchema = z.object({
 });
 
 router.get("/", validate({ query: orderQuerySchema }), listOrders);
+router.post("/", createOrder);
 router.get("/:id", getOrder);
 router.patch("/:id/status", validate({ body: updateStatusSchema }), updateOrderStatus);
 

@@ -56,5 +56,10 @@ export const config = {
   // Razorpay Gateway Config
   razorpayKeyId: process.env.RAZORPAY_KEY_ID,
   razorpayKeySecret: process.env.RAZORPAY_KEY_SECRET,
+
+  // Shipway Experience API Config
+  shipwayUsername: process.env.SHIPWAY_USERNAME,
+  shipwayLicenseKey: process.env.SHIPWAY_LICENSE_KEY
 };
+
 

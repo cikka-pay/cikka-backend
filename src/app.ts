@@ -9,6 +9,12 @@ const app = express();
 
 const allowedOrigins = (process.env.CORS_ORIGIN || "http://localhost:5173").split(",");
 
+app.use((_req, res, next) => {
+  res.setHeader("ngrok-skip-browser-warning", "true");
+  next();
+});
+
+
 app.use(cors({ origin: allowedOrigins, credentials: true }));
 app.use(express.json());
 app.use(morgan("dev"));

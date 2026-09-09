@@ -17,6 +17,9 @@ import notificationsRoutes from "./notifications.routes";
 import settingsRoutes from "./settings.routes";
 
 import paymentRoutes from "./payment.routes";
+import shipwayRoutes from "./shipway.routes";
+
+import hubbleRoutes from "./hubble.routes";
 
 const router = Router();
 
@@ -28,9 +31,15 @@ router.use("/setu/v1", setuRoutes);
 router.use("/bbps", bbpsRoutes);
 router.use("/kyc", instantpayRoutes);
 router.use("/instantpay", instantpayRoutes);
+router.use("/hubble", hubbleRoutes);
+router.use("/hubble.sso", hubbleRoutes);
 
 // Razorpay Payment Endpoints (/api/payment/create-order & /api/payment/verify-payment)
 router.use("/payment", paymentRoutes);
+
+// Shipway Experience Endpoints (/api/shipway/...)
+router.use("/shipway", shipwayRoutes);
+
 
 
 // Protected Seller Routes — require valid Seller JWT

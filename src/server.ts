@@ -7,6 +7,7 @@ const server = app.listen(port, "0.0.0.0", () => {
   console.log(`Cikka dashboard API listening on port ${port}`);
 });
 
+
 server.on("error", (err: any) => {
   if (err.code === "EADDRINUSE") {
     console.error(`\n❌ Error: Port ${port} is already in use by another process.`);
