@@ -32,8 +32,8 @@ export const pushOrder = asyncHandler(async (req: Request, res: Response) => {
 
   res.status(200).json({
     success: true,
-    message: "Order data pushed to Shipway successfully",
     ...result,
+    message: result?.message || "Order data pushed to Shipway successfully",
   });
 });
 

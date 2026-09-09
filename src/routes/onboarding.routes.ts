@@ -1,6 +1,7 @@
 import { Router } from "express";
 import {
   getOnboardingState,
+  getMerchantAgreement,
   updateStep1,
   updateStep2,
   verifyGst,
@@ -27,6 +28,7 @@ const upload = multer({ dest: "/tmp/uploads/", limits: { fileSize: 2 * 1024 * 10
 router.use(requireAuth);
 
 router.get("/", getOnboardingState);
+router.get("/agreement", getMerchantAgreement);
 router.post("/submit", submitApplication);
 
 // Step 1: Business Info

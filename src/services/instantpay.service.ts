@@ -54,7 +54,6 @@ export async function verifyPanService(dto: VerifyPanDTO) {
           registeredName: result.registeredName || null,
           category: result.category || null,
           status: result.status,
-          provider: "INSTANTPAY",
           rawResponse: result.rawResponse || null,
         },
       });
@@ -111,7 +110,6 @@ export async function verifyGstinService(dto: VerifyGstinDTO) {
           businessType: result.businessType || null,
           state: result.state || null,
           address: result.address || null,
-          provider: "INSTANTPAY",
           rawResponse: result.rawResponse || null,
         },
       });
@@ -168,7 +166,6 @@ export async function verifyCinService(dto: VerifyCinDTO) {
           companyStatus: result.companyStatus || (result.valid ? "Active" : "FAILED"),
           companyType: result.companyType || null,
           state: result.state || null,
-          provider: "INSTANTPAY",
           rawResponse: result.rawResponse || null,
         },
       });

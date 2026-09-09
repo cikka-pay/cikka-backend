@@ -5,15 +5,20 @@ import { BusinessType, FulfillmentType, SettlementCycle } from "@prisma/client";
  * Also passes through already-correct enum strings for idempotency.
  */
 export const BUSINESS_TYPE_MAP: Record<string, BusinessType> = {
+  // UI option values from OnboardingPage.tsx
+  "pvt_ltd": "PRIVATE_LIMITED",
+  "proprietorship": "PROPRIETORSHIP",
+  "llp": "LLP",
+  "partnership": "PARTNERSHIP",
+  // Human readable labels
   "Private Limited (Pvt Ltd)": "PRIVATE_LIMITED",
-  "Limited Liability Partnership (LLP)": "LLP",
+  "Sole Proprietorship": "PROPRIETORSHIP",
   "Proprietorship": "PROPRIETORSHIP",
+  "Limited Liability Partnership (LLP)": "LLP",
+  "LLP": "LLP",
   "Partnership": "PARTNERSHIP",
   // Passthrough — already correct enum values
   "PRIVATE_LIMITED": "PRIVATE_LIMITED",
-  "LLP": "LLP",
-  "PROPRIETORSHIP": "PROPRIETORSHIP",
-  "PARTNERSHIP": "PARTNERSHIP",
 };
 
 /**

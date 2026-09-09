@@ -6,6 +6,7 @@ import setuRoutes from "./setu.routes";
 import bbpsRoutes from "./bbps.routes";
 import instantpayRoutes from "./instantpay.routes";
 import onboardingRoutes from "./onboarding.routes";
+import adminRoutes from "./admin.routes";
 
 import dashboardRoutes from "./dashboard.routes";
 import productsRoutes from "./products.routes";
@@ -22,6 +23,9 @@ import shipwayRoutes from "./shipway.routes";
 import hubbleRoutes from "./hubble.routes";
 
 const router = Router();
+
+// Admin Routes (Confidential Seller Dashboard Admin)
+router.use("/admin", adminRoutes);
 
 // Public / Non-Seller Auth Routes
 router.use("/auth", authRoutes);

@@ -117,12 +117,14 @@ model Seller {
   updatedAt DateTime @updatedAt
 
   // Relations
-  onboarding    SellerOnboarding?
-  products      Product[]
-  orders        Order[]
-  settlements   Settlement[]
-  notifications Notification[]
-  settings      SellerSettings?
+  onboarding       SellerOnboarding?
+  products         Product[]
+  orders           Order[]
+  settlements      Settlement[]
+  notifications    Notification[]
+  settings         SellerSettings?
+  commissionConfig SellerCommissionConfig?
+  agreementConfig  SellerAgreementConfig?
 
   @@map("sellers")
 }
@@ -197,9 +199,13 @@ model SellerOnboarding {
   digitalSignature           String?   // Typed name
   agreementAcceptedAt        DateTime?
 
-  // ---------- Application tracking ----------
-  applicationId  String?   @unique  // CKA-YYYY-NNNNN (sequential)
-  submittedAt    DateTime?
+  // ---------- Application tracking & Verification Notes ----------
+  applicationId     String?   @unique  // CKA-YYYY-NNNNN (sequential)
+  submittedAt       DateTime?
+  missingDocuments  Json?     // Array of missing document alerts: [{ key, title, reason, requestedAt, resolved }]
+  verificationNotes String?   // Admin internal review notes
+  reviewedBy        String?   // Admin identifier who reviewed
+  reviewedAt        DateTime?
 
   // Step completion tracking (1–6)
   completedSteps Int @default(0)
@@ -743,6 +749,67 @@ model BankAccountVerificationRecord {
   @@index([userId])
   @@map("bank_account_verification_records")
 }
+
+// ============================================================
+// ADMIN USER — Confidential Seller Admin Users & Roles
+// ============================================================
+
+model AdminUser {
+  id           String   @id @default(uuid())
+  email        String   @unique
+  passwordHash String
+  name         String
+  role         String   @default("COMPLIANCE_OFFICER") // SUPER_ADMIN | ONBOARDING_VERIFIER | COMPLIANCE_OFFICER
+  isActive     Boolean  @default(true)
+
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  @@map("admin_users")
+}
+
+// ============================================================
+// SELLER COMMISSION CONFIG — Company-Specific Commission Rates
+// ============================================================
+
+model SellerCommissionConfig {
+  id                 String          @id @default(uuid())
+  sellerId           String          @unique
+  seller             Seller          @relation(fields: [sellerId], references: [id], onDelete: Cascade)
+
+  flatOrderFee       Decimal         @default(15.00) @db.Decimal(10, 2)
+  categoryCommissions Json           // JSON object e.g. { "Fashion": 12.5, "Cosmetics": 10, "Electronics": 8 }
+  settlementCycle    SettlementCycle @default(T_PLUS_7)
+  effectiveFrom      DateTime        @default(now())
+  notes              String?
+
+  createdAt          DateTime        @default(now())
+  updatedAt          DateTime        @updatedAt
+
+  @@map("seller_commission_configs")
+}
+
+// ============================================================
+// SELLER AGREEMENT CONFIG — Company-Specific Merchant Agreements
+// ============================================================
+
+model SellerAgreementConfig {
+  id            String    @id @default(uuid())
+  sellerId      String    @unique
+  seller        Seller    @relation(fields: [sellerId], references: [id], onDelete: Cascade)
+
+  customText    String?   // Custom agreement contract text / Markdown
+  customClauses Json?     // Customized clauses array: [{ title, content, isMandatory }]
+  version       String    @default("1.0")
+  status        String    @default("ACTIVE") // DRAFT | SENT | ACCEPTED | REJECTED | ACTIVE
+  signedAt      DateTime?
+
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+
+  @@map("seller_agreement_configs")
+}
+
 
 
 
