@@ -47,6 +47,10 @@ export const SETTLEMENT_CYCLE_MAP: Record<string, SettlementCycle> = {
   "T+3": "T_PLUS_3",
   "T+7": "T_PLUS_7",
   "T+14": "T_PLUS_14",
+  "t1": "T_PLUS_1",
+  "t3": "T_PLUS_3",
+  "t7": "T_PLUS_7",
+  "t14": "T_PLUS_14",
   // Passthrough
   "T_PLUS_1": "T_PLUS_1",
   "T_PLUS_3": "T_PLUS_3",

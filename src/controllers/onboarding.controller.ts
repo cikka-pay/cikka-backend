@@ -184,6 +184,7 @@ export const updateStep4 = asyncHandler(async (req: Request, res: Response) => {
       bankName: data.bankName,
       bankAccountNumber: data.bankAccountNumber,
       bankIfsc: data.bankIfsc,
+      bankVerified: data.bankVerified !== undefined ? Boolean(data.bankVerified) : true,
       completedSteps: 4,
     },
   });

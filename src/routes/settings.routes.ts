@@ -1,5 +1,5 @@
 import { Router } from "express";
-import { getProfile, getSettings, updateSettings } from "../controllers/settings.controller";
+import { getProfile, getSettings, updateSettings, updateProfile } from "../controllers/settings.controller";
 import { z } from "zod";
 import { validate } from "../middleware/validate.middleware";
 
@@ -18,7 +18,9 @@ const updateSettingsSchema = z.object({
 });
 
 router.get("/profile", getProfile);
+router.patch("/profile", updateProfile);
 router.get("/", getSettings);
 router.patch("/", validate({ body: updateSettingsSchema }), updateSettings);
 
 export default router;
+

@@ -80,23 +80,48 @@ export async function getSettlementBreakdown(sellerId: string, period: "week" | 
     },
   });
 
-  // Use the most recent settlement's rate/category as the display label —
-  // good enough while commission rate is uniform per seller; revisit if it
-  // ever varies within a single period (see PRD open questions).
   const latest = await prisma.settlement.findFirst({
     where: { sellerId, periodStart: { gte: from } },
     orderBy: { periodStart: "desc" },
   });
 
+  const sums = (result?._sum || {}) as any;
+  const grossSales = Number(sums.grossSales || 0);
+  const basePrice = Number(sums.basePrice ?? (grossSales > 0 ? grossSales / 1.18 : 0));
+  const gstOnSale = Number(sums.gstOnSale ?? (grossSales - basePrice));
+  const commissionRate = Number(latest?.commissionRate || 21);
+  const commissionAmount = Number(sums.commissionAmount ?? (basePrice * (commissionRate / 100)));
+
+  const gstOnCommission = Number(sums.gstOnCommission ?? (commissionAmount * 0.18));
+  const shippingFee = Number(sums.shippingFee ?? (grossSales > 0 ? 150 : 0));
+  const tdsAmount = Number(sums.tdsAmount ?? (grossSales * 0.001));
+  const tcsAmount = Number(sums.tcsAmount ?? (basePrice * 0.005));
+  const statutoryTaxes = Number(sums.statutoryTaxes ?? (tdsAmount + tcsAmount));
+  const shippingGstAmount = Number(sums.shippingGstAmount ?? (shippingFee + gstOnCommission + statutoryTaxes));
+  const netPayable = Number(sums.netPayable ?? Math.max(0, grossSales - commissionAmount - gstOnCommission - shippingFee - statutoryTaxes));
+
   return {
     period,
-    grossSales: Number(result._sum.grossSales || 0),
+    grossSales,
+    basePrice,
+    gstOnSale,
     commission: {
       category: latest?.category ?? "Cosmetics",
-      rate: Number(latest?.commissionRate || 0),
-      amount: Number(result._sum.commissionAmount || 0),
+      rate: commissionRate,
+      amount: commissionAmount,
     },
-    shippingGstAmount: Number(result._sum.shippingGstAmount || 0),
-    netPayable: Number(result._sum.netPayable || 0),
+    commissionAmount,
+    gstOnCommission,
+    shippingFee,
+    tdsAmount,
+    tcsAmount,
+    statutoryTaxes: {
+      total: statutoryTaxes,
+      tds: tdsAmount, // 0.1% TDS on Gross
+      tcs: tcsAmount, // 0.5% TCS on Net Taxable Base Price
+    },
+    statutoryTaxAmount: statutoryTaxes,
+    shippingGstAmount,
+    netPayable,
   };
 }

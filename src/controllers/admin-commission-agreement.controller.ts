@@ -59,7 +59,7 @@ export const getSellerCommissionConfig = asyncHandler(async (req: Request, res: 
     config = await prisma.sellerCommissionConfig.create({
       data: {
         sellerId,
-        flatOrderFee: 15.00,
+        flatOrderFee: 0.00,
         categoryCommissions: categoryCommissionsObj,
         settlementCycle: seller.onboarding?.settlementCycle || "T_PLUS_7",
         notes: `Customized commission structure for ${seller.businessName || seller.onboarding?.businessName || 'Seller'}`,
@@ -91,7 +91,7 @@ export const updateSellerCommissionConfig = asyncHandler(async (req: Request, re
     },
     create: {
       sellerId,
-      flatOrderFee: flatOrderFee ?? 15.00,
+      flatOrderFee: flatOrderFee ?? 0.00,
       categoryCommissions: categoryCommissions ?? { Fashion: 12.5, Cosmetics: 10.0, Electronics: 8.0 },
       settlementCycle: (cycleEnum as any) || "T_PLUS_7",
       notes: notes || "Configured via Seller Dashboard Admin",

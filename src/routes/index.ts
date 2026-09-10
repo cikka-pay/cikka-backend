@@ -21,6 +21,7 @@ import paymentRoutes from "./payment.routes";
 import shipwayRoutes from "./shipway.routes";
 
 import hubbleRoutes from "./hubble.routes";
+import decentroRoutes from "./decentro.routes";
 
 const router = Router();
 
@@ -37,6 +38,8 @@ router.use("/kyc", instantpayRoutes);
 router.use("/instantpay", instantpayRoutes);
 router.use("/hubble", hubbleRoutes);
 router.use("/hubble.sso", hubbleRoutes);
+router.use("/decentro", decentroRoutes);
+
 
 // Razorpay Payment Endpoints (/api/payment/create-order & /api/payment/verify-payment)
 router.use("/payment", paymentRoutes);

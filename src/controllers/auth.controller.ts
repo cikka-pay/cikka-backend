@@ -240,6 +240,67 @@ export const signinVerifyOtp = asyncHandler(async (req: Request, res: Response) 
   });
 });
 
+import bcrypt from "bcryptjs";
+
+export const sellerLogin = asyncHandler(async (req: Request, res: Response) => {
+  const { loginId, phone: phoneInput, password } = req.body;
+  const rawPhone = phoneInput || loginId;
+
+  if (!rawPhone || !password) {
+    res.status(400).json({ success: false, error: "Phone/Login ID and password are required" });
+    return;
+  }
+
+  let normPhone = rawPhone;
+  let normNumber = rawPhone;
+  try {
+    const normalized = normalizePhone(rawPhone);
+    normPhone = normalized.phone;
+    normNumber = normalized.phoneNumber;
+  } catch (e) {
+    // Keep rawPhone if normalization fails
+  }
+
+  const seller = await prisma.seller.findFirst({
+    where: {
+      OR: [
+        { phone: rawPhone },
+        { phone: normPhone },
+        { phoneNumber: normNumber },
+        { phoneNumber: rawPhone },
+        { email: rawPhone },
+      ],
+    },
+  });
+
+
+  if (!seller || !seller.passwordHash) {
+    res.status(401).json({ success: false, error: "Invalid credentials" });
+    return;
+  }
+
+  const isMatch = await bcrypt.compare(password, seller.passwordHash);
+  if (!isMatch) {
+    res.status(401).json({ success: false, error: "Invalid credentials" });
+    return;
+  }
+
+  const token = signToken(seller.id);
+  res.json({
+    success: true,
+    token,
+    seller: {
+      id: seller.id,
+      phone: seller.phone,
+      email: seller.email,
+      businessName: seller.businessName,
+      kycVerified: seller.kycVerified,
+      onboardingStatus: seller.onboardingStatus,
+    },
+  });
+});
+
+
 export const resendSellerOtp = asyncHandler(async (req: Request, res: Response) => {
   const { phone: phoneRaw, retryType = "text", purpose = "signin" } = req.body;
   const { phone, countryCode, phoneNumber } = normalizePhone(phoneRaw);

@@ -30,18 +30,36 @@ async function wipeExisting() {
 async function main() {
   await wipeExisting();
 
-  const phone = "9999999999";
-  const plainPassword = generatePassword();
+  const phone = "+919999999999";
+  const plainPassword = "password123";
   const passwordHash = await bcrypt.hash(plainPassword, 10);
 
   const seller = await prisma.seller.create({
     data: {
       businessName: "Aura Vogue",
       phone,
+      phoneNumber: "9999999999",
+      countryCode: "91",
       passwordHash,
       kycVerified: true,
+      phoneVerified: true,
+      onboardingStatus: "VERIFIED",
+
+      onboarding: {
+        create: {
+          businessName: "Aura Vogue",
+          bankAccountHolder: "Aura Vogue Private Limited",
+          bankName: "HDFC Bank",
+          bankAccountNumber: "918273645012",
+          bankIfsc: "HDFC0001234",
+          bankVerified: true,
+          merchantAgreementAccepted: true,
+          completedSteps: 6,
+        },
+      },
     },
   });
+
 
   const products = await prisma.$transaction([
     prisma.product.create({
@@ -150,21 +168,41 @@ async function main() {
     },
   });
 
-  // This week's settlement (pending payout)
+  // This week's settlement (pending payout) — matching exact ₹4,999 -> ₹3,773.03 payout logic
+  const seedGrossSales = 4999.0;
+  const seedBasePrice = 4236.44;
+  const seedGstOnSale = 762.56;
+  const seedCommissionRate = 21.0;
+  const seedCommission = 889.65; // 21% of base price
+  const seedGstOnCommission = 160.14; // 18% of commission
+  const seedShippingFee = 150.0;
+  const seedTds = 5.0; // 0.1% TDS on Gross Price
+  const seedTcs = 21.18; // 0.5% TCS on Net Taxable Base Price
+  const seedTaxes = seedTds + seedTcs; // 26.18
+  const seedTotalDeductions = seedCommission + seedGstOnCommission + seedShippingFee + seedTaxes; // 1225.97
+  const seedNetPayable = seedGrossSales - seedTotalDeductions; // 3773.03
+
   await prisma.settlement.create({
     data: {
       sellerId: seller.id,
       periodStart: weekStart,
       periodEnd: now,
       category: "Cosmetics",
-      grossSales: 58400.0,
-      commissionRate: 15.0,
-      commissionAmount: 8760.0,
-      shippingGstAmount: 4409.0,
-      netPayable: 45231.0,
+      grossSales: seedGrossSales,
+      basePrice: seedBasePrice,
+      gstOnSale: seedGstOnSale,
+      commissionRate: seedCommissionRate,
+      commissionAmount: seedCommission,
+      gstOnCommission: seedGstOnCommission,
+      shippingFee: seedShippingFee,
+      tdsAmount: seedTds,
+      tcsAmount: seedTcs,
+      statutoryTaxes: seedTaxes,
+      shippingGstAmount: seedGstOnCommission + seedShippingFee + seedTaxes,
+      netPayable: seedNetPayable,
       status: "PENDING",
       payoutDate: new Date(now.getFullYear(), now.getMonth(), 24),
-    },
+    } as any,
   });
 
   console.log("Seed complete.\n");

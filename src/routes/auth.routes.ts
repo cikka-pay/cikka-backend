@@ -11,6 +11,7 @@ import {
   forgotPasswordVerifyOtp,
   forgotPasswordReset,
   resendSellerOtp,
+  sellerLogin,
   getMe,
 } from "../controllers/auth.controller";
 import { requireAuth } from "../middleware/auth.middleware";
@@ -49,8 +50,12 @@ router.post("/signup/send-email-otp", requireAuth, validate({ body: emailSchema 
 router.post("/signup/verify-email-otp", requireAuth, validate({ body: emailOtpSchema }), signupVerifyEmailOtp);
 router.post("/signup/set-password", requireAuth, validate({ body: passwordSchema }), signupSetPassword);
 
+// Direct Password Login
+router.post("/login", sellerLogin);
+
 // Signin Flow (Phone OTP)
 router.post("/signin/send-otp", validate({ body: phoneSchema }), signinSendOtp);
+
 router.post("/signin/verify-otp", validate({ body: phoneOtpSchema }), signinVerifyOtp);
 
 // Common Resend OTP endpoint
