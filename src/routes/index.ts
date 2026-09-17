@@ -23,10 +23,16 @@ import shipwayRoutes from "./shipway.routes";
 import hubbleRoutes from "./hubble.routes";
 import decentroRoutes from "./decentro.routes";
 
+import emailRoutes from "./email.routes";
+
 const router = Router();
+
+// Email notification routes
+router.use("/email", emailRoutes);
 
 // Admin Routes (Confidential Seller Dashboard Admin)
 router.use("/admin", adminRoutes);
+
 
 // Public / Non-Seller Auth Routes
 router.use("/auth", authRoutes);

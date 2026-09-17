@@ -2,6 +2,7 @@ import { Request, Response } from "express";
 import { asyncHandler } from "../utils/asyncHandler";
 import { prisma } from "../config/prisma";
 import { SETTLEMENT_CYCLE_MAP } from "../utils/enumMaps";
+import { generateApplicationId } from "../services/auth.service";
 
 export const getProfile = asyncHandler(async (req: Request, res: Response) => {
   const sellerId = req.seller!.id;
@@ -69,9 +70,23 @@ export const getProfile = asyncHandler(async (req: Request, res: Response) => {
     }
   }
 
+  // Ensure unique CKA029XXX format Cikka ID exists
+  let cikkaId = seller.onboarding?.applicationId;
+  if (!cikkaId || !cikkaId.startsWith("CKA029")) {
+    cikkaId = generateApplicationId();
+    if (seller.onboarding) {
+      await prisma.sellerOnboarding.update({
+        where: { sellerId: seller.id },
+        data: { applicationId: cikkaId },
+      }).catch(() => {});
+      seller.onboarding.applicationId = cikkaId;
+    }
+  }
+
   res.json({
     id: seller.id,
-    applicationId: seller.onboarding?.applicationId,
+    cikkaId,
+    applicationId: cikkaId,
     email: seller.email,
     phone: seller.phone,
     onboardingStatus: seller.onboardingStatus,

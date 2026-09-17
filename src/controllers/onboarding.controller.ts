@@ -3,6 +3,9 @@ import { prisma } from "../config/prisma";
 import { asyncHandler } from "../utils/asyncHandler";
 import * as onboardingService from "../services/onboarding.service";
 import { BUSINESS_TYPE_MAP, FULFILLMENT_TYPE_MAP, SETTLEMENT_CYCLE_MAP } from "../utils/enumMaps";
+import { sendSellerWaitlistEmail } from "../utils/resend";
+import { generateApplicationId } from "../services/auth.service";
+
 
 export const getOnboardingState = asyncHandler(async (req: Request, res: Response) => {
   const sellerId = req.seller!.id;
@@ -20,8 +23,20 @@ export const getOnboardingState = asyncHandler(async (req: Request, res: Respons
     return;
   }
 
+  // Ensure seller onboarding record has a CKA029XXX formatted unique Cikka ID
+  let cikkaId = seller.onboarding?.applicationId;
+  if (seller.onboarding && (!cikkaId || !cikkaId.startsWith("CKA029"))) {
+    cikkaId = generateApplicationId();
+    await prisma.sellerOnboarding.update({
+      where: { sellerId: seller.id },
+      data: { applicationId: cikkaId },
+    }).catch(() => {});
+    seller.onboarding.applicationId = cikkaId;
+  }
+
   res.json({
     sellerId: seller.id,
+    email: seller.email,
     businessName: seller.businessName,
     onboardingStatus: seller.onboardingStatus,
     kycVerified: seller.kycVerified,
@@ -153,6 +168,14 @@ export const updateStep3 = asyncHandler(async (req: Request, res: Response) => {
     },
   });
 
+  // Sync email to Seller record if provided
+  if (data.signatoryEmail && data.signatoryEmail.trim()) {
+    await prisma.seller.update({
+      where: { id: sellerId },
+      data: { email: data.signatoryEmail.trim() },
+    }).catch(() => {});
+  }
+
   res.json(onboarding);
 });
 
@@ -208,7 +231,10 @@ export const updateStep5 = asyncHandler(async (req: Request, res: Response) => {
     include: { onboarding: true },
   });
 
-  const appId = existingSeller?.onboarding?.applicationId || `CKA-2026-${sellerId.slice(0, 5).toUpperCase()}`;
+  const existingId = existingSeller?.onboarding?.applicationId;
+  const appId = existingId && existingId.startsWith("CKA029")
+    ? existingId
+    : generateApplicationId();
 
   const onboarding = await prisma.sellerOnboarding.update({
     where: { sellerId },
@@ -240,7 +266,20 @@ export const updateStep5 = asyncHandler(async (req: Request, res: Response) => {
     },
   });
 
+  // Dispatch Resend "Application Under Review" Email to Seller ONCE on initial submission
+  const isFirstSubmission = !existingSeller?.onboardingStatus || existingSeller.onboardingStatus === "INCOMPLETE";
+  if (isFirstSubmission) {
+    const recipientEmail = existingSeller?.email || onboarding?.signatoryEmail || data.signatoryEmail || process.env.RESEND_TEST_RECIPIENT || "vedantvyas79@gmail.com";
+    const recipientName = data.businessName || existingSeller?.businessName || onboarding?.signatoryName || "Partner";
+
+    sendSellerWaitlistEmail({
+      to: recipientEmail,
+      sellerName: recipientName,
+    }).catch((err) => console.error("Failed to send Application Under Review email via Resend:", err));
+  }
+
   res.json(onboarding);
+
 });
 
 export const uploadLogo = asyncHandler(async (req: Request, res: Response) => {

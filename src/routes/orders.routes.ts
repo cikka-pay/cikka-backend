@@ -14,7 +14,12 @@ const router = Router();
 const orderQuerySchema = z.object({
   page: z.string().optional(),
   limit: z.string().optional(),
-  status: z.enum(["ALL", "PENDING", "PACKED", "SHIPPED", "DELIVERED", "CANCELLED", "RETURNED"]).optional(),
+  status: z
+    .preprocess(
+      (val) => (typeof val === "string" ? val.toUpperCase() : val),
+      z.enum(["ALL", "PENDING", "PACKED", "SHIPPED", "DELIVERED", "CANCELLED", "RETURNED", "RETURNS"]).optional()
+    )
+    .transform((val) => (val === "RETURNS" ? "RETURNED" : val)),
 });
 
 const updateStatusSchema = z.object({

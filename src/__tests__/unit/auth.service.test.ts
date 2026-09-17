@@ -88,14 +88,8 @@ describe("hashPassword / checkPassword", () => {
 });
 
 describe("generateApplicationId", () => {
-  it("should return format CKA-YYYY-NNNNN", () => {
-    const id = generateApplicationId(1);
-    const year = new Date().getFullYear();
-    expect(id).toBe(`CKA-${year}-00001`);
-  });
-
-  it("should pad sequence to 5 digits", () => {
-    expect(generateApplicationId(42)).toMatch(/CKA-\d{4}-00042/);
-    expect(generateApplicationId(99999)).toMatch(/CKA-\d{4}-99999/);
+  it("should return format CKA029XXX", () => {
+    const id = generateApplicationId();
+    expect(id).toMatch(/^CKA029\d{3}$/);
   });
 });

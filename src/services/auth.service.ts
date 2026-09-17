@@ -49,12 +49,11 @@ export async function checkPassword(password: string, hash: string): Promise<boo
 }
 
 /**
- * Generates an application ID format: CKA-YYYY-NNNNN
+ * Generates unique Cikka ID format: CKA029XXX (e.g. CKA029148)
  */
-export function generateApplicationId(sequenceNumber: number): string {
-  const year = new Date().getFullYear();
-  const padded = sequenceNumber.toString().padStart(5, "0");
-  return `CKA-${year}-${padded}`;
+export function generateApplicationId(_sequenceNumber?: number): string {
+  const random3Digits = crypto.randomInt(100, 1000).toString();
+  return `CKA029${random3Digits}`;
 }
 
 /**

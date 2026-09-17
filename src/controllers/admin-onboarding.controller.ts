@@ -1,6 +1,8 @@
 import { Request, Response } from "express";
 import { asyncHandler } from "../utils/asyncHandler";
 import { prisma } from "../config/prisma";
+import { sendSellerWelcomeEmail, sendSellerRejectionEmail } from "../utils/resend";
+import { generateApplicationId } from "../services/auth.service";
 
 export const getApplications = asyncHandler(async (req: Request, res: Response) => {
   const { status, search } = req.query;
@@ -32,6 +34,27 @@ export const getApplications = asyncHandler(async (req: Request, res: Response) 
     orderBy: { createdAt: "desc" },
   });
 
+  // Ensure every seller has a CKA029XXX Cikka ID
+  for (const seller of sellers) {
+    if (seller.onboarding) {
+      const currentId = seller.onboarding.applicationId;
+      if (!currentId || !currentId.startsWith("CKA029")) {
+        let newAppId: string;
+        if (currentId && currentId.startsWith("CKA-")) {
+          const digits = currentId.replace(/\D/g, "").slice(-3).padStart(3, "0");
+          newAppId = `CKA029${digits}`;
+        } else {
+          newAppId = generateApplicationId();
+        }
+        await prisma.sellerOnboarding.update({
+          where: { sellerId: seller.id },
+          data: { applicationId: newAppId },
+        }).catch(() => {});
+        seller.onboarding.applicationId = newAppId;
+      }
+    }
+  }
+
   res.json({ applications: sellers });
 });
 
@@ -57,6 +80,24 @@ export const getApplicationById = asyncHandler(async (req: Request, res: Respons
     return;
   }
 
+  if (seller.onboarding) {
+    const currentId = seller.onboarding.applicationId;
+    if (!currentId || !currentId.startsWith("CKA029")) {
+      let newAppId: string;
+      if (currentId && currentId.startsWith("CKA-")) {
+        const digits = currentId.replace(/\D/g, "").slice(-3).padStart(3, "0");
+        newAppId = `CKA029${digits}`;
+      } else {
+        newAppId = generateApplicationId();
+      }
+      await prisma.sellerOnboarding.update({
+        where: { sellerId: seller.id },
+        data: { applicationId: newAppId },
+      }).catch(() => {});
+      seller.onboarding.applicationId = newAppId;
+    }
+  }
+
   res.json({ application: seller });
 });
 
@@ -70,6 +111,9 @@ export const updateApplicationStatus = asyncHandler(async (req: Request, res: Re
   }
 
   const isApproved = status === "VERIFIED";
+
+  // Fetch previous seller status to prevent duplicate email triggers on re-save
+  const previousSeller = await prisma.seller.findUnique({ where: { id: sellerId } });
 
   // Ensure seller onboarding record exists
   const existingOnboarding = await prisma.sellerOnboarding.findUnique({ where: { sellerId } });
@@ -109,6 +153,25 @@ export const updateApplicationStatus = asyncHandler(async (req: Request, res: Re
         : `Your seller application status is now ${status}. ${reviewNotes || ""}`,
     },
   });
+
+  // Send Resend Welcome Email to Seller ONCE when status transitions to VERIFIED
+  if (isApproved && previousSeller?.onboardingStatus !== "VERIFIED") {
+    const sellerEmail = updatedSeller.email || updatedSeller.onboarding?.signatoryEmail || process.env.RESEND_TEST_RECIPIENT || "vedantvyas79@gmail.com";
+    sendSellerWelcomeEmail({
+      to: sellerEmail,
+      sellerName: updatedSeller.businessName || updatedSeller.onboarding?.signatoryName || "Partner",
+    }).catch((err) => console.error("Failed to send welcome email via Resend:", err));
+  }
+
+  // Send Resend Rejection Email to Seller ONCE when status transitions to REJECTED
+  if (status === "REJECTED" && previousSeller?.onboardingStatus !== "REJECTED") {
+    const sellerEmail = updatedSeller.email || updatedSeller.onboarding?.signatoryEmail || process.env.RESEND_TEST_RECIPIENT || "vedantvyas79@gmail.com";
+    sendSellerRejectionEmail({
+      to: sellerEmail,
+      sellerName: updatedSeller.businessName || updatedSeller.onboarding?.signatoryName || "Partner",
+      reason: reviewNotes || "Document verification details required updating",
+    }).catch((err) => console.error("Failed to send rejection email via Resend:", err));
+  }
 
   res.json({ message: "Application status updated successfully", seller: updatedSeller });
 });
