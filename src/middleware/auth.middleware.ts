@@ -14,7 +14,10 @@ export function requireSellerAuth(req: Request, res: Response, next: NextFunctio
 
   try {
     const payload = verifySellerToken(token);
-    req.seller = { id: payload.sub as string };
+    req.seller = { 
+      id: payload.sub as string,
+      teamMemberId: payload.teamMemberId as string | undefined
+    };
     next();
   } catch (err: any) {
     res.status(401).json({ error: err.message || AUTH_ERRORS.INVALID_SELLER_TOKEN });
@@ -74,7 +77,10 @@ export function requireAnyAuth(req: Request, res: Response, next: NextFunction):
 
   try {
     const payload = verifySellerToken(token);
-    req.seller = { id: payload.sub as string };
+    req.seller = { 
+      id: payload.sub as string,
+      teamMemberId: payload.teamMemberId as string | undefined
+    };
     next();
     return;
   } catch (_err) {

@@ -18,6 +18,9 @@ router.post("/onboarding/applications/:sellerId/notify-missing-doc", adminOnboar
 router.delete("/onboarding/applications/:sellerId", adminOnboarding.deleteApplication);
 router.delete("/sellers/:sellerId", adminOnboarding.deleteApplication);
 
+// Approved Sellers
+router.get("/sellers/approved", adminOnboarding.getApprovedSellers);
+
 // Company Commission Structure Routes
 router.get("/sellers/:sellerId/commission", adminCommissionAgreement.getSellerCommissionConfig);
 router.put("/sellers/:sellerId/commission", adminCommissionAgreement.updateSellerCommissionConfig);
@@ -25,5 +28,9 @@ router.put("/sellers/:sellerId/commission", adminCommissionAgreement.updateSelle
 // Customized Merchant Agreement Routes
 router.get("/sellers/:sellerId/agreement", adminCommissionAgreement.getSellerAgreementConfig);
 router.put("/sellers/:sellerId/agreement", adminCommissionAgreement.updateSellerAgreementConfig);
+
+// Approved Sellers & Product Approvals
+router.get("/sellers/:id/products", adminOnboarding.getSellerProducts);
+router.patch("/products/:id/approval", adminOnboarding.updateProductApproval);
 
 export default router;

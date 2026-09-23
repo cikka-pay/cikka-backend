@@ -88,6 +88,7 @@ export const createProduct = asyncHandler(async (req: Request, res: Response) =>
     data: {
       sellerId,
       ...productData,
+      status: 'PENDING_APPROVAL',
       variants: variants && variants.length > 0 ? {
         create: variants.map((v: any) => ({
           typeName: v.typeName,

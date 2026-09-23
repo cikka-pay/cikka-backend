@@ -1,4 +1,5 @@
 import { Request, Response } from "express";
+import dns from "dns/promises";
 import { prisma } from "../config/prisma";
 import { asyncHandler } from "../utils/asyncHandler";
 import * as onboardingService from "../services/onboarding.service";
@@ -334,4 +335,167 @@ export const submitApplication = asyncHandler(async (req: Request, res: Response
     applicationId: result.applicationId,
     status: "SUBMITTED"
   });
+});
+
+export const validateDomain = asyncHandler(async (req: Request, res: Response) => {
+  const { url: inputUrl } = req.body;
+  if (!inputUrl || typeof inputUrl !== "string" || !inputUrl.trim()) {
+    res.status(400).json({ valid: false, message: "URL or domain is required" });
+    return;
+  }
+
+  const raw = inputUrl.trim();
+  let suggestion: string | null = null;
+
+  // 1. Check for protocol typos (e.g. htps://, htp://, https//, http//, http:/)
+  let workingUrl = raw;
+  if (/^ht{1,2}ps?:\/\/?/i.test(workingUrl) && !/^https?:\/\//i.test(workingUrl)) {
+    workingUrl = workingUrl.replace(/^ht{1,2}ps?:\/\/?/i, "https://");
+    suggestion = workingUrl;
+  } else if (/^ht{1,2}ps?\/\//i.test(workingUrl)) {
+    workingUrl = workingUrl.replace(/^ht{1,2}ps?\/\//i, "https://");
+    suggestion = workingUrl;
+  }
+
+  // 2. Check for comma typos (e.g. brand,com -> brand.com)
+  if (workingUrl.includes(",com") || workingUrl.includes(",in") || workingUrl.includes(",org") || workingUrl.includes(",net")) {
+    workingUrl = workingUrl.replace(/,(com|in|org|net|co)/gi, ".$1");
+    suggestion = workingUrl;
+  }
+
+  // 3. Normalize with https:// for URL parsing
+  let normalized = workingUrl;
+  if (!/^https?:\/\//i.test(normalized)) {
+    normalized = "https://" + normalized;
+  }
+
+  let hostname = "";
+  try {
+    const u = new URL(normalized);
+    hostname = u.hostname.toLowerCase();
+  } catch {
+    res.json({
+      valid: false,
+      hasTypo: false,
+      message: "Invalid URL or domain format",
+    });
+    return;
+  }
+
+  // 4. Common TLD and domain typos
+  const tldTypos: Record<string, string> = {
+    ".con": ".com",
+    ".cpm": ".com",
+    ".comm": ".com",
+    ".coom": ".com",
+    ".c0m": ".com",
+    ".cm": ".com",
+    ".cmo": ".com",
+    ".xom": ".com",
+    ".vom": ".com",
+    ".inn": ".in",
+    ".im": ".in",
+    ".og": ".org",
+    ".orgg": ".org",
+    ".nt": ".net",
+    ".nett": ".net",
+    ".co.inn": ".co.in",
+  };
+
+  for (const [bad, good] of Object.entries(tldTypos)) {
+    if (hostname.endsWith(bad)) {
+      const fixedHost = hostname.slice(0, -bad.length) + good;
+      suggestion = raw.replace(new RegExp(bad.replace(".", "\\.") + "(\\b|/|$)", "i"), good + "$1");
+      if (!/^https?:\/\//i.test(suggestion)) {
+        suggestion = "https://" + suggestion.replace(/^https?:\/\//i, "");
+      }
+      hostname = fixedHost;
+      break;
+    }
+  }
+
+  // If a typo was found, suggest it immediately
+  if (suggestion && suggestion.toLowerCase() !== raw.toLowerCase()) {
+    if (!/^https?:\/\//i.test(suggestion)) {
+      suggestion = "https://" + suggestion;
+    }
+    res.json({
+      valid: false,
+      hasTypo: true,
+      suggestion,
+      hostname,
+      message: `Possible typo detected. Did you mean ${suggestion}?`,
+    });
+    return;
+  }
+
+  // 5. Social media platform check
+  const isSocial = /^(www\.)?(instagram\.com|facebook\.com|fb\.com|linkedin\.com|twitter\.com|x\.com|youtube\.com|pinterest\.com|tiktok\.com)$/i.test(hostname);
+  if (isSocial) {
+    res.json({
+      valid: true,
+      reachable: true,
+      isSocial: true,
+      hostname,
+      normalizedUrl: normalized,
+      message: "Valid social media profile link",
+    });
+    return;
+  }
+
+  // 6. Domain structure check (must have valid extension)
+  if (!hostname.includes(".") || hostname.endsWith(".") || hostname.startsWith(".")) {
+    res.json({
+      valid: false,
+      hasTypo: false,
+      message: "Domain must include a valid extension (e.g. .com, .in, .co)",
+    });
+    return;
+  }
+
+  // 7. Check for spaces or invalid characters
+  if (/\s/.test(hostname) || !/^[a-z0-9.-]+$/i.test(hostname)) {
+    res.json({
+      valid: false,
+      hasTypo: false,
+      message: "Domain contains invalid characters or spaces",
+    });
+    return;
+  }
+
+  // 8. DNS lookup check with 2.5s timeout
+  try {
+    const lookupPromise = dns.lookup(hostname);
+    const timeoutPromise = new Promise((_, reject) =>
+      setTimeout(() => reject(new Error("DNS_TIMEOUT")), 2500)
+    );
+
+    const addresses: any = await Promise.race([lookupPromise, timeoutPromise]);
+    res.json({
+      valid: true,
+      reachable: true,
+      hostname,
+      ip: addresses?.address || undefined,
+      normalizedUrl: normalized,
+      message: "Domain is live & active",
+    });
+  } catch (err: any) {
+    if (err.code === "ENOTFOUND" || err.code === "EREFUSED") {
+      res.json({
+        valid: false,
+        reachable: false,
+        hostname,
+        message: `Domain "${hostname}" does not exist or has no active DNS records. Please check spelling.`,
+      });
+    } else {
+      // Timeout or other network quirks: don't strictly block seller if network is temporarily slow
+      res.json({
+        valid: true,
+        reachable: null,
+        hostname,
+        normalizedUrl: normalized,
+        message: "Domain format looks valid",
+      });
+    }
+  }
 });

@@ -49,9 +49,11 @@ enum ReturnStatus {
 
 enum ProductStatus {
   DRAFT
+  PENDING_APPROVAL
   ACTIVE
   INACTIVE
   OUT_OF_STOCK
+  REJECTED
 }
 
 enum NotificationType {
@@ -125,6 +127,7 @@ model Seller {
   settings         SellerSettings?
   commissionConfig SellerCommissionConfig?
   agreementConfig  SellerAgreementConfig?
+  teamMembers      TeamMember[]
 
   @@map("sellers")
 }
@@ -793,7 +796,7 @@ model SellerCommissionConfig {
   sellerId           String          @unique
   seller             Seller          @relation(fields: [sellerId], references: [id], onDelete: Cascade)
 
-  flatOrderFee       Decimal         @default(0.00) @db.Decimal(10, 2)
+  flatOrderFee       Decimal         @default(15.00) @db.Decimal(10, 2)
   categoryCommissions Json           // JSON object e.g. { "Fashion": 12.5, "Cosmetics": 10, "Electronics": 8 }
   settlementCycle    SettlementCycle @default(T_PLUS_7)
   effectiveFrom      DateTime        @default(now())
@@ -825,6 +828,33 @@ model SellerAgreementConfig {
 
   @@map("seller_agreement_configs")
 }
+
+// ============================================================
+// TEAM MEMBER - Access control for Seller Dashboards
+// ============================================================
+
+model TeamMember {
+  id          String   @id @default(uuid())
+  sellerId    String
+  seller      Seller   @relation(fields: [sellerId], references: [id], onDelete: Cascade)
+  
+  name        String
+  phone       String
+  email       String?
+  role        String   // ADMIN | EXECUTIVE | VIEWER
+  status      String   @default("INVITED") // INVITED | ACTIVE
+  
+  // OTP state for inviting/login
+  phoneOtpCode      String?
+  phoneOtpExpiresAt DateTime?
+
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  
+  @@unique([sellerId, phone])
+  @@map("team_members")
+}
+
 
 
 

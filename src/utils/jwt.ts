@@ -10,18 +10,22 @@ export interface CustomJwtPayload extends JwtPayload {
   sub: string;
   role?: "seller" | "user";
   aud?: string;
+  teamMemberId?: string;
 }
 
-// Backward compatible helper for existing seller auth
-export function signToken(sellerId: string, expiresIn?: string): string {
-  return signSellerToken(sellerId, expiresIn);
+export function signToken(sellerId: string, expiresIn?: string, teamMemberId?: string): string {
+  return signSellerToken(sellerId, expiresIn, teamMemberId);
 }
 
-export function signSellerToken(sellerId: string, expiresIn?: string): string {
+export function signSellerToken(sellerId: string, expiresIn?: string, teamMemberId?: string): string {
   const secret = process.env.JWT_SELLER_SECRET || process.env.JWT_SECRET || SELLER_SECRET;
   if (!secret) throw new Error("JWT_SELLER_SECRET or JWT_SECRET is not set");
+  const payload: any = { sub: sellerId, role: "seller", aud: "cikka-seller-web" };
+  if (teamMemberId) {
+    payload.teamMemberId = teamMemberId;
+  }
   return jwt.sign(
-    { sub: sellerId, role: "seller", aud: "cikka-seller-web" },
+    payload,
     secret,
     { expiresIn: expiresIn || EXPIRES_IN } as jwt.SignOptions
   );

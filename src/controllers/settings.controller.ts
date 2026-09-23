@@ -59,7 +59,7 @@ export const getProfile = asyncHandler(async (req: Request, res: Response) => {
       commissionConfig = await prisma.sellerCommissionConfig.create({
         data: {
           sellerId,
-          flatOrderFee: 0.00,
+          flatOrderFee: 15.00,
           categoryCommissions: categoryCommissionsObj,
           settlementCycle: seller.onboarding.settlementCycle || "T_PLUS_7",
           notes: `Auto-initialized commission structure for ${seller.businessName || seller.onboarding.businessName || 'Seller'}`,
@@ -67,6 +67,46 @@ export const getProfile = asyncHandler(async (req: Request, res: Response) => {
       });
     } catch {
       // Fallback if concurrent creation occurs
+    }
+  } else if (commissionConfig && commissionConfig.categoryCommissions && typeof commissionConfig.categoryCommissions === "object") {
+    let categories: string[] = [];
+    if (seller.onboarding?.productCategories) {
+      if (Array.isArray(seller.onboarding.productCategories)) {
+        categories = seller.onboarding.productCategories as string[];
+      } else if (typeof seller.onboarding.productCategories === "string") {
+        try {
+          categories = JSON.parse(seller.onboarding.productCategories);
+        } catch {
+          categories = [seller.onboarding.productCategories];
+        }
+      }
+    }
+    if (categories.length === 0 && seller.onboarding?.businessCategory) {
+      categories = [seller.onboarding.businessCategory];
+    }
+    const defaultRates: Record<string, number> = {
+      Fashion: 12.5,
+      Cosmetics: 10.0,
+      Electronics: 8.0,
+      Jewelry: 15.0,
+      "Home & Living": 11.0,
+      Footwear: 13.0,
+    };
+    const existing = commissionConfig.categoryCommissions as Record<string, number>;
+    let missingFound = false;
+    categories.forEach((cat) => {
+      if (existing[cat] === undefined) {
+        existing[cat] = defaultRates[cat] || 12.0;
+        missingFound = true;
+      }
+    });
+    if (missingFound) {
+      try {
+        commissionConfig = await prisma.sellerCommissionConfig.update({
+          where: { sellerId },
+          data: { categoryCommissions: existing },
+        });
+      } catch {}
     }
   }
 

@@ -59,12 +59,36 @@ export const getSellerCommissionConfig = asyncHandler(async (req: Request, res: 
     config = await prisma.sellerCommissionConfig.create({
       data: {
         sellerId,
-        flatOrderFee: 0.00,
+        flatOrderFee: 15.00,
         categoryCommissions: categoryCommissionsObj,
         settlementCycle: seller.onboarding?.settlementCycle || "T_PLUS_7",
         notes: `Customized commission structure for ${seller.businessName || seller.onboarding?.businessName || 'Seller'}`,
       },
     });
+  } else if (config.categoryCommissions && typeof config.categoryCommissions === "object") {
+    const defaultRates: Record<string, number> = {
+      Fashion: 12.5,
+      Cosmetics: 10.0,
+      Electronics: 8.0,
+      Jewelry: 15.0,
+      "Home & Living": 11.0,
+      Home: 11.0,
+      Footwear: 13.0,
+    };
+    const existing = config.categoryCommissions as Record<string, number>;
+    let missingFound = false;
+    categories.forEach((cat) => {
+      if (existing[cat] === undefined) {
+        existing[cat] = defaultRates[cat] || 12.0;
+        missingFound = true;
+      }
+    });
+    if (missingFound) {
+      config = await prisma.sellerCommissionConfig.update({
+        where: { sellerId },
+        data: { categoryCommissions: existing },
+      });
+    }
   }
 
   res.json({
@@ -91,12 +115,30 @@ export const updateSellerCommissionConfig = asyncHandler(async (req: Request, re
     },
     create: {
       sellerId,
-      flatOrderFee: flatOrderFee ?? 0.00,
+      flatOrderFee: flatOrderFee ?? 15.00,
       categoryCommissions: categoryCommissions ?? { Fashion: 12.5, Cosmetics: 10.0, Electronics: 8.0 },
       settlementCycle: (cycleEnum as any) || "T_PLUS_7",
       notes: notes || "Configured via Seller Dashboard Admin",
     },
   });
+
+  // Sync settlement cycle across sellerSettings and sellerOnboarding
+  if (cycleEnum) {
+    try {
+      await Promise.all([
+        prisma.sellerSettings.updateMany({
+          where: { sellerId },
+          data: { settlementCycle: cycleEnum as any },
+        }),
+        prisma.sellerOnboarding.updateMany({
+          where: { sellerId },
+          data: { settlementCycle: cycleEnum as any },
+        }),
+      ]);
+    } catch (e) {
+      console.warn("Failed to sync settlementCycle across tables:", e);
+    }
+  }
 
   // Notify seller of commission structure change
   await prisma.notification.create({

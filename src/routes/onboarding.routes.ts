@@ -16,6 +16,7 @@ import {
   uploadLogo,
   updateStep6,
   submitApplication,
+  validateDomain,
 } from "../controllers/onboarding.controller";
 import { requireAuth } from "../middleware/auth.middleware";
 import multer from "multer";
@@ -23,8 +24,10 @@ import multer from "multer";
 const router = Router();
 const upload = multer({ dest: "/tmp/uploads/", limits: { fileSize: 2 * 1024 * 1024 } });
 
+// Domain & URL validator utility (open to onboarding users)
+router.post("/validate-domain", validateDomain);
 
-// All onboarding endpoints require the user to be authenticated
+// All other onboarding endpoints require the user to be authenticated
 router.use(requireAuth);
 
 router.get("/", getOnboardingState);

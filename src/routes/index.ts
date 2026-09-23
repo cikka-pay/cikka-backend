@@ -16,6 +16,7 @@ import settlementsRoutes from "./settlements.routes";
 import returnsRoutes from "./returns.routes";
 import notificationsRoutes from "./notifications.routes";
 import settingsRoutes from "./settings.routes";
+import teamRoutes from "./team.routes";
 
 import paymentRoutes from "./payment.routes";
 import shipwayRoutes from "./shipway.routes";
@@ -55,9 +56,11 @@ router.use("/shipway", shipwayRoutes);
 
 
 
+// Onboarding Routes (has internal requireAuth for protected routes, plus open /validate-domain utility)
+router.use("/onboarding", onboardingRoutes);
+
 // Protected Seller Routes — require valid Seller JWT
 router.use(requireSellerAuth);
-router.use("/onboarding", onboardingRoutes);
 router.use("/dashboard", dashboardRoutes);
 router.use("/products", productsRoutes);
 router.use("/orders", ordersRoutes);
@@ -66,6 +69,7 @@ router.use("/settlements", settlementsRoutes);
 router.use("/returns", returnsRoutes);
 router.use("/notifications", notificationsRoutes);
 router.use("/settings", settingsRoutes);
+router.use("/team", teamRoutes);
 
 export default router;
 

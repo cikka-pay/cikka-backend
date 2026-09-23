@@ -15,6 +15,9 @@ export const getApplications = asyncHandler(async (req: Request, res: Response) 
     whereClause.onboardingStatus = { in: ["SUBMITTED", "UNDER_REVIEW", "VERIFIED", "REJECTED"] };
   }
 
+  // Hide test accounts created by integration tests from the live admin feed
+  whereClause.email = { not: { endsWith: "@testbrand.com" } };
+
   if (search) {
     whereClause.OR = [
       { businessName: { contains: String(search), mode: "insensitive" } },
@@ -257,4 +260,55 @@ export const deleteApplication = asyncHandler(async (req: Request, res: Response
   ]);
 
   res.json({ message: "Seller application permanently deleted", sellerId });
+});
+
+export const getApprovedSellers = asyncHandler(async (req: Request, res: Response) => {
+  const sellers = await prisma.seller.findMany({
+    where: { 
+      onboardingStatus: "VERIFIED",
+      email: { not: { endsWith: "@testbrand.com" } }
+    },
+    include: {
+      onboarding: true,
+      settings: true,
+      products: {
+        where: { status: 'PENDING_APPROVAL' },
+        select: { id: true }
+      }
+    },
+    orderBy: { updatedAt: "desc" },
+  });
+
+  const enrichedSellers = sellers.map(s => ({
+    ...s,
+    pendingProductsCount: s.products.length
+  }));
+
+  res.json(enrichedSellers);
+});
+
+export const getSellerProducts = asyncHandler(async (req: Request, res: Response) => {
+  const { id } = req.params;
+  const products = await prisma.product.findMany({
+    where: { sellerId: id },
+    include: { variants: true },
+    orderBy: { createdAt: "desc" },
+  });
+  res.json(products);
+});
+
+export const updateProductApproval = asyncHandler(async (req: Request, res: Response) => {
+  const { id } = req.params;
+  const { status } = req.body; // ACTIVE or REJECTED
+
+  if (!["ACTIVE", "REJECTED"].includes(status)) {
+    res.status(400).json({ error: "Invalid status" });
+    return;
+  }
+
+  const product = await prisma.product.update({
+    where: { id },
+    data: { status },
+  });
+  res.json(product);
 });
