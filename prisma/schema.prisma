@@ -651,6 +651,7 @@ model CinVerificationRecord {
   companyStatus  String?  // Active | Inactive | Strike Off
   companyType    String?  // Private Limited | Public | LLP
   state          String?  // RoC State
+  provider       String   @default("INSTANTPAY")
   rawResponse    Json?
 
   createdAt      DateTime @default(now())
