@@ -56,5 +56,11 @@ export const config = {
   // Razorpay Gateway Config
   razorpayKeyId: process.env.RAZORPAY_KEY_ID,
   razorpayKeySecret: process.env.RAZORPAY_KEY_SECRET,
+
+  // Google Cloud Storage
+  gcsProjectId: process.env.GCS_PROJECT_ID,
+  gcsBucketName: process.env.GCS_BUCKET_NAME || "cikka-uploads-dev",
+  gcsKeyFile: process.env.GCS_KEY_FILE,
+  gcsSignedUrlExpiry: parseInt(process.env.GCS_SIGNED_URL_EXPIRY || "3600", 10),
 };
 

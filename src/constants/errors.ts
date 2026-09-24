@@ -67,3 +67,14 @@ export const COMMON_ERRORS = {
   INTERNAL_SERVER_ERROR: "Internal server error",
 } as const;
 
+export const UPLOAD_ERRORS = {
+  FILE_REQUIRED: "No file provided",
+  FILE_TOO_LARGE: (maxMB: number) => `File exceeds maximum size of ${maxMB}MB`,
+  INVALID_MIME_TYPE: (allowed: string[]) =>
+    `Invalid file type. Allowed: ${allowed.join(", ")}`,
+  UPLOAD_FAILED: "File upload failed",
+  DELETE_FAILED: "File deletion failed",
+  FILE_NOT_FOUND: "File not found in storage",
+  STORAGE_NOT_CONFIGURED: "Storage service is not properly configured",
+} as const;
+
