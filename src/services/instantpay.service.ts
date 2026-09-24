@@ -168,7 +168,6 @@ export async function verifyCinService(dto: VerifyCinDTO) {
           companyStatus: result.companyStatus || (result.valid ? "Active" : "FAILED"),
           companyType: result.companyType || null,
           state: result.state || null,
-          provider: "INSTANTPAY",
           rawResponse: result.rawResponse || null,
         },
       });
