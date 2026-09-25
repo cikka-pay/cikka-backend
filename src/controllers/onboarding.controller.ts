@@ -6,6 +6,7 @@ import * as onboardingService from "../services/onboarding.service";
 import { BUSINESS_TYPE_MAP, FULFILLMENT_TYPE_MAP, SETTLEMENT_CYCLE_MAP } from "../utils/enumMaps";
 import { sendSellerWaitlistEmail } from "../utils/resend";
 import { generateApplicationId } from "../services/auth.service";
+import { razorpayRouteService } from "../services/razorpayRoute.service";
 
 
 export const getOnboardingState = asyncHandler(async (req: Request, res: Response) => {
@@ -212,6 +213,22 @@ export const updateStep4 = asyncHandler(async (req: Request, res: Response) => {
       completedSteps: 4,
     },
   });
+
+  // Auto-provision or update Razorpay Route linked account if bank details are valid
+  if (data.bankAccountNumber && data.bankIfsc) {
+    const seller = await prisma.seller.findUnique({ where: { id: sellerId } });
+    razorpayRouteService.createLinkedAccount({
+      sellerId,
+      businessName: seller?.businessName || onboarding.businessName || "Merchant Partner",
+      businessType: onboarding.businessType as any,
+      email: seller?.email || onboarding.signatoryEmail || "seller@cikka.club",
+      phone: seller?.phone || "9876543210",
+      signatoryName: onboarding.signatoryName || undefined,
+      bankAccountNumber: data.bankAccountNumber,
+      bankIfsc: data.bankIfsc,
+      bankAccountHolder: data.bankAccountHolder,
+    }).catch((err) => console.warn(`[Razorpay Route Step 4 Provisioning Notice] ${err.message}`));
+  }
 
   res.json(onboarding);
 });

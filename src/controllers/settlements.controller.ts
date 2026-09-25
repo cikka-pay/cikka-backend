@@ -2,6 +2,7 @@ import { Request, Response } from "express";
 import { asyncHandler } from "../utils/asyncHandler";
 import { prisma } from "../config/prisma";
 import { Prisma, SettlementStatus } from "@prisma/client";
+import { calculateSettlementBreakdown } from "../services/settlementCalculator.service";
 
 export const listSettlements = asyncHandler(async (req: Request, res: Response) => {
   const sellerId = req.seller!.id;
@@ -48,53 +49,60 @@ export const createWithdrawal = asyncHandler(async (req: Request, res: Response)
     return;
   }
 
-  const commRate = 21.0;
-  const ship = 150.0;
-  const commFrac = commRate / 100;
-  // Net Factor = 1 - TDS_gross (0.001) - (1.18*comm + TCS_base (0.005)) / 1.18
-  const commAndTcsDeductionFrac = (1.18 * commFrac + 0.005) / 1.18;
-  const netFactor = 1 - 0.001 - commAndTcsDeductionFrac; // ~0.78476
-  const grossSales = (numAmount + ship) / netFactor;
-  const basePrice = grossSales / 1.18;
-  const gstOnSale = grossSales - basePrice;
-  const comm = basePrice * commFrac;
-  const gstOnComm = comm * 0.18;
-  const tdsAmount = grossSales * 0.001; // 0.1% TDS on Gross
-  const tcsAmount = basePrice * 0.005;  // 0.5% TCS on Net Taxable Base Price
-  const tax = tdsAmount + tcsAmount;
-  const shippingGstAmount = gstOnComm + ship + tax;
-
+  const breakdown = calculateSettlementBreakdown(numAmount);
   const now = new Date();
+  const holdUntil = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000);
   const utr = `IMPS-${Math.floor(100000000000 + Math.random() * 900000000000)}`;
+
   const settlement = await prisma.settlement.create({
     data: {
       sellerId,
       periodStart: now,
       periodEnd: now,
-      category: "Cosmetics",
-      grossSales,
-      basePrice,
-      gstOnSale,
-      commissionRate: commRate,
-      commissionAmount: comm,
-      gstOnCommission: gstOnComm,
-      shippingFee: ship,
-      tdsAmount,
-      tcsAmount,
-      statutoryTaxes: tax,
-      shippingGstAmount,
-      netPayable: numAmount,
+      category: "Withdrawal",
+      grossSales: breakdown.grossProductValue,
+      basePrice: breakdown.baseProductValue,
+      gstOnSale: breakdown.productGst,
+      commissionRate: breakdown.commissionRate,
+      commissionAmount: breakdown.commission,
+      gstOnCommission: breakdown.commissionGst,
+      commissionTotal: breakdown.commissionTotal,
+      shippingFee: breakdown.shipping,
+      shippingGst: breakdown.shippingGst,
+      shippingTotal: breakdown.shippingTotal,
+      sellerPlatformFee: breakdown.sellerPlatformFee,
+      sellerPlatformFeeGst: breakdown.sellerPlatformFeeGst,
+      sellerPlatformTotal: breakdown.sellerPlatformTotal,
+      tdsAmount: breakdown.tds,
+      tcsAmount: breakdown.tcs,
+      statutoryTaxes: breakdown.tds + breakdown.tcs,
+      successFeeAmount: breakdown.successFee,
+      successFeeGst: breakdown.successFeeGst,
+      successFeeTotal: breakdown.successFeeTotal,
+      customerPlatformFee: breakdown.customerPlatformFee,
+      customerPlatformFeeGst: breakdown.customerPlatformFeeGst,
+      customerPlatformTotal: breakdown.customerPlatformTotal,
+      customerTotalPayment: breakdown.customerTotalPayment,
+      cikkaFeeRevenue: breakdown.cikkaFeeRevenue,
+      cikkaGstCollected: breakdown.cikkaGstCollected,
+      totalDeductions: breakdown.totalSellerDeductions,
+      shippingGstAmount: breakdown.totalSellerDeductions,
+      netPayable: breakdown.sellerNetSettlement,
       status: "PAID",
       payoutDate: now,
-      decentroTxnId: `SET_WTH_${Date.now()}`,
+      holdUntil,
+      transferStatus: "SETTLED",
       utr,
       disbursedAt: now,
+      ledgerBreakdown: breakdown as any,
     } as any,
   });
 
   res.json({
     success: true,
     data: settlement,
+    breakdown,
     utr,
   });
 });
+

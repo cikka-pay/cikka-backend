@@ -3,6 +3,7 @@ import { asyncHandler } from "../utils/asyncHandler";
 import { prisma } from "../config/prisma";
 import { sendSellerWelcomeEmail, sendSellerRejectionEmail } from "../utils/resend";
 import { generateApplicationId } from "../services/auth.service";
+import { razorpayRouteService } from "../services/razorpayRoute.service";
 
 export const getApplications = asyncHandler(async (req: Request, res: Response) => {
   const { status, search } = req.query;
@@ -157,6 +158,29 @@ export const updateApplicationStatus = asyncHandler(async (req: Request, res: Re
     },
   });
 
+  // Provision Razorpay Route Linked Account whenever seller is approved
+  if (isApproved) {
+    try {
+      const linkedAccResult = await razorpayRouteService.createLinkedAccount({
+        sellerId: updatedSeller.id,
+        businessName: updatedSeller.businessName || updatedSeller.onboarding?.businessName || "Merchant Partner",
+        businessType: updatedSeller.onboarding?.businessType as any,
+        email: updatedSeller.email || updatedSeller.onboarding?.signatoryEmail || "seller@cikka.club",
+        phone: updatedSeller.phone,
+        signatoryName: updatedSeller.onboarding?.signatoryName || undefined,
+        panNumber: updatedSeller.onboarding?.panNumber || updatedSeller.onboarding?.signatoryPersonalPan || undefined,
+        gstNumber: updatedSeller.onboarding?.gstNumber || undefined,
+        bankAccountNumber: updatedSeller.onboarding?.bankAccountNumber || undefined,
+        bankIfsc: updatedSeller.onboarding?.bankIfsc || undefined,
+        bankAccountHolder: updatedSeller.onboarding?.bankAccountHolder || undefined,
+        address: updatedSeller.onboarding?.pickupAddress as any,
+      });
+      console.log(`[Admin Approval] Razorpay Route Linked Account status: ${linkedAccResult.status}, ID: ${linkedAccResult.accountId}`);
+    } catch (err: any) {
+      console.warn(`[Razorpay Route Auto-Provisioning Notice] ${err.message}`);
+    }
+  }
+
   // Send Resend Welcome Email to Seller ONCE when status transitions to VERIFIED
   if (isApproved && previousSeller?.onboardingStatus !== "VERIFIED") {
     const sellerEmail = updatedSeller.email || updatedSeller.onboarding?.signatoryEmail || process.env.RESEND_TEST_RECIPIENT || "vedantvyas79@gmail.com";
@@ -176,7 +200,16 @@ export const updateApplicationStatus = asyncHandler(async (req: Request, res: Re
     }).catch((err) => console.error("Failed to send rejection email via Resend:", err));
   }
 
-  res.json({ message: "Application status updated successfully", seller: updatedSeller });
+  const finalSeller = await prisma.seller.findUnique({
+    where: { id: sellerId },
+    include: {
+      onboarding: true,
+      agreementConfig: true,
+      commissionConfig: true,
+    },
+  });
+
+  res.json({ message: "Application status updated successfully", seller: finalSeller || updatedSeller });
 });
 
 export const notifyMissingDocument = asyncHandler(async (req: Request, res: Response) => {
@@ -279,8 +312,30 @@ export const getApprovedSellers = asyncHandler(async (req: Request, res: Respons
     orderBy: { updatedAt: "desc" },
   });
 
+  // Ensure every seller has a CKA029XXX Cikka ID
+  for (const seller of sellers) {
+    if (seller.onboarding) {
+      const currentId = seller.onboarding.applicationId;
+      if (!currentId || !currentId.startsWith("CKA029")) {
+        let newAppId: string;
+        if (currentId && currentId.startsWith("CKA-")) {
+          const digits = currentId.replace(/\D/g, "").slice(-3).padStart(3, "0");
+          newAppId = `CKA029${digits}`;
+        } else {
+          newAppId = generateApplicationId();
+        }
+        await prisma.sellerOnboarding.update({
+          where: { sellerId: seller.id },
+          data: { applicationId: newAppId },
+        }).catch(() => {});
+        seller.onboarding.applicationId = newAppId;
+      }
+    }
+  }
+
   const enrichedSellers = sellers.map(s => ({
     ...s,
+    cikkaId: s.onboarding?.applicationId || null,
     pendingProductsCount: s.products.length
   }));
 

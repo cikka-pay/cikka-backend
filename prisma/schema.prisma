@@ -115,6 +115,10 @@ model Seller {
   resetOtpCode      String?
   resetOtpExpiresAt DateTime?
 
+  // Razorpay Route Sub-merchant Linked Account
+  razorpayAccountId     String?           @unique
+  razorpayAccountStatus String?           @default("NOT_CREATED")
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
@@ -212,6 +216,10 @@ model SellerOnboarding {
 
   // Step completion tracking (1–6)
   completedSteps Int @default(0)
+
+  // Razorpay Route Linked Account
+  razorpayAccountId     String?
+  razorpayAccountStatus String?   @default("NOT_CREATED")
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -385,23 +393,64 @@ model Settlement {
 
   periodStart       DateTime
   periodEnd         DateTime
-  category          String           @default("Cosmetics")
-  grossSales        Decimal          @db.Decimal(10, 2)
-  basePrice         Decimal?         @default(0.00) @db.Decimal(10, 2)  // Base price (Gross ÷ 1.18)
-  gstOnSale         Decimal?         @default(0.00) @db.Decimal(10, 2)  // GST on sale (Gross - Base)
-  commissionRate    Decimal          @db.Decimal(5, 2)   // e.g. 21.00 = 21% of base price
+  category          String           @default("General")
+
+  // 1. Order Input
+  grossSales        Decimal          @db.Decimal(10, 2)  // Gross Product Value (GST-inclusive)
+  basePrice         Decimal?         @default(0.00) @db.Decimal(10, 2)  // Base Product Value (Gross ÷ 1.18)
+  gstOnSale         Decimal?         @default(0.00) @db.Decimal(10, 2)  // Product GST (Gross - Base)
+
+  // 2. Commission (22% on Base)
+  commissionRate    Decimal          @default(22.00) @db.Decimal(5, 2)
   commissionAmount  Decimal          @db.Decimal(10, 2)
-  gstOnCommission   Decimal?         @default(0.00) @db.Decimal(10, 2)  // 18% GST on commission
-  shippingFee       Decimal?         @default(0.00) @db.Decimal(10, 2)  // Flat shipping charge
+  gstOnCommission   Decimal?         @default(0.00) @db.Decimal(10, 2)  // 18% GST on Commission
+  commissionTotal   Decimal?         @default(0.00) @db.Decimal(10, 2)  // Commission + GST
+
+  // 3. Shipping (Fixed ₹55 + ₹9.90 GST = ₹64.90)
+  shippingFee       Decimal?         @default(55.00) @db.Decimal(10, 2)
+  shippingGst       Decimal?         @default(9.90) @db.Decimal(10, 2)
+  shippingTotal     Decimal?         @default(64.90) @db.Decimal(10, 2)
+
+  // 4. Seller Platform Fee (Fixed ₹15 + ₹2.70 GST = ₹17.70)
+  sellerPlatformFee    Decimal?      @default(15.00) @db.Decimal(10, 2)
+  sellerPlatformFeeGst Decimal?      @default(2.70) @db.Decimal(10, 2)
+  sellerPlatformTotal  Decimal?      @default(17.70) @db.Decimal(10, 2)
+
+  // 5. Statutory Taxes
   tdsAmount         Decimal?         @default(0.00) @db.Decimal(10, 2)  // 0.1% TDS on Gross
-  tcsAmount         Decimal?         @default(0.00) @db.Decimal(10, 2)  // 0.5% TCS on Net Taxable Base Price
+  tcsAmount         Decimal?         @default(0.00) @db.Decimal(10, 2)  // 0.5% TCS on Base
   statutoryTaxes    Decimal?         @default(0.00) @db.Decimal(10, 2)  // TDS + TCS
-  shippingGstAmount Decimal          @db.Decimal(10, 2)
-  netPayable        Decimal          @db.Decimal(10, 2)
+
+  // 6. Success Fee (2% on Gross + 18% GST = 2.36% on Gross)
+  successFeeAmount  Decimal?         @default(0.00) @db.Decimal(10, 2)
+  successFeeGst     Decimal?         @default(0.00) @db.Decimal(10, 2)
+  successFeeTotal   Decimal?         @default(0.00) @db.Decimal(10, 2)
+
+  // 7. Customer Platform Fee (₹9.99 + ₹1.80 GST = ₹11.79)
+  customerPlatformFee    Decimal?    @default(9.99) @db.Decimal(10, 2)
+  customerPlatformFeeGst Decimal?    @default(1.80) @db.Decimal(10, 2)
+  customerPlatformTotal  Decimal?    @default(11.79) @db.Decimal(10, 2)
+  customerTotalPayment   Decimal?    @default(0.00) @db.Decimal(10, 2)
+
+  // 8. Cikka Revenue Accounting (BEFORE GST) & GST Liability
+  cikkaFeeRevenue    Decimal?        @default(0.00) @db.Decimal(10, 2)  // Commission + Seller Platform + Success Fee + Customer Platform
+  cikkaGstCollected  Decimal?        @default(0.00) @db.Decimal(10, 2)  // Total GST on all Cikka fees
+
+  // 9. Seller Settlement Payout (from Base Product Value)
+  totalDeductions   Decimal?         @default(0.00) @db.Decimal(10, 2)
+  shippingGstAmount Decimal          @default(0.00) @db.Decimal(10, 2)  // Legacy backward-compat field
+  netPayable        Decimal          @db.Decimal(10, 2)  // seller_net_settlement
   status            SettlementStatus @default(PENDING)
   payoutDate        DateTime?
 
-  // Decentro Payout Disbursal Tracking
+  // 10. Complete Deterministic JSON Ledger Snapshot
+  ledgerBreakdown   Json?
+
+  // 11. Razorpay Route Marketplace Split & T+7 Settlement Disbursal Tracking
+  razorpayTransferId String?          @unique
+  razorpayPaymentId  String?
+  holdUntil          DateTime?        // Exact T+7 auto-release timestamp
+  transferStatus     String?          @default("PENDING") // PENDING | ON_HOLD | SETTLED | REVERSED | FAILED
   decentroTxnId     String?          @unique
   decentroUrn       String?
   utr               String?
@@ -413,9 +462,9 @@ model Settlement {
 
   @@index([sellerId, periodStart])
   @@index([sellerId, status])
+  @@index([razorpayTransferId])
   @@index([decentroTxnId])
   @@map("settlements")
-
 }
 
 // ============================================================

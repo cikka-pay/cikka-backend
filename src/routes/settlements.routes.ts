@@ -1,6 +1,6 @@
 import { Router } from "express";
 import { listSettlements, createWithdrawal } from "../controllers/settlements.controller";
-import { triggerPayoutDisburse } from "../controllers/decentro.controller";
+import { triggerRouteDisburse } from "../controllers/razorpay-route.controller";
 import { z } from "zod";
 import { validate } from "../middleware/validate.middleware";
 
@@ -14,6 +14,6 @@ const settlementQuerySchema = z.object({
 
 router.get("/", validate({ query: settlementQuerySchema }), listSettlements);
 router.post("/withdraw", createWithdrawal);
-router.post("/:id/disburse", triggerPayoutDisburse);
+router.post("/:id/disburse", triggerRouteDisburse);
 
 export default router;

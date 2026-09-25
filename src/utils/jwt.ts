@@ -62,12 +62,15 @@ export function verifySellerToken(token: string): CustomJwtPayload {
       }
       return payload;
     } catch (err: any) {
+      if (err.message === AUTH_ERRORS.INVALID_SELLER_TOKEN) {
+        throw err;
+      }
       // try next secret
     }
   }
 
   const decoded = jwt.decode(token) as CustomJwtPayload;
-  if (decoded && decoded.sub) {
+  if (decoded && decoded.sub && (!decoded.role || decoded.role === "seller")) {
     return decoded;
   }
 

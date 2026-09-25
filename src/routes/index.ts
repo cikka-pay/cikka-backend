@@ -22,7 +22,7 @@ import paymentRoutes from "./payment.routes";
 import shipwayRoutes from "./shipway.routes";
 
 import hubbleRoutes from "./hubble.routes";
-import decentroRoutes from "./decentro.routes";
+import razorpayRouteRoutes from "./razorpay-route.routes";
 
 import emailRoutes from "./email.routes";
 
@@ -45,8 +45,10 @@ router.use("/kyc", instantpayRoutes);
 router.use("/instantpay", instantpayRoutes);
 router.use("/hubble", hubbleRoutes);
 router.use("/hubble.sso", hubbleRoutes);
-router.use("/decentro", decentroRoutes);
 
+// Razorpay Route Split & Settlement Routes (/api/razorpay-route/*)
+router.use("/razorpay-route", razorpayRouteRoutes);
+router.use("/webhooks/razorpay", razorpayRouteRoutes);
 
 // Razorpay Payment Endpoints (/api/payment/create-order & /api/payment/verify-payment)
 router.use("/payment", paymentRoutes);
