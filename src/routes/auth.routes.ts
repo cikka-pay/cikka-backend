@@ -25,7 +25,7 @@ const router = Router();
 const phoneSchema = z.object({
   // Accept plain 10-digit ("9876543210") or +91-prefixed ("+919876543210").
   // Backend normalises to E.164 via normalizePhone() — country code always 91.
-  phone: z.string().regex(/^(\+91)?[6-9]\d{9}$/, "Enter a valid 10-digit Indian mobile number"),
+  phone: z.string().regex(/^(\+91)?[0-9]\d{9}$/, "Enter a valid 10-digit mobile number"),
 });
 
 const phoneOtpSchema = phoneSchema.extend({

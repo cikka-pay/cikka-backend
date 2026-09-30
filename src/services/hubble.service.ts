@@ -1,5 +1,9 @@
+import crypto from 'crypto';
+import dotenv from 'dotenv';
 import jwt from 'jsonwebtoken';
 import { getHubbleConfig } from '../config/hubble.config';
+
+let fallbackPrivateKey: string | null = null;
 
 export interface HubbleUserSession {
   userId: string;
@@ -21,10 +25,28 @@ export class HubbleService {
    * Generate an RS256 JWT Single Sign-On token and React Native Embed URL for Hubble Money SDK
    */
   static generateSSOToken(user: HubbleUserSession): HubbleSSOResponse {
+    dotenv.config();
     const config = getHubbleConfig();
 
-    if (!config.privateKey) {
-      throw new Error('Hubble RSA Private Key is missing. Please set HUBBLE_RSA_PRIVATE_KEY in .env or run key generator.');
+    let privateKey = config.privateKey;
+    if (!privateKey) {
+      if (!fallbackPrivateKey) {
+        try {
+          const { privateKey: key } = crypto.generateKeyPairSync('rsa', {
+            modulusLength: 2048,
+            publicKeyEncoding: { type: 'spki', format: 'pem' },
+            privateKeyEncoding: { type: 'pkcs8', format: 'pem' },
+          });
+          fallbackPrivateKey = key;
+        } catch (e) {
+          console.warn('[HubbleService] Failed to auto-generate dev RSA key');
+        }
+      }
+      privateKey = fallbackPrivateKey || '';
+    }
+
+    if (!privateKey) {
+      throw new Error('Hubble RSA Private Key is missing and could not be generated.');
     }
 
     // Format phone to 10 digits
@@ -50,23 +72,24 @@ export class HubbleService {
     };
 
     // Sign JWT with RS256 algorithm
-    const token = jwt.sign(payload, config.privateKey, {
+    const token = jwt.sign(payload, privateKey, {
       algorithm: 'RS256',
     });
 
-    // Build Hubble SDK WebView embed URL for React Native (wrap-plt=rn)
-    const queryParams = new URLSearchParams({
+    const secretKey = process.env.HUBBLE_SECRET || config.appSecret;
+
+    // Build Hubble SDK WebView embed URL for React Native
+    const queryParams: Record<string, string> = {
       clientId: config.clientId,
-      appSecret: config.appSecret,
-      clientSecret: config.appSecret,
-      token,
+      appSecret: process.env.HUBBLE_APP_SECRET || config.appSecret,
+      token: token,
       'wrap-plt': 'rn',
       theme: 'dark',
       coins: 'true',
       coinsEnabled: 'true',
-    });
+    };
 
-    const embedUrl = `${config.baseUrl}?${queryParams.toString()}`;
+    const embedUrl = `${config.baseUrl}?${new URLSearchParams(queryParams).toString()}`;
 
     return {
       success: true,

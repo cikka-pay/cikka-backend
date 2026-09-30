@@ -33,4 +33,18 @@ router.put("/sellers/:sellerId/agreement", adminCommissionAgreement.updateSeller
 router.get("/sellers/:id/products", adminOnboarding.getSellerProducts);
 router.patch("/products/:id/approval", adminOnboarding.updateProductApproval);
 
+// Hubble Money Rewards Net for Website Admin
+router.get("/hubble", async (_req, res) => {
+  try {
+    const { HubbleRestClient } = await import("../services/hubble-rest.service");
+    const summary = await HubbleRestClient.getHubbleAdminSummary();
+    res.json(summary);
+  } catch (error: any) {
+    res.status(500).json({
+      success: false,
+      error: error.message || "Failed to fetch Hubble rewards",
+    });
+  }
+});
+
 export default router;

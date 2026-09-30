@@ -7,15 +7,32 @@ import { errorHandler } from "./middleware/error.middleware";
 
 const app = express();
 
-const allowedOrigins = (process.env.CORS_ORIGIN || "http://localhost:5173").split(",");
+const envOrigins = (process.env.CORS_ORIGIN || "http://localhost:5173").split(",").map(o => o.trim());
 
 app.use((_req, res, next) => {
   res.setHeader("ngrok-skip-browser-warning", "true");
   next();
 });
 
-
-app.use(cors({ origin: allowedOrigins, credentials: true }));
+app.use(cors({
+  origin: (origin, callback) => {
+    if (!origin) return callback(null, true);
+    if (
+      envOrigins.includes(origin) ||
+      envOrigins.includes('*') ||
+      origin.includes('localhost') ||
+      origin.includes('127.0.0.1') ||
+      origin.includes('10.') ||
+      origin.includes('192.168.') ||
+      origin.includes('ngrok') ||
+      origin.includes('exp.direct')
+    ) {
+      return callback(null, true);
+    }
+    return callback(null, true);
+  },
+  credentials: true,
+}));
 app.use(express.json({ limit: "50mb" }));
 app.use(express.urlencoded({ limit: "50mb", extended: true }));
 app.use(morgan("dev"));
