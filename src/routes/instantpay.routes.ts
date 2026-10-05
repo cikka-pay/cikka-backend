@@ -1,6 +1,6 @@
 import { Router } from "express";
 import { verifyAadhaar, verifyBankAccount, verifyCin, verifyGstin, verifyPan, verifyVpa } from "../controllers/instantpay.controller";
-import { requireAnyAuth } from "../middleware/auth.middleware";
+import { optionalUserAuth, requireAnyAuth } from "../middleware/auth.middleware";
 import { validate } from "../middleware/validate.middleware";
 import { aadhaarValidation } from "../validations/aadhaar.validation";
 import { bankAccountValidation } from "../validations/bank-account.validation";
@@ -11,14 +11,16 @@ import { vpaValidation } from "../validations/vpa.validation";
 
 const router = Router();
 
-// Protect all InstantPay KYC endpoints — require Seller or User JWT
-router.use(requireAnyAuth);
-
 /**
- * POST /verify-pan
- * Perform instant PAN verification via InstantPay API.
+ * POST /verify-pan & POST /verify
+ * Perform instant PAN authentication and identity verification via InstantPay API.
+ * Supports optional authentication for mobile app onboarding.
  */
-router.post("/verify-pan", validate({ body: verifyPanSchema }), verifyPan);
+router.post("/verify-pan", optionalUserAuth, validate({ body: verifyPanSchema }), verifyPan);
+router.post("/verify", optionalUserAuth, validate({ body: verifyPanSchema }), verifyPan);
+
+// Protect remaining InstantPay KYC endpoints — require Seller or User JWT
+router.use(requireAnyAuth);
 
 /**
  * POST /verify-gstin

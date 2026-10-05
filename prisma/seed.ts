@@ -34,34 +34,87 @@ async function main() {
   const plainPassword = "password123";
   const passwordHash = await bcrypt.hash(plainPassword, 10);
 
-  const seller = await prisma.seller.create({
+  const sneakerSeller = await prisma.seller.create({
     data: {
-      businessName: "Aura Vogue",
-      phone,
-      phoneNumber: "9999999999",
+      businessName: "Nike India Hub",
+      phone: "+919876543210",
+      phoneNumber: "9876543210",
       countryCode: "91",
       passwordHash,
       kycVerified: true,
       phoneVerified: true,
       onboardingStatus: "VERIFIED",
-
       onboarding: {
         create: {
-          businessName: "Aura Vogue",
-          bankAccountHolder: "Aura Vogue Private Limited",
-          bankName: "HDFC Bank",
-          bankAccountNumber: "918273645012",
-          bankIfsc: "HDFC0001234",
-          bankVerified: true,
-          merchantAgreementAccepted: true,
+          businessName: "Nike India Hub",
+          pickupAddress: {
+            line1: "DLF Cyber City, Sector 24",
+            city: "Gurgaon",
+            state: "Haryana",
+            pincode: "122008",
+          },
           completedSteps: 6,
         },
       },
     },
   });
 
+  const linenSeller = await prisma.seller.create({
+    data: {
+      businessName: "Fabindia Lucknow Hub",
+      phone: "+919876543211",
+      phoneNumber: "9876543211",
+      countryCode: "91",
+      passwordHash,
+      kycVerified: true,
+      phoneVerified: true,
+      onboardingStatus: "VERIFIED",
+      onboarding: {
+        create: {
+          businessName: "Fabindia Lucknow Hub",
+          pickupAddress: {
+            line1: "Hazratganj Main Market",
+            city: "Lucknow",
+            state: "Uttar Pradesh",
+            pincode: "226005",
+          },
+          completedSteps: 6,
+        },
+      },
+    },
+  });
+
+  const seller = sneakerSeller;
 
   const products = await prisma.$transaction([
+    prisma.product.create({
+      data: {
+        sellerId: sneakerSeller.id,
+        name: "Sneakers Pro",
+        brandName: "Nike",
+        sku: "NK-SNK-122008",
+        category: "Footwear",
+        price: 4999.0,
+        mrp: 11999.0,
+        stockQty: 50,
+        lowStockThreshold: 5,
+        status: "ACTIVE",
+      },
+    }),
+    prisma.product.create({
+      data: {
+        sellerId: linenSeller.id,
+        name: "Linen Co-ord Set",
+        brandName: "Fabindia",
+        sku: "FB-LIN-226005",
+        category: "Apparel",
+        price: 3499.0,
+        mrp: 4199.0,
+        stockQty: 30,
+        lowStockThreshold: 5,
+        status: "ACTIVE",
+      },
+    }),
     prisma.product.create({
       data: {
         sellerId: seller.id,
@@ -83,30 +136,6 @@ async function main() {
         price: 899.0,
         stockQty: 0,
         lowStockThreshold: 5,
-        status: "ACTIVE",
-      },
-    }),
-    prisma.product.create({
-      data: {
-        sellerId: seller.id,
-        name: "Hydrating Face Mist",
-        sku: "MIST-HYD-100",
-        category: "Cosmetics",
-        price: 349.0,
-        stockQty: 5,
-        lowStockThreshold: 10,
-        status: "ACTIVE",
-      },
-    }),
-    prisma.product.create({
-      data: {
-        sellerId: seller.id,
-        name: "Charcoal Face Wash",
-        sku: "WASH-CHAR-150",
-        category: "Cosmetics",
-        price: 299.0,
-        stockQty: 42,
-        lowStockThreshold: 10,
         status: "ACTIVE",
       },
     }),

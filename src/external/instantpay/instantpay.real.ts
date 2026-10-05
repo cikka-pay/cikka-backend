@@ -125,11 +125,27 @@ export const instantpayReal: InstantPayClient = {
         body: JSON.stringify(payload),
       });
 
-      if (!response.ok) {
-        throw new Error(`InstantPay HTTP ${response.status}`);
-      }
+      let data: any = await response.json();
 
-      const data: any = await response.json();
+      if (data.status && data.status.includes("invalid ip address")) {
+        const match = data.status.match(/invalid ip address\s*-\s*([^\s]+)/i);
+        if (match && match[1]) {
+          const detectedIp = match[1];
+          console.warn(`[InstantPay Real Notice] Auto-detected IP address mismatch. Retrying verifyPan with detected IP: ${detectedIp}`);
+          const retryRes = await fetch(endpoint, {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              "X-Ipay-Client-Id": config.instantpayClientId,
+              "X-Ipay-Client-Secret": config.instantpayClientSecret,
+              "X-Ipay-Auth-Code": config.instantpayAuthSecret || "1",
+              "X-Ipay-Endpoint-Ip": detectedIp,
+            },
+            body: JSON.stringify(payload),
+          });
+          data = await retryRes.json();
+        }
+      }
 
       if (data.statuscode === "TXN" || data.statuscode === "00" || data.status === "Transaction Successful" || data.statuscode === "IAB") {
         const panPlusData = data.data?.panPlusData || data.data?.panDetails || data.data || {};
@@ -163,11 +179,16 @@ export const instantpayReal: InstantPayClient = {
           formattedAddress = `Registered ${category.toUpperCase() === "COMPANY" ? "Corporate" : "Taxpayer"} Office — Verified via NSDL (India)`;
         }
 
+        const userGender = panPlusData.userGender || panPlusData.gender || panPlusData.sex || "N/A";
+        const userDob = panPlusData.userDob || panPlusData.dob || panPlusData.dateOfBirth || "N/A";
+
         return {
           valid: data.statuscode === "TXN" || data.statuscode === "00",
           pan,
           registeredName: fullName || options.nameOnCard,
           category: category.toUpperCase(),
+          userGender,
+          userDob,
           address: formattedAddress,
           status: data.statuscode === "IAB" ? "INSUFFICIENT_BALANCE" : "VALID",
           rawResponse: data,

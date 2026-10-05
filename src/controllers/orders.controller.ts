@@ -47,7 +47,7 @@ export const listOrders = asyncHandler(async (req: Request, res: Response) => {
     ];
   }
 
-  const [data, total] = await Promise.all([
+  const [rawOrders, total] = await Promise.all([
     prisma.order.findMany({
       where,
       skip,
@@ -60,8 +60,18 @@ export const listOrders = asyncHandler(async (req: Request, res: Response) => {
     prisma.order.count({ where }),
   ]);
 
+  // Redact customer PII for Seller view while maintaining shipment metadata (Pincode, City, Delivery Partner, AWB, Status)
+  const sanitizedOrders = rawOrders.map((order) => ({
+    ...order,
+    customerName: "Cikka Customer",
+    customerPhone: "••••••••••",
+    customerEmail: "••••••••••",
+    // Delivery address street detail redacted, exposing City and Pincode
+    deliveryAddressRedacted: `${order.customerCity || "City"}, Pincode: ${(order as any).pincode || "Destination Pincode"}`,
+  }));
+
   res.json({
-    data,
+    data: sanitizedOrders,
     meta: {
       total,
       page: pageNum,
@@ -80,8 +90,19 @@ export const getOrder = asyncHandler(async (req: Request, res: Response) => {
     res.status(404).json({ error: "Order not found" });
     return;
   }
-  res.json(order);
+
+  // Redact customer PII for Seller view
+  const sanitizedOrder = {
+    ...order,
+    customerName: "Cikka Customer",
+    customerPhone: "••••••••••",
+    customerEmail: "••••••••••",
+    deliveryAddressRedacted: `${order.customerCity || "City"}, Pincode: ${(order as any).pincode || "Destination Pincode"}`,
+  };
+
+  res.json(sanitizedOrder);
 });
+
 
 export const createOrder = asyncHandler(async (req: Request, res: Response) => {
   const sellerId = req.seller?.id || (await prisma.seller.findFirst())?.id;

@@ -535,11 +535,36 @@ model User {
   email         String?  @unique
   phoneVerified Boolean  @default(false)
 
+  addresses     UserAddress[]
+
   createdAt     DateTime @default(now())
   updatedAt     DateTime @updatedAt
 
   @@map("users")
 }
+
+model UserAddress {
+  id        String   @id @default(uuid())
+  userId    String?
+  user      User?    @relation(fields: [userId], references: [id], onDelete: Cascade)
+  name      String
+  phone     String
+  houseNo   String?
+  street    String?
+  landmark  String?
+  city      String
+  state     String?
+  pincode   String
+  isDefault Boolean  @default(true)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([userId])
+  @@index([pincode])
+  @@map("user_addresses")
+}
+
 
 // ============================================================
 // PAYMENT TRANSACTION — Setu Payment & Refund Ledger
