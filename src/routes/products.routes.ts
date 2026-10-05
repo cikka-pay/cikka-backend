@@ -62,11 +62,15 @@ const updateVariantSchema = z.object({
   price: z.number().positive().optional(),
 });
 
+import { requireRole } from "../middleware/auth.middleware";
+
 router.get("/", validate({ query: productQuerySchema }), listProducts);
 router.get("/:id", getProduct);
-router.post("/", validate({ body: createProductSchema }), createProduct);
-router.patch("/:id", validate({ body: updateProductSchema }), updateProduct);
-router.patch("/:id/variants/:variantId", validate({ body: updateVariantSchema }), updateVariant);
-router.delete("/:id", deleteProduct);
+
+// Creation and modification allowed for ADMIN and EXECUTIVE, Viewer is read-only
+router.post("/", requireRole(["ADMIN", "EXECUTIVE"]), validate({ body: createProductSchema }), createProduct);
+router.patch("/:id", requireRole(["ADMIN", "EXECUTIVE"]), validate({ body: updateProductSchema }), updateProduct);
+router.patch("/:id/variants/:variantId", requireRole(["ADMIN", "EXECUTIVE"]), validate({ body: updateVariantSchema }), updateVariant);
+router.delete("/:id", requireRole(["ADMIN", "EXECUTIVE"]), deleteProduct);
 
 export default router;

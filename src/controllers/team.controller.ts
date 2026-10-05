@@ -116,3 +116,59 @@ export const getTeamMembers = asyncHandler(async (req: Request, res: Response) =
   
   res.json({ success: true, members });
 });
+
+export const updateTeamMemberRole = asyncHandler(async (req: Request, res: Response) => {
+  const sellerId = req.seller!.id;
+  const { id } = req.params;
+  const { role } = req.body;
+
+  if (!role || !["ADMIN", "EXECUTIVE", "VIEWER"].includes(role.toUpperCase())) {
+    res.status(400).json({ success: false, error: "Valid role (ADMIN, EXECUTIVE, VIEWER) is required." });
+    return;
+  }
+
+  const teamMember = await prisma.teamMember.findFirst({
+    where: { id, sellerId }
+  });
+
+  if (!teamMember) {
+    res.status(404).json({ success: false, error: "Team member not found." });
+    return;
+  }
+
+  const updated = await prisma.teamMember.update({
+    where: { id },
+    data: { role: role.toUpperCase() },
+    select: {
+      id: true,
+      name: true,
+      phone: true,
+      email: true,
+      role: true,
+      status: true,
+      createdAt: true
+    }
+  });
+
+  res.json({ success: true, message: `Updated role to ${role.toUpperCase()}`, member: updated });
+});
+
+export const deleteTeamMember = asyncHandler(async (req: Request, res: Response) => {
+  const sellerId = req.seller!.id;
+  const { id } = req.params;
+
+  const teamMember = await prisma.teamMember.findFirst({
+    where: { id, sellerId }
+  });
+
+  if (!teamMember) {
+    res.status(404).json({ success: false, error: "Team member not found." });
+    return;
+  }
+
+  await prisma.teamMember.delete({
+    where: { id }
+  });
+
+  res.json({ success: true, message: "Team member removed successfully." });
+});

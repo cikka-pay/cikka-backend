@@ -6,16 +6,45 @@ import { shipwayService } from "../services/shipway.service";
 
 export const listOrders = asyncHandler(async (req: Request, res: Response) => {
   const sellerId = req.seller!.id;
-  const { page = "1", limit = "10", status } = req.query as any;
+  const { page = "1", limit = "100", status, startDate, endDate, productId, search } = req.query as any;
 
-  const pageNum = parseInt(page, 10);
-  const limitNum = parseInt(limit, 10);
+  const pageNum = parseInt(page, 10) || 1;
+  const limitNum = Math.min(parseInt(limit, 10) || 100, 1000);
   const skip = (pageNum - 1) * limitNum;
 
   const where: Prisma.OrderWhereInput = { sellerId };
 
   if (status && status !== "ALL") {
     where.status = status as OrderStatus;
+  }
+
+  if (startDate || endDate) {
+    where.createdAt = {};
+    if (startDate) {
+      where.createdAt.gte = new Date(startDate);
+    }
+    if (endDate) {
+      where.createdAt.lte = new Date(endDate);
+    }
+  }
+
+  if (productId && productId !== "ALL") {
+    where.items = {
+      some: {
+        productId: productId,
+      },
+    };
+  }
+
+  if (search && search.trim()) {
+    const q = search.trim();
+    where.OR = [
+      { orderNumber: { contains: q, mode: "insensitive" } },
+      { customerName: { contains: q, mode: "insensitive" } },
+      { customerCity: { contains: q, mode: "insensitive" } },
+      { items: { some: { product: { name: { contains: q, mode: "insensitive" } } } } },
+      { items: { some: { product: { sku: { contains: q, mode: "insensitive" } } } } },
+    ];
   }
 
   const [data, total] = await Promise.all([

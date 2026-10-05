@@ -17,10 +17,12 @@ const updateSettingsSchema = z.object({
   lowStockDefault:  z.number().int().min(0).optional(),
 });
 
+import { requireRole } from "../middleware/auth.middleware";
+
 router.get("/profile", getProfile);
-router.patch("/profile", updateProfile);
+router.patch("/profile", requireRole(["ADMIN"]), updateProfile);
 router.get("/", getSettings);
-router.patch("/", validate({ body: updateSettingsSchema }), updateSettings);
+router.patch("/", requireRole(["ADMIN"]), validate({ body: updateSettingsSchema }), updateSettings);
 
 export default router;
 

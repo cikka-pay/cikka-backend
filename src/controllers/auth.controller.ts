@@ -170,7 +170,12 @@ export const signupSetPassword = asyncHandler(async (req: Request, res: Response
       countryCode: updatedSeller.countryCode,
       phoneNumber: updatedSeller.phoneNumber,
       email: updatedSeller.email,
+      businessName: updatedSeller.businessName,
+      kycVerified: updatedSeller.kycVerified,
       onboardingStatus: updatedSeller.onboardingStatus,
+      merchantAgreementAccepted: false,
+      agreementAccepted: false,
+      role: "ADMIN",
     },
   });
 });
@@ -278,7 +283,14 @@ export const signinVerifyOtp = asyncHandler(async (req: Request, res: Response) 
         phoneOtpCode: null,
         phoneOtpExpiresAt: null,
       },
+      include: {
+        onboarding: true,
+      },
     });
+
+    const isDoneAgreement = Boolean(
+      updatedSeller.onboarding?.merchantAgreementAccepted && updatedSeller.onboarding?.digitalSignature
+    );
 
     const token = signToken(updatedSeller.id);
     res.json({
@@ -293,7 +305,9 @@ export const signinVerifyOtp = asyncHandler(async (req: Request, res: Response) 
         businessName: updatedSeller.businessName,
         kycVerified: updatedSeller.kycVerified,
         onboardingStatus: updatedSeller.onboardingStatus,
-        role: "OWNER",
+        merchantAgreementAccepted: isDoneAgreement,
+        agreementAccepted: isDoneAgreement,
+        role: "ADMIN",
       },
     });
     return;
@@ -332,6 +346,9 @@ export const sellerLogin = asyncHandler(async (req: Request, res: Response) => {
         { email: rawPhone },
       ],
     },
+    include: {
+      onboarding: true,
+    },
   });
 
 
@@ -346,6 +363,10 @@ export const sellerLogin = asyncHandler(async (req: Request, res: Response) => {
     return;
   }
 
+  const isDoneAgreement = Boolean(
+    seller.onboarding?.merchantAgreementAccepted && seller.onboarding?.digitalSignature
+  );
+
   const token = signToken(seller.id);
   res.json({
     success: true,
@@ -357,6 +378,9 @@ export const sellerLogin = asyncHandler(async (req: Request, res: Response) => {
       businessName: seller.businessName,
       kycVerified: seller.kycVerified,
       onboardingStatus: seller.onboardingStatus,
+      merchantAgreementAccepted: isDoneAgreement,
+      agreementAccepted: isDoneAgreement,
+      role: "ADMIN",
     },
   });
 });
@@ -495,7 +519,7 @@ export const getMe = asyncHandler(async (req: Request, res: Response) => {
     return;
   }
 
-  let role = "OWNER";
+  let role = "ADMIN";
   if (teamMemberId) {
     const teamMember = await prisma.teamMember.findUnique({ where: { id: teamMemberId } });
     if (teamMember) {

@@ -28,8 +28,28 @@ export const listSettlements = asyncHandler(async (req: Request, res: Response) 
     prisma.settlement.count({ where }),
   ]);
 
+  const userRole = (req.seller?.role || "ADMIN").toUpperCase();
+  const isAdmin = userRole === "ADMIN" || userRole === "OWNER";
+
+  const sanitizedData = isAdmin
+    ? data
+    : data.map((s) => ({
+        ...s,
+        netPayable: null,
+        grossSales: null,
+        basePrice: null,
+        commissionAmount: null,
+        totalDeductions: null,
+        shippingFee: null,
+        statutoryTaxes: null,
+        sellerPlatformFee: null,
+        successFeeAmount: null,
+        ledgerBreakdown: null,
+        isMasked: true,
+      }));
+
   res.json({
-    data,
+    data: sanitizedData,
     meta: {
       total,
       page: pageNum,

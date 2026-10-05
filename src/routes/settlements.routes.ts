@@ -3,6 +3,7 @@ import { listSettlements, createWithdrawal } from "../controllers/settlements.co
 import { triggerRouteDisburse } from "../controllers/razorpay-route.controller";
 import { z } from "zod";
 import { validate } from "../middleware/validate.middleware";
+import { requireRole } from "../middleware/auth.middleware";
 
 const router = Router();
 
@@ -13,7 +14,9 @@ const settlementQuerySchema = z.object({
 });
 
 router.get("/", validate({ query: settlementQuerySchema }), listSettlements);
-router.post("/withdraw", createWithdrawal);
-router.post("/:id/disburse", triggerRouteDisburse);
+
+// Strictly Admin only can withdraw or trigger disbursements
+router.post("/withdraw", requireRole(["ADMIN"]), createWithdrawal);
+router.post("/:id/disburse", requireRole(["ADMIN"]), triggerRouteDisburse);
 
 export default router;

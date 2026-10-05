@@ -14,6 +14,10 @@ const router = Router();
 const orderQuerySchema = z.object({
   page: z.string().optional(),
   limit: z.string().optional(),
+  startDate: z.string().optional(),
+  endDate: z.string().optional(),
+  productId: z.string().optional(),
+  search: z.string().optional(),
   status: z
     .preprocess(
       (val) => (typeof val === "string" ? val.toUpperCase() : val),
