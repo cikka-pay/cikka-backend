@@ -59,6 +59,8 @@ export const listSettlements = asyncHandler(async (req: Request, res: Response) 
   });
 });
 
+import { disburseSettlement } from "../services/settlement.service";
+
 export const createWithdrawal = asyncHandler(async (req: Request, res: Response) => {
   const sellerId = req.seller!.id;
   const { amount } = req.body;
@@ -72,7 +74,6 @@ export const createWithdrawal = asyncHandler(async (req: Request, res: Response)
   const breakdown = calculateSettlementBreakdown(numAmount);
   const now = new Date();
   const holdUntil = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000);
-  const utr = `IMPS-${Math.floor(100000000000 + Math.random() * 900000000000)}`;
 
   const settlement = await prisma.settlement.create({
     data: {
@@ -108,21 +109,30 @@ export const createWithdrawal = asyncHandler(async (req: Request, res: Response)
       totalDeductions: breakdown.totalSellerDeductions,
       shippingGstAmount: breakdown.totalSellerDeductions,
       netPayable: breakdown.sellerNetSettlement,
-      status: "PAID",
-      payoutDate: now,
+      status: "PENDING",
+      payoutDate: holdUntil,
       holdUntil,
-      transferStatus: "SETTLED",
-      utr,
-      disbursedAt: now,
+      transferStatus: "ON_HOLD",
       ledgerBreakdown: breakdown as any,
     } as any,
   });
 
-  res.json({
-    success: true,
-    data: settlement,
-    breakdown,
-    utr,
-  });
+  try {
+    const disburseResult = await disburseSettlement(settlement.id);
+    res.json({
+      success: true,
+      data: disburseResult.settlement || settlement,
+      breakdown,
+      transferId: (disburseResult as any).transferResult?.transferId,
+      message: "Withdrawal scheduled via Razorpay Route on T+7 hold.",
+    });
+  } catch (routeErr: any) {
+    res.json({
+      success: true,
+      data: settlement,
+      breakdown,
+      notice: routeErr.message,
+    });
+  }
 });
 

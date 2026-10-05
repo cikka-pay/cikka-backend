@@ -18,11 +18,15 @@ export async function requireSellerAuth(req: Request, res: Response, next: NextF
     const payload = verifySellerToken(token);
     let role = "ADMIN";
 
+    const sellerId = typeof payload.sub === "object" && payload.sub !== null
+      ? ((payload.sub as any).id || String(payload.sub))
+      : (payload.sub as string);
+
     if (payload.teamMemberId) {
       const teamMember = await prisma.teamMember.findUnique({
         where: { id: payload.teamMemberId },
       });
-      if (!teamMember || teamMember.sellerId !== payload.sub || teamMember.status !== "ACTIVE") {
+      if (!teamMember || teamMember.sellerId !== sellerId || teamMember.status !== "ACTIVE") {
         res.status(403).json({ error: "Access revoked or invalid team membership" });
         return;
       }
@@ -30,7 +34,7 @@ export async function requireSellerAuth(req: Request, res: Response, next: NextF
     }
 
     req.seller = { 
-      id: payload.sub as string,
+      id: sellerId,
       teamMemberId: payload.teamMemberId as string | undefined,
       role: role
     };
@@ -118,8 +122,12 @@ export function requireAnyAuth(req: Request, res: Response, next: NextFunction):
 
   try {
     const payload = verifySellerToken(token);
+    const sellerId = typeof payload.sub === "object" && payload.sub !== null
+      ? ((payload.sub as any).id || String(payload.sub))
+      : (payload.sub as string);
+
     req.seller = { 
-      id: payload.sub as string,
+      id: sellerId,
       teamMemberId: payload.teamMemberId as string | undefined
     };
     next();
@@ -127,7 +135,11 @@ export function requireAnyAuth(req: Request, res: Response, next: NextFunction):
   } catch (_err) {
     try {
       const payload = verifyUserToken(token);
-      req.user = { id: payload.sub as string };
+      const userId = typeof payload.sub === "object" && payload.sub !== null
+        ? ((payload.sub as any).id || String(payload.sub))
+        : (payload.sub as string);
+
+      req.user = { id: userId };
       next();
       return;
     } catch (_err2) {

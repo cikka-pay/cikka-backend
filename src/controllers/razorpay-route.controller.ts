@@ -161,8 +161,13 @@ export const createLinkedAccountHandler = asyncHandler(async (req: Request, res:
     return;
   }
 
-  const seller = await prisma.seller.findUnique({
-    where: { id: sellerId },
+  const seller = await prisma.seller.findFirst({
+    where: {
+      OR: [
+        { id: sellerId },
+        { onboarding: { applicationId: sellerId } },
+      ],
+    },
     include: { onboarding: true },
   });
 

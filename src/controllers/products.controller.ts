@@ -4,7 +4,11 @@ import { prisma } from "../config/prisma";
 import { Prisma } from "@prisma/client";
 
 async function getValidSellerId(req: Request): Promise<string> {
-  const reqSellerId = req.seller?.id;
+  const rawSellerId = req.seller?.id;
+  const reqSellerId = typeof rawSellerId === "object" && rawSellerId !== null 
+    ? ((rawSellerId as any).id || String(rawSellerId)) 
+    : (typeof rawSellerId === "string" ? rawSellerId : undefined);
+
   if (reqSellerId) {
     const existingSeller = await prisma.seller.findUnique({ where: { id: reqSellerId } });
     if (existingSeller) return existingSeller.id;

@@ -87,13 +87,15 @@ export function round2(num: number): number {
  */
 export function calculateSettlementBreakdown(
   grossProductValue: number,
-  customConfig?: Partial<SettlementFeeConfig>
+  customConfig?: Partial<SettlementFeeConfig>,
+  ordersCount: number = 1
 ): SettlementLedgerBreakdown {
   const config: SettlementFeeConfig = {
     ...DEFAULT_SETTLEMENT_CONFIG,
     ...customConfig,
   };
 
+  const count = Math.max(ordersCount || 1, 1);
   const gross = Number(grossProductValue) || 0;
   if (gross <= 0) {
     return {
@@ -118,9 +120,9 @@ export function calculateSettlementBreakdown(
       successFee: 0,
       successFeeGst: 0,
       successFeeTotal: 0,
-      customerPlatformFee: config.customerPlatformFee,
-      customerPlatformFeeGst: round2(config.customerPlatformFee * (config.gstRate / 100)),
-      customerPlatformTotal: round2(config.customerPlatformFee * (1 + config.gstRate / 100)),
+      customerPlatformFee: config.customerPlatformFee * count,
+      customerPlatformFeeGst: round2(config.customerPlatformFee * count * (config.gstRate / 100)),
+      customerPlatformTotal: round2(config.customerPlatformFee * count * (1 + config.gstRate / 100)),
       customerTotalPayment: 0,
       totalSellerDeductions: 0,
       sellerNetSettlement: 0,
@@ -131,103 +133,107 @@ export function calculateSettlementBreakdown(
 
   const gstMultiplier = 1 + config.gstRate / 100; // 1.18
 
-  // 1. Base & GST Breakdown
-  const rawBase = gross / gstMultiplier;
-  const rawProductGst = gross - rawBase;
+  // 1. Base & GST Breakdown (Net Base Price = GSV ÷ 1.18)
+  const baseProductValue = round2(gross / gstMultiplier);
+  const productGst = round2(gross - baseProductValue);
 
-  // 2. Commission (22% on Base)
-  const rawCommission = rawBase * (config.commissionRate / 100);
-  const rawCommissionGst = rawCommission * (config.gstRate / 100);
-  const rawCommissionTotal = rawCommission + rawCommissionGst;
+  // 2. Commission (Base × CommissionRate%)
+  const commission = round2(baseProductValue * (config.commissionRate / 100));
+  const commissionGst = round2(commission * (config.gstRate / 100));
+  const commissionTotal = round2(commission + commissionGst);
 
-  // 3. Shipping (₹55 + 18% GST = ₹64.90)
-  const rawShipping = config.shippingFee;
-  const rawShippingGst = rawShipping * (config.gstRate / 100);
-  const rawShippingTotal = rawShipping + rawShippingGst;
+  // 3. Shipping (₹55 × ordersCount + 18% GST)
+  const shipping = round2(config.shippingFee * count);
+  const shippingGst = round2(shipping * (config.gstRate / 100));
+  const shippingTotal = round2(shipping + shippingGst);
 
-  // 4. Seller Platform Fee (₹15 + 18% GST = ₹17.70)
-  const rawSellerPlatformFee = config.sellerPlatformFee;
-  const rawSellerPlatformFeeGst = rawSellerPlatformFee * (config.gstRate / 100);
-  const rawSellerPlatformTotal = rawSellerPlatformFee + rawSellerPlatformFeeGst;
+  // 4. Success Fee (2% on GSV + 18% GST)
+  const successFee = round2(gross * (config.successFeeRate / 100));
+  const successFeeGst = round2(successFee * (config.gstRate / 100));
+  const successFeeTotal = round2(successFee + successFeeGst);
 
-  // 5. Statutory Taxes (TDS: 0.1% on Gross, TCS: 0.5% on Base)
-  const rawTds = gross * (config.tdsRate / 100);
-  const rawTcs = rawBase * (config.tcsRate / 100);
+  // 5. Seller Platform Fee (₹15 × ordersCount + 18% GST)
+  const sellerPlatformFee = round2(config.sellerPlatformFee * count);
+  const sellerPlatformFeeGst = round2(sellerPlatformFee * (config.gstRate / 100));
+  const sellerPlatformTotal = round2(sellerPlatformFee + sellerPlatformFeeGst);
 
-  // 6. Success Fee (2% on Gross + 18% GST = 2.36% on Gross)
-  const rawSuccessFee = gross * (config.successFeeRate / 100);
-  const rawSuccessFeeGst = rawSuccessFee * (config.gstRate / 100);
-  const rawSuccessFeeTotal = rawSuccessFee + rawSuccessFeeGst;
+  // 6. Statutory Taxes (TDS: 0.1% on Gross, TCS: 0.5% on Base)
+  const tds = round2(gross * (config.tdsRate / 100));
+  const tcs = round2(baseProductValue * (config.tcsRate / 100));
+  const statutoryTaxes = round2(tds + tcs);
 
-  // 7. Customer Platform Fee (₹9.99 + 18% GST = ₹11.79)
-  const rawCustomerPlatformFee = config.customerPlatformFee;
-  const rawCustomerPlatformFeeGst = rawCustomerPlatformFee * (config.gstRate / 100);
-  const rawCustomerPlatformTotal = rawCustomerPlatformFee + rawCustomerPlatformFeeGst;
-  const rawCustomerTotalPayment = gross + rawCustomerPlatformTotal;
+  // 7. Customer Platform Fee (₹9.99 + 18% GST)
+  const customerPlatformFee = round2(config.customerPlatformFee * count);
+  const customerPlatformFeeGst = round2(customerPlatformFee * (config.gstRate / 100));
+  const customerPlatformTotal = round2(customerPlatformFee + customerPlatformFeeGst);
+  const customerTotalPayment = round2(gross + customerPlatformTotal);
 
-  // 8. Seller Net Settlement (Calculated from Base Product Value)
-  const rawSellerDeductions =
-    rawCommissionTotal +
-    rawShippingTotal +
-    rawSellerPlatformTotal +
-    rawTds +
-    rawTcs +
-    rawSuccessFeeTotal;
+  // 8. Total Seller Deductions
+  const totalSellerDeductions = round2(
+    commissionTotal +
+    shippingTotal +
+    successFeeTotal +
+    sellerPlatformTotal +
+    statutoryTaxes
+  );
 
-  const rawSellerNet = rawBase - rawSellerDeductions;
+  // 9. Seller Net Settlement = GSV - Total Seller Deductions
+  const sellerNetSettlement = Math.max(0, round2(gross - totalSellerDeductions));
 
-  // 9. Cikka Revenue (Commission + Seller Platform Fee + Success Fee + Customer Platform Fee BEFORE GST)
-  const rawCikkaFeeRevenue =
-    rawCommission +
-    rawSellerPlatformFee +
-    rawSuccessFee +
-    rawCustomerPlatformFee;
+  // 10. Cikka Revenue (Commission + Seller Platform Fee + Success Fee + Customer Platform Fee BEFORE GST)
+  const cikkaFeeRevenue = round2(
+    commission +
+    sellerPlatformFee +
+    successFee +
+    customerPlatformFee
+  );
 
-  // 10. GST Collected on Cikka Fees (Tax liability)
-  const rawCikkaGstCollected =
-    rawCommissionGst +
-    rawSellerPlatformFeeGst +
-    rawSuccessFeeGst +
-    rawCustomerPlatformFeeGst;
+  // 11. GST Collected on Cikka Fees (Tax liability)
+  const cikkaGstCollected = round2(
+    commissionGst +
+    sellerPlatformFeeGst +
+    successFeeGst +
+    customerPlatformFeeGst
+  );
 
   return {
     grossProductValue: round2(gross),
-    baseProductValue: round2(rawBase),
-    productGst: round2(rawProductGst),
+    baseProductValue,
+    productGst,
 
     commissionRate: config.commissionRate,
-    commission: round2(rawCommission),
-    commissionGst: round2(rawCommissionGst),
-    commissionTotal: round2(rawCommissionTotal),
+    commission,
+    commissionGst,
+    commissionTotal,
 
-    shipping: round2(rawShipping),
-    shippingGst: round2(rawShippingGst),
-    shippingTotal: round2(rawShippingTotal),
+    shipping,
+    shippingGst,
+    shippingTotal,
 
-    sellerPlatformFee: round2(rawSellerPlatformFee),
-    sellerPlatformFeeGst: round2(rawSellerPlatformFeeGst),
-    sellerPlatformTotal: round2(rawSellerPlatformTotal),
+    sellerPlatformFee,
+    sellerPlatformFeeGst,
+    sellerPlatformTotal,
 
     tdsRate: config.tdsRate,
-    tds: round2(rawTds),
+    tds,
 
     tcsRate: config.tcsRate,
-    tcs: round2(rawTcs),
+    tcs,
 
     successFeeRate: config.successFeeRate,
-    successFee: round2(rawSuccessFee),
-    successFeeGst: round2(rawSuccessFeeGst),
-    successFeeTotal: round2(rawSuccessFeeTotal),
+    successFee,
+    successFeeGst,
+    successFeeTotal,
 
-    customerPlatformFee: round2(rawCustomerPlatformFee),
-    customerPlatformFeeGst: round2(rawCustomerPlatformFeeGst),
-    customerPlatformTotal: round2(rawCustomerPlatformTotal),
-    customerTotalPayment: round2(rawCustomerTotalPayment),
+    customerPlatformFee,
+    customerPlatformFeeGst,
+    customerPlatformTotal,
+    customerTotalPayment,
 
-    totalSellerDeductions: round2(rawSellerDeductions),
-    sellerNetSettlement: Math.max(0, round2(rawSellerNet)),
+    totalSellerDeductions,
+    sellerNetSettlement,
 
-    cikkaFeeRevenue: round2(rawCikkaFeeRevenue),
-    cikkaGstCollected: round2(rawCikkaGstCollected),
+    cikkaFeeRevenue,
+    cikkaGstCollected,
   };
 }

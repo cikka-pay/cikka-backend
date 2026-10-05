@@ -102,11 +102,13 @@ export const razorpayRouteService = {
       contact_name: data.signatoryName || data.businessName || "Authorized Signatory",
       profile: {
         category: "ecommerce",
+        subcategory: "ecommerce_marketplace",
         addresses: {
           registered: {
-            street1: data.address?.line1 || "Business Address",
+            street1: data.address?.line1 || "Shop 12",
+            street2: "Main Market Road",
             city: data.address?.city || "Mumbai",
-            state: data.address?.state || "Maharashtra",
+            state: data.address?.state || "MAHARASHTRA",
             postal_code: data.address?.pincode || "400001",
             country: "IN",
           },
@@ -121,17 +123,9 @@ export const razorpayRouteService = {
       }
     }
 
-    if (data.bankAccountNumber && data.bankIfsc) {
-      payload.bank_account = {
-        ifsc_code: data.bankIfsc.trim().toUpperCase(),
-        account_number: data.bankAccountNumber.trim(),
-        beneficiary_name: data.bankAccountHolder || data.businessName,
-      };
-    }
-
     try {
       console.log(`[Razorpay Route] Creating linked account for seller ${data.sellerId} (${data.businessName})`);
-      const response = await axios.post(`${RAZORPAY_BASE_URL}/accounts`, payload, {
+      const response = await axios.post(`https://api.razorpay.com/v2/accounts`, payload, {
         headers,
         timeout: 15000,
       });

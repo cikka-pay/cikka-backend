@@ -118,10 +118,15 @@ export async function disburseSettlement(
     },
   });
 
-  // 2. If not found by settlement ID, check if identifier is a Seller ID
+  // 2. If not found by settlement ID, check if identifier is a Seller ID or Cikka Application ID (e.g. CKA029688)
   if (!settlement) {
-    const seller = await prisma.seller.findUnique({
-      where: { id: identifier },
+    let seller = await prisma.seller.findFirst({
+      where: {
+        OR: [
+          { id: identifier },
+          { onboarding: { applicationId: identifier } },
+        ],
+      },
       include: { onboarding: true },
     });
 
