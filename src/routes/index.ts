@@ -19,6 +19,7 @@ import settingsRoutes from "./settings.routes";
 
 import paymentRoutes from "./payment.routes";
 import shipwayRoutes from "./shipway.routes";
+import userAddressRoutes from "./user-address.routes";
 
 import hubbleRoutes from "./hubble.routes";
 import decentroRoutes from "./decentro.routes";
@@ -32,10 +33,13 @@ router.use("/admin", adminRoutes);
 router.use("/auth", authRoutes);
 router.use("/user-auth", userAuthRoutes);
 router.use("/customer-auth", userAuthRoutes); // Backward compatibility alias
+router.use("/user/address", userAddressRoutes);
+router.use("/user-address", userAddressRoutes);
 router.use("/setu/v1", setuRoutes);
 router.use("/bbps", bbpsRoutes);
 router.use("/kyc", instantpayRoutes);
 router.use("/instantpay", instantpayRoutes);
+router.use("/pan", instantpayRoutes);
 router.use("/hubble", hubbleRoutes);
 router.use("/hubble.sso", hubbleRoutes);
 router.use("/decentro", decentroRoutes);

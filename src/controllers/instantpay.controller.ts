@@ -20,9 +20,24 @@ export const verifyPan = asyncHandler(async (req: Request, res: Response) => {
 
   const result = await verifyPanService({ userId, pan });
 
+  if (!result.valid) {
+    const errorMsg =
+      result.status === "INSUFFICIENT_BALANCE"
+        ? "InstantPay Service balance low. Please try again later."
+        : `PAN Verification Failed: ${result.status || "Invalid PAN Card Number"}`;
+
+    res.status(400).json({
+      success: false,
+      message: errorMsg,
+      error: errorMsg,
+      data: result,
+    });
+    return;
+  }
+
   res.status(200).json({
     success: true,
-    message: result.valid ? "PAN verified successfully" : "PAN verification failed",
+    message: result.isDevBypass ? "⚡ PAN verified via Dev Bypass" : "PAN verified successfully",
     data: result,
   });
 });

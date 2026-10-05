@@ -3,9 +3,9 @@ import { HubbleService } from '../services/hubble.service';
 
 // In-memory store for user balances and transaction idempotency
 const userBalances: Record<string, number> = {
-  'cikka_9876543210': 8204.0,
-  '9876543210': 8204.0,
-  'partner_user_123': 1500.0,
+  'cikka_9876543210': 100000.0,
+  '9876543210': 100000.0,
+  'partner_user_123': 15000.0,
 };
 
 const debitTransactions: Record<string, any> = {};
@@ -69,7 +69,7 @@ export class HubbleController {
     try {
       const userId = (req.query.userId as string) || (req.query.user_id as string) || 'cikka_9876543210';
       
-      const balance = userBalances[userId] !== undefined ? userBalances[userId] : 8204.0;
+      const balance = userBalances[userId] !== undefined ? userBalances[userId] : 100000.0;
       userBalances[userId] = balance;
 
       res.status(200).json({
@@ -115,7 +115,7 @@ export class HubbleController {
         return;
       }
 
-      const currentBalance = userBalances[userId] !== undefined ? userBalances[userId] : 8204.0;
+      const currentBalance = userBalances[userId] !== undefined ? userBalances[userId] : 100000.0;
 
       if (currentBalance < coins) {
         res.status(200).json({
@@ -187,7 +187,7 @@ export class HubbleController {
       }
 
       const originalDebit = debitTransactions[referenceId];
-      const currentBalance = userBalances[userId] !== undefined ? userBalances[userId] : 8204.0;
+      const currentBalance = userBalances[userId] !== undefined ? userBalances[userId] : 100000.0;
       
       const coinsToRefund = originalDebit ? (originalDebit.coins || 0) : 0;
       const updatedBalance = currentBalance + coinsToRefund;

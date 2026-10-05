@@ -13,6 +13,8 @@ export interface InstantPayPanResult {
   registeredName?: string;
   category?: string;
   address?: string;
+  userGender?: string;
+  userDob?: string;
   status: string;
   rawResponse?: any;
 }

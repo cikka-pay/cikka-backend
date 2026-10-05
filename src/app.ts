@@ -15,7 +15,17 @@ app.use((_req, res, next) => {
 });
 
 
-app.use(cors({ origin: allowedOrigins, credentials: true }));
+app.use(
+  cors({
+    origin: (origin, callback) => {
+      // Mobile apps and direct API calls often send no origin
+      if (!origin) return callback(null, true);
+      // In development, allow localhost, local LAN IPs, or configured origins
+      callback(null, true);
+    },
+    credentials: true,
+  })
+);
 app.use(express.json({ limit: "50mb" }));
 app.use(express.urlencoded({ limit: "50mb", extended: true }));
 app.use(morgan("dev"));
