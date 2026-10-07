@@ -60,7 +60,13 @@ export const config = {
 
   // Shipway Experience API Config
   shipwayUsername: process.env.SHIPWAY_USERNAME,
-  shipwayLicenseKey: process.env.SHIPWAY_LICENSE_KEY
+  shipwayLicenseKey: process.env.SHIPWAY_LICENSE_KEY,
+
+  // Google Cloud Storage
+  gcsProjectId: process.env.GCS_PROJECT_ID,
+  gcsBucketName: process.env.GCS_BUCKET_NAME || "cikka-uploads-dev",
+  gcsKeyFile: process.env.GCS_KEY_FILE,
+  gcsSignedUrlExpiry: parseInt(process.env.GCS_SIGNED_URL_EXPIRY || "3600", 10),
 };
 
 

@@ -19,13 +19,13 @@ import {
   validateDomain,
 } from "../controllers/onboarding.controller";
 import { requireAuth } from "../middleware/auth.middleware";
-import multer from "multer";
+import { uploadLogo as uploadLogoMiddleware } from "../middleware/upload.middleware";
 
 const router = Router();
-const upload = multer({ dest: "/tmp/uploads/", limits: { fileSize: 2 * 1024 * 1024 } });
 
 // Domain & URL validator utility (open to onboarding users)
 router.post("/validate-domain", validateDomain);
+
 
 // All other onboarding endpoints require the user to be authenticated
 router.use(requireAuth);
@@ -55,7 +55,7 @@ router.post("/kyb/verify-bank", verifyBank);
 // Step 5: Brand & Logistics
 router.patch("/step/5", updateStep5);
 // Logo upload — multer parses multipart/form-data, populates req.file
-router.post("/upload/logo", upload.single("logo"), uploadLogo);
+router.post("/upload/logo", uploadLogoMiddleware, uploadLogo);
 
 
 // Step 6: Agreements
