@@ -31,12 +31,13 @@ export async function getSummary(sellerId: string, role: string = "ADMIN") {
   const lastWeekStart = new Date(weekStart);
   lastWeekStart.setDate(lastWeekStart.getDate() - 7);
 
-  const [netPayoutAgg, grossSalesThisWeek, grossSalesLastWeek, activeOrdersToPack, products, nextSettlement, commissionConfig, onboarding] =
+  const [netPayoutAgg, ordersCountThisWeek, grossSalesThisWeek, grossSalesLastWeek, activeOrdersToPack, products, nextSettlement, commissionConfig, onboarding] =
     await Promise.all([
       prisma.settlement.aggregate({
         where: { sellerId, status: "PENDING" },
         _sum: { netPayable: true },
       }),
+      prisma.order.count({ where: { sellerId, createdAt: { gte: weekStart, lt: now } } }),
       sumOrderTotals(sellerId, weekStart, now),
       sumOrderTotals(sellerId, lastWeekStart, weekStart),
       prisma.order.count({ where: { sellerId, status: "PENDING" } }),
@@ -58,13 +59,31 @@ export async function getSummary(sellerId: string, role: string = "ADMIN") {
 
   const isAdmin = role.toUpperCase() === "ADMIN" || role.toUpperCase() === "OWNER";
 
-  // Calculate Net Payout using exact formula / central calculator
-  let netPayout = Number(netPayoutAgg._sum.netPayable || 0);
+  // Calculate Net Payout deterministically from live captured credit card orders or settlements
+  let activeCategory = onboarding?.businessCategory;
+  if (!activeCategory && onboarding?.productCategories) {
+    if (Array.isArray(onboarding.productCategories) && onboarding.productCategories.length > 0) {
+      activeCategory = onboarding.productCategories[0] as string;
+    }
+  }
+  let commRate = 22.0;
+  if (activeCategory && commissionConfig?.categoryCommissions) {
+    const ratesMap = commissionConfig.categoryCommissions as Record<string, number>;
+    if (ratesMap[activeCategory] !== undefined) {
+      commRate = Number(ratesMap[activeCategory]);
+    }
+  }
 
-  if (netPayout === 0 && grossSalesThisWeek > 0) {
-    const defaultCommRate = 22.0;
-    const breakdown = calculateSettlementBreakdown(grossSalesThisWeek, { commissionRate: defaultCommRate });
+  let netPayout = 0;
+  if (grossSalesThisWeek > 0) {
+    const breakdown = calculateSettlementBreakdown(
+      grossSalesThisWeek,
+      { commissionRate: commRate },
+      Math.max(ordersCountThisWeek, 1)
+    );
     netPayout = breakdown.sellerNetSettlement;
+  } else {
+    netPayout = Number(netPayoutAgg._sum.netPayable || 0);
   }
 
   return {
@@ -76,7 +95,7 @@ export async function getSummary(sellerId: string, role: string = "ADMIN") {
     lowStockCount,
     settlementCycle: {
       type: "T+7",
-      nextPayoutDate: nextSettlement?.payoutDate ?? null,
+      nextPayoutDate: nextSettlement?.payoutDate ?? new Date(now.getTime() + 7 * 24 * 60 * 60 * 1000),
     },
   };
 }
@@ -162,12 +181,73 @@ export async function getSettlementBreakdown(sellerId: string, period: "week" | 
   const commissionRate = Number(latest?.commissionRate ?? defaultRate);
 
   const itemsSold = Number(orderItemsQuantityResult?._sum?.quantity || 0);
-  const totalProductsSold = itemsSold > 0 ? itemsSold : (ordersCount > 0 ? ordersCount : (settlementGross > 0 || ordersGross > 0 ? 3 : 0));
+  const totalProductsSold = ordersCount > 0 ? ordersCount : (itemsSold > 0 ? itemsSold : (settlementGross > 0 ? 3 : 0));
   const effectiveOrderCount = Math.max(totalProductsSold, 1);
 
   const isAdmin = role.toUpperCase() === "ADMIN" || role.toUpperCase() === "OWNER";
 
-  // Case 1: Settlement row(s) already exist for this seller in this period
+  // If live orders exist in this period, they are the primary source of truth for current sales
+  if (ordersGross > 0) {
+    const grossSales = ordersGross;
+    const customConfig: Partial<SettlementFeeConfig> = {
+      commissionRate,
+    };
+    if (commissionConfig?.flatOrderFee !== undefined) {
+      customConfig.sellerPlatformFee = Number(commissionConfig.flatOrderFee);
+    }
+
+    const breakdown = calculateSettlementBreakdown(grossSales, customConfig, effectiveOrderCount);
+
+    return {
+      period,
+      grossSales: breakdown.grossProductValue,
+      productsCount: totalProductsSold,
+      basePrice: breakdown.baseProductValue,
+      gstOnSale: breakdown.productGst,
+      commission: {
+        category: activeCategory,
+        rate: breakdown.commissionRate,
+        amount: isAdmin ? breakdown.commission : null,
+      },
+      commissionAmount: isAdmin ? breakdown.commission : null,
+      gstOnCommission: isAdmin ? breakdown.commissionGst : null,
+      commissionTotal: isAdmin ? breakdown.commissionTotal : null,
+      shippingFee: isAdmin ? breakdown.shipping : null,
+      gstOnShipping: isAdmin ? breakdown.shippingGst : null,
+      shippingTotal: isAdmin ? breakdown.shippingTotal : null,
+      tdsAmount: isAdmin ? breakdown.tds : null,
+      tcsAmount: isAdmin ? breakdown.tcs : null,
+      statutoryTaxes: {
+        total: isAdmin ? Number((breakdown.tds + breakdown.tcs).toFixed(2)) : null,
+        tds: isAdmin ? breakdown.tds : null,
+        tcs: isAdmin ? breakdown.tcs : null,
+      },
+      statutoryTaxAmount: isAdmin ? Number((breakdown.tds + breakdown.tcs).toFixed(2)) : null,
+      platformFee: isAdmin ? breakdown.sellerPlatformFee : null,
+      gstOnPlatformFee: isAdmin ? breakdown.sellerPlatformFeeGst : null,
+      sellerPlatformTotal: isAdmin ? breakdown.sellerPlatformTotal : null,
+      successFee: isAdmin ? breakdown.successFee : null,
+      gstOnSuccessFee: isAdmin ? breakdown.successFeeGst : null,
+      successFeeTotal: isAdmin ? breakdown.successFeeTotal : null,
+      otherCharges: {
+        total: isAdmin ? Number((breakdown.sellerPlatformTotal + breakdown.successFeeTotal).toFixed(2)) : null,
+        platformFee: isAdmin ? breakdown.sellerPlatformFee : null,
+        gstOnPlatformFee: isAdmin ? breakdown.sellerPlatformFeeGst : null,
+        successFee: isAdmin ? breakdown.successFee : null,
+        gstOnSuccessFee: isAdmin ? breakdown.successFeeGst : null,
+        ordersCount: totalProductsSold,
+        productsCount: totalProductsSold,
+        platformFeePerOrder: isAdmin ? (customConfig.sellerPlatformFee ?? 15) : null,
+        successFeeRate: breakdown.successFeeRate,
+      },
+      shippingGstAmount: isAdmin ? breakdown.shippingTotal : null,
+      totalDeductions: isAdmin ? breakdown.totalSellerDeductions : null,
+      netPayable: isAdmin ? breakdown.sellerNetSettlement : null,
+      isMasked: !isAdmin,
+    };
+  }
+
+  // Case 2: Historical/batch settlements exist with no active orders
   if (settlementGross > 0) {
     const grossSales = settlementGross;
     const basePrice = Number(latest?.basePrice || Number((grossSales / 1.18).toFixed(2)));
