@@ -1,15 +1,85 @@
 import { Request, Response } from "express";
+import dns from "dns/promises";
 import { prisma } from "../config/prisma";
 import { asyncHandler } from "../utils/asyncHandler";
 import * as onboardingService from "../services/onboarding.service";
 import { BUSINESS_TYPE_MAP, FULFILLMENT_TYPE_MAP, SETTLEMENT_CYCLE_MAP } from "../utils/enumMaps";
+import { sendSellerWaitlistEmail } from "../utils/resend";
+import { generateApplicationId } from "../services/auth.service";
+import { razorpayRouteService } from "../services/razorpayRoute.service";
+
 
 export const getOnboardingState = asyncHandler(async (req: Request, res: Response) => {
   const sellerId = req.seller!.id;
-  const onboarding = await prisma.sellerOnboarding.findUnique({
+  const seller = await prisma.seller.findUnique({
+    where: { id: sellerId },
+    include: {
+      onboarding: true,
+      agreementConfig: true,
+      commissionConfig: true,
+    },
+  });
+
+  if (!seller) {
+    res.status(404).json({ error: "Seller profile not found" });
+    return;
+  }
+
+  // Ensure seller onboarding record has a CKA029XXX formatted unique Cikka ID
+  let cikkaId = seller.onboarding?.applicationId;
+  if (seller.onboarding && (!cikkaId || !cikkaId.startsWith("CKA029"))) {
+    cikkaId = generateApplicationId();
+    await prisma.sellerOnboarding.update({
+      where: { sellerId: seller.id },
+      data: { applicationId: cikkaId },
+    }).catch(() => {});
+    seller.onboarding.applicationId = cikkaId;
+  }
+
+  res.json({
+    sellerId: seller.id,
+    email: seller.email,
+    businessName: seller.businessName,
+    onboardingStatus: seller.onboardingStatus,
+    kycVerified: seller.kycVerified,
+    applicationId: seller.onboarding?.applicationId || null,
+    submittedAt: seller.onboarding?.submittedAt || null,
+    onboarding: seller.onboarding,
+    agreementConfig: seller.agreementConfig,
+    commissionConfig: seller.commissionConfig,
+  });
+});
+
+export const getMerchantAgreement = asyncHandler(async (req: Request, res: Response) => {
+  const sellerId = req.seller!.id;
+
+  let agreement = await prisma.sellerAgreementConfig.findUnique({
     where: { sellerId },
   });
-  res.json({ onboarding });
+
+  if (!agreement) {
+    const seller = await prisma.seller.findUnique({
+      where: { id: sellerId },
+      include: { onboarding: true },
+    });
+
+    const companyName = seller?.onboarding?.businessName || seller?.businessName || "Merchant Company";
+
+    agreement = await prisma.sellerAgreementConfig.create({
+      data: {
+        sellerId,
+        version: "1.0",
+        status: "ACTIVE",
+        customText: `## Master Cikka Seller & Merchant Service Agreement\n\nThis Agreement is entered into between **Sorvantis Platforms Private Limited (Cikka)** and **${companyName}**.\n\n### 1. Verification & Compliance\nThe Merchant agrees to provide authentic GSTIN, PAN, and Bank details for verification.\n\n### 2. Settlement & Payouts\nSettlements shall be calculated net of applicable category commission rates and flat order handling fees.\n\n### 3. Return & Exchange Policy\nThe Merchant shall honor customer return policies within the stipulated window.`,
+        customClauses: [
+          { id: "c1", title: "Authenticity Guarantee", content: "Merchant warrants that all products supplied are 100% genuine and original.", isMandatory: true },
+          { id: "c2", title: "SLA Dispatch Window", content: "Merchant agrees to dispatch orders within committed windows.", isMandatory: true },
+        ],
+      },
+    });
+  }
+
+  res.json({ agreementConfig: agreement });
 });
 
 export const updateStep1 = asyncHandler(async (req: Request, res: Response) => {
@@ -31,9 +101,9 @@ export const updateStep1 = asyncHandler(async (req: Request, res: Response) => {
     where: { sellerId },
     data: {
       businessName: data.businessName,
-      // Map UI human-readable label → Prisma enum (e.g. "Private Limited (Pvt Ltd)" → PRIVATE_LIMITED)
+      // Map UI human-readable label → Prisma enum (e.g. "pvt_ltd" → PRIVATE_LIMITED)
       businessType: data.businessType ? BUSINESS_TYPE_MAP[data.businessType] ?? data.businessType : undefined,
-      yearEstablished: data.yearEstablished,
+      yearEstablished: data.yearEstablished ? Number(data.yearEstablished) : undefined,
       businessCategory: data.businessCategory,
       description: data.description,
       website: data.website,
@@ -100,6 +170,14 @@ export const updateStep3 = asyncHandler(async (req: Request, res: Response) => {
     },
   });
 
+  // Sync email to Seller record if provided
+  if (data.signatoryEmail && data.signatoryEmail.trim()) {
+    await prisma.seller.update({
+      where: { id: sellerId },
+      data: { email: data.signatoryEmail.trim() },
+    }).catch(() => {});
+  }
+
   res.json(onboarding);
 });
 
@@ -131,9 +209,26 @@ export const updateStep4 = asyncHandler(async (req: Request, res: Response) => {
       bankName: data.bankName,
       bankAccountNumber: data.bankAccountNumber,
       bankIfsc: data.bankIfsc,
+      bankVerified: data.bankVerified !== undefined ? Boolean(data.bankVerified) : true,
       completedSteps: 4,
     },
   });
+
+  // Auto-provision or update Razorpay Route linked account if bank details are valid
+  if (data.bankAccountNumber && data.bankIfsc) {
+    const seller = await prisma.seller.findUnique({ where: { id: sellerId } });
+    razorpayRouteService.createLinkedAccount({
+      sellerId,
+      businessName: seller?.businessName || onboarding.businessName || "Merchant Partner",
+      businessType: onboarding.businessType as any,
+      email: seller?.email || onboarding.signatoryEmail || "seller@cikka.club",
+      phone: seller?.phone || "9876543210",
+      signatoryName: onboarding.signatoryName || undefined,
+      bankAccountNumber: data.bankAccountNumber,
+      bankIfsc: data.bankIfsc,
+      bankAccountHolder: data.bankAccountHolder,
+    }).catch((err) => console.warn(`[Razorpay Route Step 4 Provisioning Notice] ${err.message}`));
+  }
 
   res.json(onboarding);
 });
@@ -149,14 +244,24 @@ export const updateStep5 = asyncHandler(async (req: Request, res: Response) => {
   const sellerId = req.seller!.id;
   const data = req.body;
 
+  const existingSeller = await prisma.seller.findUnique({
+    where: { id: sellerId },
+    include: { onboarding: true },
+  });
+
+  const existingId = existingSeller?.onboarding?.applicationId;
+  const appId = existingId && existingId.startsWith("CKA029")
+    ? existingId
+    : generateApplicationId();
+
   const onboarding = await prisma.sellerOnboarding.update({
     where: { sellerId },
     data: {
       logoUrl: data.logoUrl,
       productCategories: data.productCategories,
       returnPolicy: data.returnPolicy,
-      avgOrderValue: data.avgOrderValue,
-      monthlySalesTarget: data.monthlySalesTarget,
+      avgOrderValue: data.avgOrderValue ? Number(data.avgOrderValue) : undefined,
+      monthlySalesTarget: data.monthlySalesTarget ? Number(data.monthlySalesTarget) : undefined,
       // Map UI values → Prisma enums
       settlementCycle: data.settlementCycle
         ? SETTLEMENT_CYCLE_MAP[data.settlementCycle] ?? data.settlementCycle
@@ -166,10 +271,33 @@ export const updateStep5 = asyncHandler(async (req: Request, res: Response) => {
         : undefined,
       pickupAddress: data.pickupAddress,
       completedSteps: 5,
+      applicationId: appId,
+      submittedAt: existingSeller?.onboarding?.submittedAt || new Date(),
     },
   });
 
+  // Automatically transition onboardingStatus to SUBMITTED when Brand Step 5 is saved
+  await prisma.seller.update({
+    where: { id: sellerId },
+    data: {
+      onboardingStatus: "SUBMITTED",
+    },
+  });
+
+  // Dispatch Resend "Application Under Review" Email to Seller ONCE on initial submission
+  const isFirstSubmission = !existingSeller?.onboardingStatus || existingSeller.onboardingStatus === "INCOMPLETE";
+  if (isFirstSubmission) {
+    const recipientEmail = existingSeller?.email || onboarding?.signatoryEmail || data.signatoryEmail || process.env.RESEND_TEST_RECIPIENT || "vedantvyas79@gmail.com";
+    const recipientName = data.businessName || existingSeller?.businessName || onboarding?.signatoryName || "Partner";
+
+    sendSellerWaitlistEmail({
+      to: recipientEmail,
+      sellerName: recipientName,
+    }).catch((err) => console.error("Failed to send Application Under Review email via Resend:", err));
+  }
+
   res.json(onboarding);
+
 });
 
 export const uploadLogo = asyncHandler(async (req: Request, res: Response) => {
@@ -213,8 +341,8 @@ export const submitApplication = asyncHandler(async (req: Request, res: Response
   const sellerId = req.seller!.id;
   const onboarding = await prisma.sellerOnboarding.findUnique({ where: { sellerId } });
   
-  if (!onboarding || onboarding.completedSteps < 6) {
-    res.status(400).json({ error: "All steps must be completed before submission" });
+  if (!onboarding || onboarding.completedSteps < 5) {
+    res.status(400).json({ error: "Steps 1 to 5 must be completed before submission" });
     return;
   }
 
@@ -224,4 +352,167 @@ export const submitApplication = asyncHandler(async (req: Request, res: Response
     applicationId: result.applicationId,
     status: "SUBMITTED"
   });
+});
+
+export const validateDomain = asyncHandler(async (req: Request, res: Response) => {
+  const { url: inputUrl } = req.body;
+  if (!inputUrl || typeof inputUrl !== "string" || !inputUrl.trim()) {
+    res.status(400).json({ valid: false, message: "URL or domain is required" });
+    return;
+  }
+
+  const raw = inputUrl.trim();
+  let suggestion: string | null = null;
+
+  // 1. Check for protocol typos (e.g. htps://, htp://, https//, http//, http:/)
+  let workingUrl = raw;
+  if (/^ht{1,2}ps?:\/\/?/i.test(workingUrl) && !/^https?:\/\//i.test(workingUrl)) {
+    workingUrl = workingUrl.replace(/^ht{1,2}ps?:\/\/?/i, "https://");
+    suggestion = workingUrl;
+  } else if (/^ht{1,2}ps?\/\//i.test(workingUrl)) {
+    workingUrl = workingUrl.replace(/^ht{1,2}ps?\/\//i, "https://");
+    suggestion = workingUrl;
+  }
+
+  // 2. Check for comma typos (e.g. brand,com -> brand.com)
+  if (workingUrl.includes(",com") || workingUrl.includes(",in") || workingUrl.includes(",org") || workingUrl.includes(",net")) {
+    workingUrl = workingUrl.replace(/,(com|in|org|net|co)/gi, ".$1");
+    suggestion = workingUrl;
+  }
+
+  // 3. Normalize with https:// for URL parsing
+  let normalized = workingUrl;
+  if (!/^https?:\/\//i.test(normalized)) {
+    normalized = "https://" + normalized;
+  }
+
+  let hostname = "";
+  try {
+    const u = new URL(normalized);
+    hostname = u.hostname.toLowerCase();
+  } catch {
+    res.json({
+      valid: false,
+      hasTypo: false,
+      message: "Invalid URL or domain format",
+    });
+    return;
+  }
+
+  // 4. Common TLD and domain typos
+  const tldTypos: Record<string, string> = {
+    ".con": ".com",
+    ".cpm": ".com",
+    ".comm": ".com",
+    ".coom": ".com",
+    ".c0m": ".com",
+    ".cm": ".com",
+    ".cmo": ".com",
+    ".xom": ".com",
+    ".vom": ".com",
+    ".inn": ".in",
+    ".im": ".in",
+    ".og": ".org",
+    ".orgg": ".org",
+    ".nt": ".net",
+    ".nett": ".net",
+    ".co.inn": ".co.in",
+  };
+
+  for (const [bad, good] of Object.entries(tldTypos)) {
+    if (hostname.endsWith(bad)) {
+      const fixedHost = hostname.slice(0, -bad.length) + good;
+      suggestion = raw.replace(new RegExp(bad.replace(".", "\\.") + "(\\b|/|$)", "i"), good + "$1");
+      if (!/^https?:\/\//i.test(suggestion)) {
+        suggestion = "https://" + suggestion.replace(/^https?:\/\//i, "");
+      }
+      hostname = fixedHost;
+      break;
+    }
+  }
+
+  // If a typo was found, suggest it immediately
+  if (suggestion && suggestion.toLowerCase() !== raw.toLowerCase()) {
+    if (!/^https?:\/\//i.test(suggestion)) {
+      suggestion = "https://" + suggestion;
+    }
+    res.json({
+      valid: false,
+      hasTypo: true,
+      suggestion,
+      hostname,
+      message: `Possible typo detected. Did you mean ${suggestion}?`,
+    });
+    return;
+  }
+
+  // 5. Social media platform check
+  const isSocial = /^(www\.)?(instagram\.com|facebook\.com|fb\.com|linkedin\.com|twitter\.com|x\.com|youtube\.com|pinterest\.com|tiktok\.com)$/i.test(hostname);
+  if (isSocial) {
+    res.json({
+      valid: true,
+      reachable: true,
+      isSocial: true,
+      hostname,
+      normalizedUrl: normalized,
+      message: "Valid social media profile link",
+    });
+    return;
+  }
+
+  // 6. Domain structure check (must have valid extension)
+  if (!hostname.includes(".") || hostname.endsWith(".") || hostname.startsWith(".")) {
+    res.json({
+      valid: false,
+      hasTypo: false,
+      message: "Domain must include a valid extension (e.g. .com, .in, .co)",
+    });
+    return;
+  }
+
+  // 7. Check for spaces or invalid characters
+  if (/\s/.test(hostname) || !/^[a-z0-9.-]+$/i.test(hostname)) {
+    res.json({
+      valid: false,
+      hasTypo: false,
+      message: "Domain contains invalid characters or spaces",
+    });
+    return;
+  }
+
+  // 8. DNS lookup check with 2.5s timeout
+  try {
+    const lookupPromise = dns.lookup(hostname);
+    const timeoutPromise = new Promise((_, reject) =>
+      setTimeout(() => reject(new Error("DNS_TIMEOUT")), 2500)
+    );
+
+    const addresses: any = await Promise.race([lookupPromise, timeoutPromise]);
+    res.json({
+      valid: true,
+      reachable: true,
+      hostname,
+      ip: addresses?.address || undefined,
+      normalizedUrl: normalized,
+      message: "Domain is live & active",
+    });
+  } catch (err: any) {
+    if (err.code === "ENOTFOUND" || err.code === "EREFUSED") {
+      res.json({
+        valid: false,
+        reachable: false,
+        hostname,
+        message: `Domain "${hostname}" does not exist or has no active DNS records. Please check spelling.`,
+      });
+    } else {
+      // Timeout or other network quirks: don't strictly block seller if network is temporarily slow
+      res.json({
+        valid: true,
+        reachable: null,
+        hostname,
+        normalizedUrl: normalized,
+        message: "Domain format looks valid",
+      });
+    }
+  }
 });

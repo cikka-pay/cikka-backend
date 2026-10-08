@@ -30,20 +30,91 @@ async function wipeExisting() {
 async function main() {
   await wipeExisting();
 
-  const phone = "9999999999";
-  const plainPassword = generatePassword();
+  const phone = "+919999999999";
+  const plainPassword = "password123";
   const passwordHash = await bcrypt.hash(plainPassword, 10);
 
-  const seller = await prisma.seller.create({
+  const sneakerSeller = await prisma.seller.create({
     data: {
-      businessName: "Aura Vogue",
-      phone,
+      businessName: "Nike India Hub",
+      phone: "+919876543210",
+      phoneNumber: "9876543210",
+      countryCode: "91",
       passwordHash,
       kycVerified: true,
+      phoneVerified: true,
+      onboardingStatus: "VERIFIED",
+      onboarding: {
+        create: {
+          businessName: "Nike India Hub",
+          pickupAddress: {
+            line1: "DLF Cyber City, Sector 24",
+            city: "Gurgaon",
+            state: "Haryana",
+            pincode: "122008",
+          },
+          completedSteps: 6,
+        },
+      },
     },
   });
 
+  const linenSeller = await prisma.seller.create({
+    data: {
+      businessName: "Fabindia Lucknow Hub",
+      phone: "+919876543211",
+      phoneNumber: "9876543211",
+      countryCode: "91",
+      passwordHash,
+      kycVerified: true,
+      phoneVerified: true,
+      onboardingStatus: "VERIFIED",
+      onboarding: {
+        create: {
+          businessName: "Fabindia Lucknow Hub",
+          pickupAddress: {
+            line1: "Hazratganj Main Market",
+            city: "Lucknow",
+            state: "Uttar Pradesh",
+            pincode: "226005",
+          },
+          completedSteps: 6,
+        },
+      },
+    },
+  });
+
+  const seller = sneakerSeller;
+
   const products = await prisma.$transaction([
+    prisma.product.create({
+      data: {
+        sellerId: sneakerSeller.id,
+        name: "Sneakers Pro",
+        brandName: "Nike",
+        sku: "NK-SNK-122008",
+        category: "Footwear",
+        price: 4999.0,
+        mrp: 11999.0,
+        stockQty: 50,
+        lowStockThreshold: 5,
+        status: "ACTIVE",
+      },
+    }),
+    prisma.product.create({
+      data: {
+        sellerId: linenSeller.id,
+        name: "Linen Co-ord Set",
+        brandName: "Fabindia",
+        sku: "FB-LIN-226005",
+        category: "Apparel",
+        price: 3499.0,
+        mrp: 4199.0,
+        stockQty: 30,
+        lowStockThreshold: 5,
+        status: "ACTIVE",
+      },
+    }),
     prisma.product.create({
       data: {
         sellerId: seller.id,
@@ -65,30 +136,6 @@ async function main() {
         price: 899.0,
         stockQty: 0,
         lowStockThreshold: 5,
-        status: "ACTIVE",
-      },
-    }),
-    prisma.product.create({
-      data: {
-        sellerId: seller.id,
-        name: "Hydrating Face Mist",
-        sku: "MIST-HYD-100",
-        category: "Cosmetics",
-        price: 349.0,
-        stockQty: 5,
-        lowStockThreshold: 10,
-        status: "ACTIVE",
-      },
-    }),
-    prisma.product.create({
-      data: {
-        sellerId: seller.id,
-        name: "Charcoal Face Wash",
-        sku: "WASH-CHAR-150",
-        category: "Cosmetics",
-        price: 299.0,
-        stockQty: 42,
-        lowStockThreshold: 10,
         status: "ACTIVE",
       },
     }),
@@ -150,21 +197,41 @@ async function main() {
     },
   });
 
-  // This week's settlement (pending payout)
+  // This week's settlement (pending payout) — matching exact ₹4,999 -> ₹3,773.03 payout logic
+  const seedGrossSales = 4999.0;
+  const seedBasePrice = 4236.44;
+  const seedGstOnSale = 762.56;
+  const seedCommissionRate = 21.0;
+  const seedCommission = 889.65; // 21% of base price
+  const seedGstOnCommission = 160.14; // 18% of commission
+  const seedShippingFee = 150.0;
+  const seedTds = 5.0; // 0.1% TDS on Gross Price
+  const seedTcs = 21.18; // 0.5% TCS on Net Taxable Base Price
+  const seedTaxes = seedTds + seedTcs; // 26.18
+  const seedTotalDeductions = seedCommission + seedGstOnCommission + seedShippingFee + seedTaxes; // 1225.97
+  const seedNetPayable = seedGrossSales - seedTotalDeductions; // 3773.03
+
   await prisma.settlement.create({
     data: {
       sellerId: seller.id,
       periodStart: weekStart,
       periodEnd: now,
       category: "Cosmetics",
-      grossSales: 58400.0,
-      commissionRate: 15.0,
-      commissionAmount: 8760.0,
-      shippingGstAmount: 4409.0,
-      netPayable: 45231.0,
+      grossSales: seedGrossSales,
+      basePrice: seedBasePrice,
+      gstOnSale: seedGstOnSale,
+      commissionRate: seedCommissionRate,
+      commissionAmount: seedCommission,
+      gstOnCommission: seedGstOnCommission,
+      shippingFee: seedShippingFee,
+      tdsAmount: seedTds,
+      tcsAmount: seedTcs,
+      statutoryTaxes: seedTaxes,
+      shippingGstAmount: seedGstOnCommission + seedShippingFee + seedTaxes,
+      netPayable: seedNetPayable,
       status: "PENDING",
       payoutDate: new Date(now.getFullYear(), now.getMonth(), 24),
-    },
+    } as any,
   });
 
   console.log("Seed complete.\n");

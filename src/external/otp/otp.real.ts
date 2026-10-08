@@ -111,7 +111,60 @@ export const otpReal: OtpService = {
   OTP   : ${code}
 ==================================================
 `);
+
+    const apiKey = process.env.RESEND_API_KEY;
+    const fromEmail = process.env.RESEND_FROM_EMAIL || "onboarding@resend.dev";
+
+    if (!apiKey || apiKey === "re_123456789" || apiKey.trim() === "") {
+      console.log(`[Resend OTP Mock Mode] Skipping live API call (No RESEND_API_KEY configured)`);
+      return;
+    }
+
+    const ownerEmail = process.env.RESEND_TEST_RECIPIENT || "vedantvyas79@gmail.com";
+    let targetTo = email;
+
+    if (fromEmail.includes("resend.dev") && targetTo.toLowerCase() !== ownerEmail.toLowerCase()) {
+      console.log(`[Resend OTP Test Mode] Redirecting OTP recipient ${targetTo} -> ${ownerEmail} (Resend test domain requirement)`);
+      targetTo = ownerEmail;
+    }
+
+    try {
+      const response = await fetch("https://api.resend.com/emails", {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${apiKey}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          from: `Cikka Auth <${fromEmail}>`,
+          to: [targetTo],
+          subject: `Your Cikka Verification Code: ${code}`,
+          html: `
+
+<div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; max-width: 480px; margin: 0 auto; padding: 32px 24px; background: #07040b; color: #ffffff; border-radius: 16px; border: 1px solid #27272a;">
+  <div style="color: #c084fc; font-size: 11px; font-weight: 800; letter-spacing: 1.5px; text-transform: uppercase; margin-bottom: 12px;">CIKKA SECURITY</div>
+  <h2 style="color: #ffffff; font-size: 20px; font-weight: 700; margin: 0 0 8px 0;">Verify Your Email Address</h2>
+  <p style="color: #a1a1aa; font-size: 14px; line-height: 1.5; margin: 0 0 24px 0;">Use the following 6-digit verification code to complete your setup:</p>
+  <div style="background: #181226; border: 1px solid #7e22ce; font-size: 32px; font-weight: 800; letter-spacing: 8px; color: #e9d5ff; padding: 18px; text-align: center; border-radius: 12px; margin-bottom: 24px;">
+    ${code}
+  </div>
+  <p style="color: #71717a; font-size: 12px; margin: 0;">This code will expire in 10 minutes. If you did not request this, please ignore this email.</p>
+</div>
+          `.trim(),
+        }),
+      });
+
+      const resData = (await response.json().catch(() => ({}))) as { id?: string; message?: string };
+      if (response.ok) {
+        console.log(`[Resend OTP Email Success] Dispatched OTP ${code} to ${email} (Resend ID: ${resData.id})`);
+      } else {
+        console.error(`[Resend OTP Email Error] Delivery failed:`, resData);
+      }
+    } catch (err) {
+      console.error(`[Resend OTP Exception] Failed to send email to ${email}:`, err);
+    }
   },
 };
+
 
 

@@ -26,6 +26,8 @@ export const instantpayStub: InstantPayClient = {
       pan: formattedPan,
       registeredName,
       category: "INDIVIDUAL",
+      userGender: "M",
+      userDob: "XX7",
       address: "123, Civil Lines, Jaipur, Rajasthan - 302001",
       status: "VALID",
       rawResponse: {

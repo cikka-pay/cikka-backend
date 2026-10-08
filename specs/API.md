@@ -169,6 +169,22 @@ curl -X POST http://localhost:4000/api/products \
 
 ---
 
+### 11. Hubble Money Gift Cards & Coupons (`/hubble`)
+
+| Method | Endpoint | Auth | Description |
+|---|---|---|---|
+| GET | `/hubble/brands` | No | Discover 400+ partner brands/coupons (Live REST API) |
+| GET | `/hubble/brands/:id` | No | Get brand & voucher details by product ID |
+| POST | `/hubble/orders` | Optional | Purchase/generate gift card vouchers via Hubble Partner API |
+| GET | `/hubble/wallet` | No | Check partner wallet balance |
+| GET | `/hubble/status` | No | Integration status (Mock vs Live REST API) |
+| POST | `/hubble/sso-token` | Optional | Generate Hubble SSO token & embed URL |
+| GET | `/hubble/balance` | No | CI Points balance query hook for Hubble |
+| POST | `/hubble/debit` | No | Debit CI Points hook for Hubble |
+| POST | `/hubble/reverse` | No | Reverse CI Points hook for Hubble |
+
+---
+
 ## Error Responses
 
 All API errors follow a standard envelope:

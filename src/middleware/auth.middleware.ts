@@ -2,8 +2,10 @@ import { Request, Response, NextFunction } from "express";
 import { verifySellerToken, verifyUserToken } from "../utils/jwt";
 import { AUTH_ERRORS } from "../constants/errors";
 
-// Verifies the seller JWT on protected seller routes and attaches `req.seller = { id }`.
-export function requireSellerAuth(req: Request, res: Response, next: NextFunction): void {
+import { prisma } from "../config/prisma";
+
+// Verifies the seller JWT on protected seller routes and attaches `req.seller = { id, teamMemberId, role }`.
+export async function requireSellerAuth(req: Request, res: Response, next: NextFunction): Promise<void> {
   const header = req.headers.authorization || "";
   const [scheme, token] = header.split(" ");
 
@@ -14,11 +16,57 @@ export function requireSellerAuth(req: Request, res: Response, next: NextFunctio
 
   try {
     const payload = verifySellerToken(token);
-    req.seller = { id: payload.sub as string };
+    let role = "ADMIN";
+
+    const sellerId = typeof payload.sub === "object" && payload.sub !== null
+      ? ((payload.sub as any).id || String(payload.sub))
+      : (payload.sub as string);
+
+    if (payload.teamMemberId) {
+      const teamMember = await prisma.teamMember.findUnique({
+        where: { id: payload.teamMemberId },
+      });
+      if (!teamMember || teamMember.sellerId !== sellerId || teamMember.status !== "ACTIVE") {
+        res.status(403).json({ error: "Access revoked or invalid team membership" });
+        return;
+      }
+      role = teamMember.role.toUpperCase();
+    }
+
+    req.seller = { 
+      id: sellerId,
+      teamMemberId: payload.teamMemberId as string | undefined,
+      role: role
+    };
     next();
   } catch (err: any) {
     res.status(401).json({ error: err.message || AUTH_ERRORS.INVALID_SELLER_TOKEN });
   }
+}
+
+// Enforces role-based permissions on seller endpoints
+export function requireRole(allowedRoles: string[]) {
+  return (req: Request, res: Response, next: NextFunction): void => {
+    if (!req.seller) {
+      res.status(401).json({ success: false, error: AUTH_ERRORS.UNAUTHORIZED });
+      return;
+    }
+    const userRole = (req.seller.role || "ADMIN").toUpperCase();
+    const normalizedAllowed = allowedRoles.map((r) => r.toUpperCase());
+
+    const isAllowed =
+      normalizedAllowed.includes(userRole) ||
+      (normalizedAllowed.includes("ADMIN") && (userRole === "OWNER" || userRole === "ADMIN"));
+
+    if (!isAllowed) {
+      res.status(403).json({
+        success: false,
+        error: `Access denied. Only ${allowedRoles.join(", ")} role can perform this action.`,
+      });
+      return;
+    }
+    next();
+  };
 }
 
 // Alias for backward compatibility with existing seller routes
@@ -74,13 +122,24 @@ export function requireAnyAuth(req: Request, res: Response, next: NextFunction):
 
   try {
     const payload = verifySellerToken(token);
-    req.seller = { id: payload.sub as string };
+    const sellerId = typeof payload.sub === "object" && payload.sub !== null
+      ? ((payload.sub as any).id || String(payload.sub))
+      : (payload.sub as string);
+
+    req.seller = { 
+      id: sellerId,
+      teamMemberId: payload.teamMemberId as string | undefined
+    };
     next();
     return;
   } catch (_err) {
     try {
       const payload = verifyUserToken(token);
-      req.user = { id: payload.sub as string };
+      const userId = typeof payload.sub === "object" && payload.sub !== null
+        ? ((payload.sub as any).id || String(payload.sub))
+        : (payload.sub as string);
+
+      req.user = { id: userId };
       next();
       return;
     } catch (_err2) {

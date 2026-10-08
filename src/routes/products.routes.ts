@@ -12,11 +12,15 @@ import { validate } from "../middleware/validate.middleware";
 
 const router = Router();
 
-// Zod schemas
+const statusEnum = z.preprocess(
+  (v) => (typeof v === "string" ? v.toUpperCase() : v),
+  z.enum(["DRAFT", "ACTIVE", "INACTIVE", "OUT_OF_STOCK"])
+).optional();
+
 const productQuerySchema = z.object({
   page: z.string().optional(),
   limit: z.string().optional(),
-  status: z.enum(["DRAFT", "ACTIVE", "INACTIVE", "OUT_OF_STOCK"]).optional(),
+  status: statusEnum,
   category: z.string().optional(),
   q: z.string().optional(),
 });
@@ -45,9 +49,9 @@ const createProductSchema = z.object({
   dimHeightCm: z.number().positive().optional(),
   fulfillmentType: z.enum(["SELF", "THREE_PL", "CIKKA"]).optional(),
   dispatchDays: z.string().optional(),
-  imageUrls: z.array(z.string().url()).optional(),
-  videoUrl: z.string().url().optional(),
-  status: z.enum(["DRAFT", "ACTIVE", "INACTIVE", "OUT_OF_STOCK"]).optional(),
+  imageUrls: z.array(z.string()).optional(),
+  videoUrl: z.string().optional(),
+  status: statusEnum,
   variants: z.array(variantSchema).optional(),
 });
 
@@ -58,11 +62,15 @@ const updateVariantSchema = z.object({
   price: z.number().positive().optional(),
 });
 
+import { requireRole } from "../middleware/auth.middleware";
+
 router.get("/", validate({ query: productQuerySchema }), listProducts);
 router.get("/:id", getProduct);
-router.post("/", validate({ body: createProductSchema }), createProduct);
-router.patch("/:id", validate({ body: updateProductSchema }), updateProduct);
-router.patch("/:id/variants/:variantId", validate({ body: updateVariantSchema }), updateVariant);
-router.delete("/:id", deleteProduct);
+
+// Creation and modification allowed for ADMIN and EXECUTIVE, Viewer is read-only
+router.post("/", requireRole(["ADMIN", "EXECUTIVE"]), validate({ body: createProductSchema }), createProduct);
+router.patch("/:id", requireRole(["ADMIN", "EXECUTIVE"]), validate({ body: updateProductSchema }), updateProduct);
+router.patch("/:id/variants/:variantId", requireRole(["ADMIN", "EXECUTIVE"]), validate({ body: updateVariantSchema }), updateVariant);
+router.delete("/:id", requireRole(["ADMIN", "EXECUTIVE"]), deleteProduct);
 
 export default router;

@@ -26,8 +26,9 @@ export function validate(schemas: ValidateSchemas) {
       next();
     } catch (err) {
       if (err instanceof ZodError) {
+        const firstIssue = err.issues[0];
         res.status(400).json({
-          error: "Validation failed",
+          error: firstIssue ? firstIssue.message : "Validation failed",
           details: err.issues.map((e: any) => ({
             field: e.path.join("."),
             message: e.message,

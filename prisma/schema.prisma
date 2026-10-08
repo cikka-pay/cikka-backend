@@ -50,9 +50,11 @@ enum ReturnStatus {
 
 enum ProductStatus {
   DRAFT
+  PENDING_APPROVAL
   ACTIVE
   INACTIVE
   OUT_OF_STOCK
+  REJECTED
 }
 
 enum NotificationType {
@@ -114,16 +116,23 @@ model Seller {
   resetOtpCode      String?
   resetOtpExpiresAt DateTime?
 
+  // Razorpay Route Sub-merchant Linked Account
+  razorpayAccountId     String?           @unique
+  razorpayAccountStatus String?           @default("NOT_CREATED")
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
   // Relations
-  onboarding    SellerOnboarding?
-  products      Product[]
-  orders        Order[]
-  settlements   Settlement[]
-  notifications Notification[]
-  settings      SellerSettings?
+  onboarding       SellerOnboarding?
+  products         Product[]
+  orders           Order[]
+  settlements      Settlement[]
+  notifications    Notification[]
+  settings         SellerSettings?
+  commissionConfig SellerCommissionConfig?
+  agreementConfig  SellerAgreementConfig?
+  teamMembers      TeamMember[]
 
   @@map("sellers")
 }
@@ -198,12 +207,20 @@ model SellerOnboarding {
   digitalSignature           String?   // Typed name
   agreementAcceptedAt        DateTime?
 
-  // ---------- Application tracking ----------
-  applicationId  String?   @unique  // CKA-YYYY-NNNNN (sequential)
-  submittedAt    DateTime?
+  // ---------- Application tracking & Verification Notes ----------
+  applicationId     String?   @unique  // CKA-YYYY-NNNNN (sequential)
+  submittedAt       DateTime?
+  missingDocuments  Json?     // Array of missing document alerts: [{ key, title, reason, requestedAt, resolved }]
+  verificationNotes String?   // Admin internal review notes
+  reviewedBy        String?   // Admin identifier who reviewed
+  reviewedAt        DateTime?
 
   // Step completion tracking (1–6)
   completedSteps Int @default(0)
+
+  // Razorpay Route Linked Account
+  razorpayAccountId     String?
+  razorpayAccountStatus String?   @default("NOT_CREATED")
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -377,20 +394,77 @@ model Settlement {
 
   periodStart       DateTime
   periodEnd         DateTime
-  category          String           @default("Cosmetics")
-  grossSales        Decimal          @db.Decimal(10, 2)
-  commissionRate    Decimal          @db.Decimal(5, 2)   // e.g. 15.00 = 15%
+  category          String           @default("General")
+
+  // 1. Order Input
+  grossSales        Decimal          @db.Decimal(10, 2)  // Gross Product Value (GST-inclusive)
+  basePrice         Decimal?         @default(0.00) @db.Decimal(10, 2)  // Base Product Value (Gross ÷ 1.18)
+  gstOnSale         Decimal?         @default(0.00) @db.Decimal(10, 2)  // Product GST (Gross - Base)
+
+  // 2. Commission (22% on Base)
+  commissionRate    Decimal          @default(22.00) @db.Decimal(5, 2)
   commissionAmount  Decimal          @db.Decimal(10, 2)
-  shippingGstAmount Decimal          @db.Decimal(10, 2)
-  netPayable        Decimal          @db.Decimal(10, 2)
+  gstOnCommission   Decimal?         @default(0.00) @db.Decimal(10, 2)  // 18% GST on Commission
+  commissionTotal   Decimal?         @default(0.00) @db.Decimal(10, 2)  // Commission + GST
+
+  // 3. Shipping (Fixed ₹55 + ₹9.90 GST = ₹64.90)
+  shippingFee       Decimal?         @default(55.00) @db.Decimal(10, 2)
+  shippingGst       Decimal?         @default(9.90) @db.Decimal(10, 2)
+  shippingTotal     Decimal?         @default(64.90) @db.Decimal(10, 2)
+
+  // 4. Seller Platform Fee (Fixed ₹15 + ₹2.70 GST = ₹17.70)
+  sellerPlatformFee    Decimal?      @default(15.00) @db.Decimal(10, 2)
+  sellerPlatformFeeGst Decimal?      @default(2.70) @db.Decimal(10, 2)
+  sellerPlatformTotal  Decimal?      @default(17.70) @db.Decimal(10, 2)
+
+  // 5. Statutory Taxes
+  tdsAmount         Decimal?         @default(0.00) @db.Decimal(10, 2)  // 0.1% TDS on Gross
+  tcsAmount         Decimal?         @default(0.00) @db.Decimal(10, 2)  // 0.5% TCS on Base
+  statutoryTaxes    Decimal?         @default(0.00) @db.Decimal(10, 2)  // TDS + TCS
+
+  // 6. Success Fee (2% on Gross + 18% GST = 2.36% on Gross)
+  successFeeAmount  Decimal?         @default(0.00) @db.Decimal(10, 2)
+  successFeeGst     Decimal?         @default(0.00) @db.Decimal(10, 2)
+  successFeeTotal   Decimal?         @default(0.00) @db.Decimal(10, 2)
+
+  // 7. Customer Platform Fee (₹9.99 + ₹1.80 GST = ₹11.79)
+  customerPlatformFee    Decimal?    @default(9.99) @db.Decimal(10, 2)
+  customerPlatformFeeGst Decimal?    @default(1.80) @db.Decimal(10, 2)
+  customerPlatformTotal  Decimal?    @default(11.79) @db.Decimal(10, 2)
+  customerTotalPayment   Decimal?    @default(0.00) @db.Decimal(10, 2)
+
+  // 8. Cikka Revenue Accounting (BEFORE GST) & GST Liability
+  cikkaFeeRevenue    Decimal?        @default(0.00) @db.Decimal(10, 2)  // Commission + Seller Platform + Success Fee + Customer Platform
+  cikkaGstCollected  Decimal?        @default(0.00) @db.Decimal(10, 2)  // Total GST on all Cikka fees
+
+  // 9. Seller Settlement Payout (from Base Product Value)
+  totalDeductions   Decimal?         @default(0.00) @db.Decimal(10, 2)
+  shippingGstAmount Decimal          @default(0.00) @db.Decimal(10, 2)  // Legacy backward-compat field
+  netPayable        Decimal          @db.Decimal(10, 2)  // seller_net_settlement
   status            SettlementStatus @default(PENDING)
   payoutDate        DateTime?
+
+  // 10. Complete Deterministic JSON Ledger Snapshot
+  ledgerBreakdown   Json?
+
+  // 11. Razorpay Route Marketplace Split & T+7 Settlement Disbursal Tracking
+  razorpayTransferId String?          @unique
+  razorpayPaymentId  String?
+  holdUntil          DateTime?        // Exact T+7 auto-release timestamp
+  transferStatus     String?          @default("PENDING") // PENDING | ON_HOLD | SETTLED | REVERSED | FAILED
+  decentroTxnId     String?          @unique
+  decentroUrn       String?
+  utr               String?
+  failureReason     String?
+  disbursedAt       DateTime?
 
   createdAt         DateTime         @default(now())
   updatedAt         DateTime         @updatedAt
 
   @@index([sellerId, periodStart])
   @@index([sellerId, status])
+  @@index([razorpayTransferId])
+  @@index([decentroTxnId])
   @@map("settlements")
 }
 
@@ -462,11 +536,36 @@ model User {
   email         String?  @unique
   phoneVerified Boolean  @default(false)
 
+  addresses     UserAddress[]
+
   createdAt     DateTime @default(now())
   updatedAt     DateTime @updatedAt
 
   @@map("users")
 }
+
+model UserAddress {
+  id        String   @id @default(uuid())
+  userId    String?
+  user      User?    @relation(fields: [userId], references: [id], onDelete: Cascade)
+  name      String
+  phone     String
+  houseNo   String?
+  street    String?
+  landmark  String?
+  city      String
+  state     String?
+  pincode   String
+  isDefault Boolean  @default(true)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([userId])
+  @@index([pincode])
+  @@map("user_addresses")
+}
+
 
 // ============================================================
 // PAYMENT TRANSACTION — Setu Payment & Refund Ledger
@@ -745,6 +844,94 @@ model BankAccountVerificationRecord {
   @@index([userId])
   @@map("bank_account_verification_records")
 }
+
+// ============================================================
+// ADMIN USER — Confidential Seller Admin Users & Roles
+// ============================================================
+
+model AdminUser {
+  id           String   @id @default(uuid())
+  email        String   @unique
+  passwordHash String
+  name         String
+  role         String   @default("COMPLIANCE_OFFICER") // SUPER_ADMIN | ONBOARDING_VERIFIER | COMPLIANCE_OFFICER
+  isActive     Boolean  @default(true)
+
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  @@map("admin_users")
+}
+
+// ============================================================
+// SELLER COMMISSION CONFIG — Company-Specific Commission Rates
+// ============================================================
+
+model SellerCommissionConfig {
+  id                 String          @id @default(uuid())
+  sellerId           String          @unique
+  seller             Seller          @relation(fields: [sellerId], references: [id], onDelete: Cascade)
+
+  flatOrderFee       Decimal         @default(15.00) @db.Decimal(10, 2)
+  categoryCommissions Json           // JSON object e.g. { "Fashion": 12.5, "Cosmetics": 10, "Electronics": 8 }
+  settlementCycle    SettlementCycle @default(T_PLUS_7)
+  effectiveFrom      DateTime        @default(now())
+  notes              String?
+
+  createdAt          DateTime        @default(now())
+  updatedAt          DateTime        @updatedAt
+
+  @@map("seller_commission_configs")
+}
+
+// ============================================================
+// SELLER AGREEMENT CONFIG — Company-Specific Merchant Agreements
+// ============================================================
+
+model SellerAgreementConfig {
+  id            String    @id @default(uuid())
+  sellerId      String    @unique
+  seller        Seller    @relation(fields: [sellerId], references: [id], onDelete: Cascade)
+
+  customText    String?   // Custom agreement contract text / Markdown
+  customClauses Json?     // Customized clauses array: [{ title, content, isMandatory }]
+  version       String    @default("1.0")
+  status        String    @default("ACTIVE") // DRAFT | SENT | ACCEPTED | REJECTED | ACTIVE
+  signedAt      DateTime?
+
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+
+  @@map("seller_agreement_configs")
+}
+
+// ============================================================
+// TEAM MEMBER - Access control for Seller Dashboards
+// ============================================================
+
+model TeamMember {
+  id          String   @id @default(uuid())
+  sellerId    String
+  seller      Seller   @relation(fields: [sellerId], references: [id], onDelete: Cascade)
+  
+  name        String
+  phone       String
+  email       String?
+  role        String   // ADMIN | EXECUTIVE | VIEWER
+  status      String   @default("INVITED") // INVITED | ACTIVE
+  
+  // OTP state for inviting/login
+  phoneOtpCode      String?
+  phoneOtpExpiresAt DateTime?
+
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  
+  @@unique([sellerId, phone])
+  @@map("team_members")
+}
+
+
 
 
 

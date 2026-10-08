@@ -53,9 +53,14 @@ export const config = {
   msg91AuthKey: process.env.MSG91_AUTH_KEY,
   msg91TemplateId: process.env.MSG91_TEMPLATE_ID,
 
-  // Razorpay Gateway Config
+  // Razorpay Gateway & Route Config
   razorpayKeyId: process.env.RAZORPAY_KEY_ID,
   razorpayKeySecret: process.env.RAZORPAY_KEY_SECRET,
+  razorpayWebhookSecret: process.env.RAZORPAY_WEBHOOK_SECRET || "cikka_route_prod_secret_2026",
+
+  // Shipway Experience API Config
+  shipwayUsername: process.env.SHIPWAY_USERNAME,
+  shipwayLicenseKey: process.env.SHIPWAY_LICENSE_KEY,
 
   // Google Cloud Storage
   gcsProjectId: process.env.GCS_PROJECT_ID,
@@ -63,4 +68,5 @@ export const config = {
   gcsKeyFile: process.env.GCS_KEY_FILE,
   gcsSignedUrlExpiry: parseInt(process.env.GCS_SIGNED_URL_EXPIRY || "3600", 10),
 };
+
 

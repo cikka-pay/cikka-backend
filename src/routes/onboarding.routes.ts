@@ -1,6 +1,7 @@
 import { Router } from "express";
 import {
   getOnboardingState,
+  getMerchantAgreement,
   updateStep1,
   updateStep2,
   verifyGst,
@@ -15,16 +16,22 @@ import {
   uploadLogo,
   updateStep6,
   submitApplication,
+  validateDomain,
 } from "../controllers/onboarding.controller";
 import { requireAuth } from "../middleware/auth.middleware";
 import { uploadLogo as uploadLogoMiddleware } from "../middleware/upload.middleware";
 
 const router = Router();
 
-// All onboarding endpoints require the user to be authenticated
+// Domain & URL validator utility (open to onboarding users)
+router.post("/validate-domain", validateDomain);
+
+
+// All other onboarding endpoints require the user to be authenticated
 router.use(requireAuth);
 
 router.get("/", getOnboardingState);
+router.get("/agreement", getMerchantAgreement);
 router.post("/submit", submitApplication);
 
 // Step 1: Business Info

@@ -7,7 +7,7 @@ export const getSummary = asyncHandler(async (req, res) => {
     res.status(401).json({ error: AUTH_ERRORS.UNAUTHORIZED });
     return;
   }
-  const summary = await dashboardService.getSummary(req.seller.id);
+  const summary = await dashboardService.getSummary(req.seller.id, req.seller.role);
   res.json(summary);
 });
 
@@ -17,7 +17,7 @@ export const getSettlementBreakdown = asyncHandler(async (req, res) => {
     return;
   }
   const period = req.query.period === "month" ? "month" : "week";
-  const breakdown = await dashboardService.getSettlementBreakdown(req.seller.id, period);
+  const breakdown = await dashboardService.getSettlementBreakdown(req.seller.id, period, req.seller.role);
   res.json(breakdown);
 });
 

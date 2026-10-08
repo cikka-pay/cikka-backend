@@ -9,6 +9,7 @@
     "start": "node dist/server.js",
     "build": "tsc",
     "seed": "tsx prisma/seed.ts",
+    "test": "vitest run",
     "create-seller": "tsx scripts/create-seller.ts",
     "prisma:studio": "prisma studio",
     "prisma:migrate": "prisma migrate dev",
@@ -26,6 +27,7 @@
     "morgan": "^1.10.0",
     "multer": "^2.2.0",
     "razorpay": "^2.9.8",
+    "resend": "^6.28.1",
     "zod": "^4.4.3"
   },
   "devDependencies": {

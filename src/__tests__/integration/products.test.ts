@@ -111,12 +111,12 @@ describe("Products API", () => {
       expect(Number(res.body.price)).toBe(200);
     });
 
-    it("Should soft delete product", async () => {
+    it("Should delete product", async () => {
       const res = await request(app).delete(`/api/products/${productId}`).set("Authorization", `Bearer ${token}`);
       expect(res.status).toBe(200);
 
       const dbProd = await prisma.product.findUnique({ where: { id: productId } });
-      expect(dbProd?.status).toBe("INACTIVE");
+      expect(dbProd).toBeNull();
     });
   });
 

@@ -63,7 +63,10 @@ describe("Dashboard API", () => {
         grossSales: 500,
         commissionRate: 10,
         commissionAmount: 50,
-        shippingGstAmount: 10,
+        shippingFee: 55,
+        shippingGst: 9.90,
+        shippingTotal: 64.90,
+        shippingGstAmount: 64.90,
         netPayable: 440,
         status: "PENDING",
         payoutDate: new Date("2023-01-15T00:00:00Z"),
@@ -98,7 +101,7 @@ describe("Dashboard API", () => {
       expect(res.body.period).toBe("month");
       expect(res.body.grossSales).toBe(500);
       expect(res.body.commission.amount).toBe(50);
-      expect(res.body.shippingGstAmount).toBe(10);
+      expect(res.body.shippingGstAmount).toBe(64.90);
       expect(res.body.netPayable).toBe(440);
     });
   });

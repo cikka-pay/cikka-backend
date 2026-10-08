@@ -17,5 +17,5 @@
     "sourceMap": true
   },
   "include": ["src/**/*"],
-  "exclude": ["node_modules", "dist", "prisma", "scripts"]
+  "exclude": ["node_modules", "dist", "prisma", "scripts", "src/__tests__"]
 }

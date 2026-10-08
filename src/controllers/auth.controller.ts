@@ -22,6 +22,12 @@ export const signupSendPhoneOtp = asyncHandler(async (req: Request, res: Respons
     return;
   }
 
+  const existingTeamMember = await prisma.teamMember.findFirst({ where: { phone, status: "ACTIVE" } });
+  if (existingTeamMember) {
+    res.status(400).json({ success: false, error: "This mobile number is registered as a team member. Please use the Sign In page to access your team dashboard." });
+    return;
+  }
+
   const otp = generateOtp(6);
   const expiresAt = new Date(Date.now() + 10 * 60 * 1000); // 10 mins
 
@@ -82,7 +88,7 @@ export const signupSendEmailOtp = asyncHandler(async (req: Request, res: Respons
 
   const existingEmailSeller = await prisma.seller.findUnique({ where: { email } });
   if (existingEmailSeller && existingEmailSeller.id !== sellerId) {
-    res.status(400).json({ success: false, error: "Email already in use by another account" });
+    res.status(400).json({ success: false, error: "Please use signin instead" });
     return;
   }
 
@@ -164,7 +170,12 @@ export const signupSetPassword = asyncHandler(async (req: Request, res: Response
       countryCode: updatedSeller.countryCode,
       phoneNumber: updatedSeller.phoneNumber,
       email: updatedSeller.email,
+      businessName: updatedSeller.businessName,
+      kycVerified: updatedSeller.kycVerified,
       onboardingStatus: updatedSeller.onboardingStatus,
+      merchantAgreementAccepted: false,
+      agreementAccepted: false,
+      role: "ADMIN",
     },
   });
 });
@@ -178,7 +189,9 @@ export const signinSendOtp = asyncHandler(async (req: Request, res: Response) =>
   const { phone, countryCode, phoneNumber } = normalizePhone(phoneRaw);
 
   const seller = await prisma.seller.findUnique({ where: { phone } });
-  if (!seller) {
+  const teamMember = await prisma.teamMember.findFirst({ where: { phone, status: "ACTIVE" } });
+
+  if (!seller && !teamMember) {
     res.status(404).json({ success: false, error: AUTH_ERRORS.USER_NOT_FOUND });
     return;
   }
@@ -186,15 +199,26 @@ export const signinSendOtp = asyncHandler(async (req: Request, res: Response) =>
   const otp = generateOtp(6);
   const expiresAt = new Date(Date.now() + 10 * 60 * 1000);
 
-  await prisma.seller.update({
-    where: { phone },
-    data: {
-      countryCode,
-      phoneNumber,
-      phoneOtpCode: otp,
-      phoneOtpExpiresAt: expiresAt,
-    },
-  });
+  // If they have an active team member invite and their seller profile is INCOMPLETE (accidental signup), prefer team member
+  if (teamMember && (!seller || seller.onboardingStatus === "INCOMPLETE")) {
+    await prisma.teamMember.updateMany({
+      where: { phone, status: "ACTIVE" },
+      data: {
+        phoneOtpCode: otp,
+        phoneOtpExpiresAt: expiresAt,
+      },
+    });
+  } else if (seller) {
+    await prisma.seller.update({
+      where: { phone },
+      data: {
+        countryCode,
+        phoneNumber,
+        phoneOtpCode: otp,
+        phoneOtpExpiresAt: expiresAt,
+      },
+    });
+  }
 
   await otpService.sendSms(phone, otp);
   res.json({ success: true, message: "OTP sent" });
@@ -205,40 +229,162 @@ export const signinVerifyOtp = asyncHandler(async (req: Request, res: Response) 
   const { phone } = normalizePhone(phoneRaw);
 
   const seller = await prisma.seller.findUnique({ where: { phone } });
-  if (!seller) {
+  const teamMember = await prisma.teamMember.findFirst({ where: { phone, status: "ACTIVE" } });
+
+  if (!seller && !teamMember) {
     res.status(404).json({ success: false, error: AUTH_ERRORS.USER_NOT_FOUND });
     return;
   }
 
-  if (!isOtpValid(seller.phoneOtpCode || null, otp, seller.phoneOtpExpiresAt || null)) {
-    res.status(401).json({ success: false, error: AUTH_ERRORS.INVALID_OTP });
+  if (teamMember && (!seller || seller.onboardingStatus === "INCOMPLETE")) {
+    if (!isOtpValid(teamMember.phoneOtpCode || null, otp, teamMember.phoneOtpExpiresAt || null)) {
+      res.status(401).json({ success: false, error: AUTH_ERRORS.INVALID_OTP });
+      return;
+    }
+
+    await prisma.teamMember.updateMany({
+      where: { phone },
+      data: {
+        phoneOtpCode: null,
+        phoneOtpExpiresAt: null,
+      },
+    });
+
+    // Fetch the parent seller
+    const parentSeller = await prisma.seller.findUnique({ where: { id: teamMember.sellerId } });
+
+    const token = signToken(teamMember.sellerId, undefined, teamMember.id);
+    res.json({
+      success: true,
+      token,
+      seller: {
+        id: parentSeller!.id,
+        phone: parentSeller!.phone,
+        countryCode: parentSeller!.countryCode,
+        phoneNumber: parentSeller!.phoneNumber,
+        email: parentSeller!.email,
+        businessName: parentSeller!.businessName,
+        kycVerified: parentSeller!.kycVerified,
+        onboardingStatus: parentSeller!.onboardingStatus,
+        role: teamMember.role,
+        teamMemberId: teamMember.id,
+      },
+    });
+    return;
+  } else if (seller) {
+    if (!isOtpValid(seller.phoneOtpCode || null, otp, seller.phoneOtpExpiresAt || null)) {
+      res.status(401).json({ success: false, error: AUTH_ERRORS.INVALID_OTP });
+      return;
+    }
+
+    const updatedSeller = await prisma.seller.update({
+      where: { phone },
+      data: {
+        phoneOtpCode: null,
+        phoneOtpExpiresAt: null,
+      },
+      include: {
+        onboarding: true,
+      },
+    });
+
+    const isDoneAgreement = Boolean(
+      updatedSeller.onboarding?.merchantAgreementAccepted && updatedSeller.onboarding?.digitalSignature
+    );
+
+    const token = signToken(updatedSeller.id);
+    res.json({
+      success: true,
+      token,
+      seller: {
+        id: updatedSeller.id,
+        phone: updatedSeller.phone,
+        countryCode: updatedSeller.countryCode,
+        phoneNumber: updatedSeller.phoneNumber,
+        email: updatedSeller.email,
+        businessName: updatedSeller.businessName,
+        kycVerified: updatedSeller.kycVerified,
+        onboardingStatus: updatedSeller.onboardingStatus,
+        merchantAgreementAccepted: isDoneAgreement,
+        agreementAccepted: isDoneAgreement,
+        role: "ADMIN",
+      },
+    });
+    return;
+  }
+});
+
+
+import bcrypt from "bcryptjs";
+
+export const sellerLogin = asyncHandler(async (req: Request, res: Response) => {
+  const { loginId, phone: phoneInput, password } = req.body;
+  const rawPhone = phoneInput || loginId;
+
+  if (!rawPhone || !password) {
+    res.status(400).json({ success: false, error: "Phone/Login ID and password are required" });
     return;
   }
 
-  const updatedSeller = await prisma.seller.update({
-    where: { phone },
-    data: {
-      phoneOtpCode: null,
-      phoneOtpExpiresAt: null,
+  let normPhone = rawPhone;
+  let normNumber = rawPhone;
+  try {
+    const normalized = normalizePhone(rawPhone);
+    normPhone = normalized.phone;
+    normNumber = normalized.phoneNumber;
+  } catch (e) {
+    // Keep rawPhone if normalization fails
+  }
+
+  const seller = await prisma.seller.findFirst({
+    where: {
+      OR: [
+        { phone: rawPhone },
+        { phone: normPhone },
+        { phoneNumber: normNumber },
+        { phoneNumber: rawPhone },
+        { email: rawPhone },
+      ],
+    },
+    include: {
+      onboarding: true,
     },
   });
 
-  const token = signToken(updatedSeller.id);
+
+  if (!seller || !seller.passwordHash) {
+    res.status(401).json({ success: false, error: "Invalid credentials" });
+    return;
+  }
+
+  const isMatch = await bcrypt.compare(password, seller.passwordHash);
+  if (!isMatch) {
+    res.status(401).json({ success: false, error: "Invalid credentials" });
+    return;
+  }
+
+  const isDoneAgreement = Boolean(
+    seller.onboarding?.merchantAgreementAccepted && seller.onboarding?.digitalSignature
+  );
+
+  const token = signToken(seller.id);
   res.json({
     success: true,
     token,
     seller: {
-      id: updatedSeller.id,
-      phone: updatedSeller.phone,
-      countryCode: updatedSeller.countryCode,
-      phoneNumber: updatedSeller.phoneNumber,
-      email: updatedSeller.email,
-      businessName: updatedSeller.businessName,
-      kycVerified: updatedSeller.kycVerified,
-      onboardingStatus: updatedSeller.onboardingStatus,
+      id: seller.id,
+      phone: seller.phone,
+      email: seller.email,
+      businessName: seller.businessName,
+      kycVerified: seller.kycVerified,
+      onboardingStatus: seller.onboardingStatus,
+      merchantAgreementAccepted: isDoneAgreement,
+      agreementAccepted: isDoneAgreement,
+      role: "ADMIN",
     },
   });
 });
+
 
 export const resendSellerOtp = asyncHandler(async (req: Request, res: Response) => {
   const { phone: phoneRaw, retryType = "text", purpose = "signin" } = req.body;
@@ -364,10 +510,21 @@ export const forgotPasswordReset = asyncHandler(async (req: Request, res: Respon
 });
 
 export const getMe = asyncHandler(async (req: Request, res: Response) => {
-  const seller = await prisma.seller.findUnique({ where: { id: req.seller!.id } });
+  const sellerId = req.seller!.id;
+  const teamMemberId = req.seller!.teamMemberId;
+
+  const seller = await prisma.seller.findUnique({ where: { id: sellerId } });
   if (!seller) {
     res.status(404).json({ success: false, error: AUTH_ERRORS.USER_NOT_FOUND });
     return;
+  }
+
+  let role = "ADMIN";
+  if (teamMemberId) {
+    const teamMember = await prisma.teamMember.findUnique({ where: { id: teamMemberId } });
+    if (teamMember) {
+      role = teamMember.role;
+    }
   }
 
   res.json({
@@ -381,6 +538,8 @@ export const getMe = asyncHandler(async (req: Request, res: Response) => {
       businessName: seller.businessName,
       kycVerified: seller.kycVerified,
       onboardingStatus: seller.onboardingStatus,
+      role,
+      teamMemberId,
     },
   });
 });

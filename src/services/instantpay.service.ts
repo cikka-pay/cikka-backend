@@ -34,6 +34,33 @@ export async function verifyPanService(dto: VerifyPanDTO) {
   }
 
   const formattedPan = pan.toUpperCase().trim();
+
+  // DEV BYPASS RULE for AAAAA1111A
+  if (formattedPan === "AAAAA1111A") {
+    console.log("==================================================");
+    console.log("⚡ [DEV BYPASS] InstantPay PAN Verification Bypassed!");
+    console.log(`PAN: ${formattedPan}`);
+    console.log("Registered Name: DEV BYPASS USER");
+    console.log("Category: INDIVIDUAL");
+    console.log("User Gender: M");
+    console.log("User DOB: XX7");
+    console.log("Status: VALID (Dev Bypass)");
+    console.log("==================================================");
+
+    return {
+      verificationId: `v_pan_bypass_${Date.now()}`,
+      valid: true,
+      pan: "AAAAA1111A",
+      registeredName: "DEV BYPASS USER",
+      category: "INDIVIDUAL",
+      userGender: "M",
+      userDob: "XX7",
+      address: "Dev Bypass Address, India",
+      status: "VALID",
+      isDevBypass: true,
+    };
+  }
+
   const panRegex = /^[A-Z]{5}[0-9]{4}[A-Z]{1}$/;
 
   if (!panRegex.test(formattedPan)) {
@@ -42,6 +69,18 @@ export async function verifyPanService(dto: VerifyPanDTO) {
 
   // Call InstantPay external service
   const result = await instantpayClient.verifyPan(formattedPan);
+
+  console.log("==================================================");
+  console.log(`🔍 [InstantPay PAN V1 Verification Result]`);
+  console.log(`PAN: ${formattedPan}`);
+  console.log(`Valid: ${result.valid}`);
+  console.log(`Registered Name: ${result.registeredName || "N/A"}`);
+  console.log(`Category: ${result.category || "INDIVIDUAL"}`);
+  console.log(`User Gender: ${result.userGender || "N/A"}`);
+  console.log(`User DOB: ${result.userDob || "N/A"}`);
+  console.log(`Status: ${result.status}`);
+  if (result.address) console.log(`Address: ${result.address}`);
+  console.log("==================================================");
 
   // Store verification record in Prisma DB for audit trail
   let dbRecord = null;
@@ -54,7 +93,6 @@ export async function verifyPanService(dto: VerifyPanDTO) {
           registeredName: result.registeredName || null,
           category: result.category || null,
           status: result.status,
-          provider: "INSTANTPAY",
           rawResponse: result.rawResponse || null,
         },
       });
@@ -69,6 +107,8 @@ export async function verifyPanService(dto: VerifyPanDTO) {
     pan: result.pan,
     registeredName: result.registeredName || null,
     category: result.category || "INDIVIDUAL",
+    userGender: result.userGender || null,
+    userDob: result.userDob || null,
     address: result.address || null,
     status: result.status,
   };
@@ -111,7 +151,6 @@ export async function verifyGstinService(dto: VerifyGstinDTO) {
           businessType: result.businessType || null,
           state: result.state || null,
           address: result.address || null,
-          provider: "INSTANTPAY",
           rawResponse: result.rawResponse || null,
         },
       });
