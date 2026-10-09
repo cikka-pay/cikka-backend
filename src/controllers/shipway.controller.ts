@@ -2,7 +2,7 @@ import { Request, Response } from "express";
 import { shipwayService, SHIPWAY_STATUS_MAP } from "../services/shipway.service";
 import { asyncHandler } from "../utils/asyncHandler";
 import { prisma } from "../config/prisma";
-import { OrderStatus, NotificationType } from "@prisma/client";
+import { OrderStatus, NotificationType } from "../generated/prisma/client";
 
 /**
  * POST /api/shipway/push-order

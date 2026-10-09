@@ -1,4 +1,4 @@
-import { Prisma } from "@prisma/client";
+import { Prisma } from "../generated/prisma/client";
 import { prisma } from "../config/prisma";
 import { setuBbpsService } from "../external/setu/setu-bbps.client";
 import { BBPS_ERRORS } from "../constants/errors";

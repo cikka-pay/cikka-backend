@@ -1,7 +1,7 @@
 import { Request, Response } from "express";
 import { asyncHandler } from "../utils/asyncHandler";
 import { prisma } from "../config/prisma";
-import { Prisma, OrderStatus } from "@prisma/client";
+import { Prisma, OrderStatus } from "../generated/prisma/client";
 import { shipwayService } from "../services/shipway.service";
 
 export const listOrders = asyncHandler(async (req: Request, res: Response) => {

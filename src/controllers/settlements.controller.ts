@@ -1,7 +1,7 @@
 import { Request, Response } from "express";
 import { asyncHandler } from "../utils/asyncHandler";
 import { prisma } from "../config/prisma";
-import { Prisma, SettlementStatus } from "@prisma/client";
+import { Prisma, SettlementStatus } from "../generated/prisma/client";
 import { calculateSettlementBreakdown } from "../services/settlementCalculator.service";
 
 export const listSettlements = asyncHandler(async (req: Request, res: Response) => {

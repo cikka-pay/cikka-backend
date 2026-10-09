@@ -4,3 +4,6 @@ dist/
 *.log
 docker-compose.override.yml
 
+
+# Prisma 7 generated client (auto-generated, do not commit)
+src/generated/

@@ -1,11 +1,16 @@
 // Demo data matching the reference dashboard mockup.
 // Run with: npm run seed
 // Re-running is safe — existing data is wiped before seeding.
-import { PrismaClient } from "@prisma/client";
+import { PrismaClient } from "../src/generated/prisma/client";
+import { PrismaPg } from "@prisma/adapter-pg";
+import pg from "pg";
 import bcrypt from "bcryptjs";
 import { generatePassword } from "../src/utils/credentials";
+import "dotenv/config";
 
-const prisma = new PrismaClient();
+const pool = new pg.Pool({ connectionString: process.env.DATABASE_URL });
+const adapter = new PrismaPg(pool);
+const prisma = new PrismaClient({ adapter });
 
 function startOfWeek(date: Date): Date {
   const d = new Date(date);

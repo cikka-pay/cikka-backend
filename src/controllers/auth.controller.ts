@@ -1,5 +1,5 @@
 import { Request, Response } from "express";
-import { OnboardingStatus } from "@prisma/client";
+import { OnboardingStatus } from "../generated/prisma/client";
 import { prisma } from "../config/prisma";
 import { AUTH_ERRORS } from "../constants/errors";
 import { otpService } from "../external";

@@ -1,4 +1,4 @@
-import { BusinessType, FulfillmentType, SettlementCycle } from "@prisma/client";
+import { BusinessType, FulfillmentType, SettlementCycle } from "../generated/prisma/client";
 
 /**
  * Maps human-readable UI values for BusinessType to Prisma enum values.

@@ -1,7 +1,7 @@
 import { Request, Response } from "express";
 import { asyncHandler } from "../utils/asyncHandler";
 import { prisma } from "../config/prisma";
-import { Prisma, ReturnStatus } from "@prisma/client";
+import { Prisma, ReturnStatus } from "../generated/prisma/client";
 
 export const listReturns = asyncHandler(async (req: Request, res: Response) => {
   const sellerId = req.seller!.id;

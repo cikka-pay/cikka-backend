@@ -4,7 +4,7 @@ import { razorpayService } from "../services/razorpay.service";
 import { shipwayService } from "../services/shipway.service";
 import { asyncHandler } from "../utils/asyncHandler";
 import { prisma } from "../config/prisma";
-import { OrderStatus } from "@prisma/client";
+import { OrderStatus } from "../generated/prisma/client";
 
 /**
  * POST /api/payment/create-order
