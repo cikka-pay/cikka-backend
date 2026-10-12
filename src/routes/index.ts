@@ -60,6 +60,11 @@ router.use("/payment", paymentRoutes);
 // Shipway Experience Endpoints (/api/shipway/...)
 router.use("/shipway", shipwayRoutes);
 
+// Public Return Request Endpoint (Customer App / Postman)
+import { createReturn } from "../controllers/returns.controller";
+router.post("/returns/request", createReturn);
+router.post("/returns/create", createReturn);
+
 
 
 // Onboarding Routes (has internal requireAuth for protected routes, plus open /validate-domain utility)

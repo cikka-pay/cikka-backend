@@ -100,19 +100,46 @@ export async function getSummary(sellerId: string, role: string = "ADMIN") {
   };
 }
 
-export async function getSettlementBreakdown(sellerId: string, period: "week" | "month", role: string = "ADMIN") {
+export async function getSettlementBreakdown(
+  sellerId: string,
+  period: "this_week" | "last_week" | "this_month" | "week" | "month" = "this_week",
+  role: string = "ADMIN"
+) {
   const now = new Date();
-  const from = period === "month" ? startOfMonth(now) : startOfWeek(now);
+  let from: Date;
+  let to: Date | undefined;
 
-  const [settlementResult, ordersGrossResult, ordersCount, orderItemsQuantityResult, latest, commissionConfig, onboarding] = await Promise.all([
-    prisma.settlement.aggregate({
-      where: {
+  if (period === "last_week") {
+    const thisWeekStart = startOfWeek(now);
+    to = thisWeekStart;
+    const lws = new Date(thisWeekStart);
+    lws.setDate(lws.getDate() - 7);
+    from = lws;
+  } else if (period === "this_month" || period === "month") {
+    from = startOfMonth(now);
+    to = undefined;
+  } else {
+    from = startOfWeek(now);
+    to = undefined;
+  }
+
+  const createdAtFilter = to ? { gte: from, lt: to } : { gte: from };
+  const settlementWhere = period === "last_week"
+    ? {
+        sellerId,
+        periodStart: { gte: from, ...(to ? { lt: to } : {}) },
+      }
+    : {
         sellerId,
         OR: [
           { periodStart: { gte: from } },
-          { status: "PENDING" },
+          { status: "PENDING" as const },
         ],
-      },
+      };
+
+  const [settlementResult, ordersGrossResult, ordersCount, orderItemsQuantityResult, latest, commissionConfig, onboarding] = await Promise.all([
+    prisma.settlement.aggregate({
+      where: settlementWhere,
       _sum: {
         grossSales: true,
         commissionAmount: true,
@@ -121,24 +148,18 @@ export async function getSettlementBreakdown(sellerId: string, period: "week" | 
       },
     }),
     prisma.order.aggregate({
-      where: { sellerId, createdAt: { gte: from } },
+      where: { sellerId, createdAt: createdAtFilter },
       _sum: { totalAmount: true },
     }),
     prisma.order.count({
-      where: { sellerId, createdAt: { gte: from } },
+      where: { sellerId, createdAt: createdAtFilter },
     }),
     prisma.orderItem.aggregate({
-      where: { order: { sellerId, createdAt: { gte: from } } },
+      where: { order: { sellerId, createdAt: createdAtFilter } },
       _sum: { quantity: true },
     }),
     prisma.settlement.findFirst({
-      where: {
-        sellerId,
-        OR: [
-          { periodStart: { gte: from } },
-          { status: "PENDING" },
-        ],
-      },
+      where: settlementWhere,
       orderBy: { createdAt: "desc" },
     }),
     prisma.sellerCommissionConfig.findUnique({ where: { sellerId } }),
