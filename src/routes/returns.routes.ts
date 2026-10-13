@@ -1,5 +1,5 @@
 import { Router } from "express";
-import { listReturns, updateReturnStatus } from "../controllers/returns.controller";
+import { listReturns, updateReturnStatus, createReturn } from "../controllers/returns.controller";
 import { z } from "zod";
 import { validate } from "../middleware/validate.middleware";
 
@@ -16,6 +16,8 @@ const updateStatusSchema = z.object({
 });
 
 router.get("/", validate({ query: returnQuerySchema }), listReturns);
+router.post("/", createReturn);
+router.post("/request", createReturn);
 router.patch("/:id/status", validate({ body: updateStatusSchema }), updateReturnStatus);
 
 export default router;

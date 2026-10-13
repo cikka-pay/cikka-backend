@@ -6,7 +6,7 @@ import { validate } from "../middleware/validate.middleware";
 const router = Router();
 
 const breakdownQuerySchema = z.object({
-  period: z.enum(["week", "month"]).optional(),
+  period: z.enum(["this_week", "last_week", "this_month", "week", "month"]).optional(),
 });
 
 router.get("/summary", getSummary);

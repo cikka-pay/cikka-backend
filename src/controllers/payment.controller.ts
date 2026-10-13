@@ -115,8 +115,9 @@ export const verifyPayment = asyncHandler(async (req: Request, res: Response) =>
       const destPincode = req.body.pincode || "400001";
       const customerCity = req.body.city || "Mumbai";
 
-      // 1. Create order in Prisma Database for the relevant seller
+      // 1. Create order in Prisma Database for the relevant seller with automatic In Transit status
       const sellerId = await findSellerForPickupPincode(itemPickupPincode);
+      const generatedAwb = `AWB-${Math.floor(10000000 + Math.random() * 90000000)}`;
       if (sellerId) {
         try {
           await prisma.order.create({
@@ -126,11 +127,12 @@ export const verifyPayment = asyncHandler(async (req: Request, res: Response) =>
               customerName: customer_name || "Cikka Mall Customer",
               customerCity: `${customerCity} (${destPincode})`,
               totalAmount: Number(itemPrice),
-              status: OrderStatus.PENDING,
+              status: OrderStatus.SHIPPED,
+              trackingNumber: generatedAwb,
               courier: itemCarrier,
             },
           });
-          console.log(`[Prisma DB Order Created] #${itemOrderId} (${name}, Origin: ${itemPickupPincode}) assigned to Seller #${sellerId}`);
+          console.log(`[Prisma DB Order Created] #${itemOrderId} (${name}, Origin: ${itemPickupPincode}) assigned to Seller #${sellerId} -> In Transit (${generatedAwb})`);
         } catch (err: any) {
           console.warn(`[Prisma DB Order Notice] #${itemOrderId}: ${err.message}`);
         }
@@ -146,6 +148,7 @@ export const verifyPayment = asyncHandler(async (req: Request, res: Response) =>
         pincode: destPincode,
         pickup_pincode: itemPickupPincode,
         carrier_name: itemCarrier,
+        awb_number: generatedAwb,
         total_amount: Number(itemPrice),
         payment_type: "Prepaid",
         products: [

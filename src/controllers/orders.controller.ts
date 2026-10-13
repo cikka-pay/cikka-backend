@@ -61,14 +61,18 @@ export const listOrders = asyncHandler(async (req: Request, res: Response) => {
   ]);
 
   // Redact customer PII for Seller view while maintaining shipment metadata (Pincode, City, Delivery Partner, AWB, Status)
-  const sanitizedOrders = rawOrders.map((order) => ({
-    ...order,
-    customerName: "Cikka Customer",
-    customerPhone: "••••••••••",
-    customerEmail: "••••••••••",
-    // Delivery address street detail redacted, exposing City and Pincode
-    deliveryAddressRedacted: `${order.customerCity || "City"}, Pincode: ${(order as any).pincode || "Destination Pincode"}`,
-  }));
+  const sanitizedOrders = rawOrders.map((order) => {
+    return {
+      ...order,
+      status: order.status,
+      trackingNumber: order.trackingNumber || null,
+      courier: order.courier || "Bluedart / Delhivery (0.5kg)",
+      customerName: "Cikka Customer",
+      customerPhone: "••••••••••",
+      customerEmail: "••••••••••",
+      deliveryAddressRedacted: `${order.customerCity || "City"}, Pincode: ${(order as any).pincode || "Destination Pincode"}`,
+    };
+  });
 
   res.json({
     data: sanitizedOrders,
@@ -94,6 +98,9 @@ export const getOrder = asyncHandler(async (req: Request, res: Response) => {
   // Redact customer PII for Seller view
   const sanitizedOrder = {
     ...order,
+    status: order.status,
+    trackingNumber: order.trackingNumber || null,
+    courier: order.courier || "Bluedart / Delhivery (0.5kg)",
     customerName: "Cikka Customer",
     customerPhone: "••••••••••",
     customerEmail: "••••••••••",
@@ -111,17 +118,48 @@ export const createOrder = asyncHandler(async (req: Request, res: Response) => {
     return;
   }
 
-  const { customerName, customerCity, totalAmount, customerEmail, customerPhone, deliveryAddress } = req.body;
+  const { customerName, customerCity, totalAmount, customerEmail, customerPhone, deliveryAddress, sku, productId, items } = req.body;
   const orderNumber = `ORD-${Date.now().toString().slice(-6)}`;
+  const generatedAwb = `AWB-${Math.floor(10000000 + Math.random() * 90000000)}`;
+
+  // Find product by SKU or productId if provided
+  let targetProduct = null;
+  if (sku) {
+    targetProduct = await prisma.product.findFirst({
+      where: { sku: { equals: sku, mode: "insensitive" } },
+    });
+  } else if (productId) {
+    targetProduct = await prisma.product.findUnique({
+      where: { id: productId },
+    });
+  }
+
+  const finalAmount = totalAmount || (targetProduct ? Number(targetProduct.price) : 32989);
 
   const order = await prisma.order.create({
     data: {
       sellerId,
       orderNumber,
-      customerName: customerName || "Cikka Mall Customer",
+      customerName: customerName || "Cikka Customer",
       customerCity: customerCity || "Mumbai",
-      totalAmount: totalAmount || 32989,
-      status: OrderStatus.PENDING,
+      totalAmount: finalAmount,
+      status: OrderStatus.SHIPPED,
+      trackingNumber: generatedAwb,
+      courier: "Bluedart Express (0.5kg)",
+      ...(targetProduct && {
+        items: {
+          create: [
+            {
+              productId: targetProduct.id,
+              quantity: 1,
+              unitPrice: targetProduct.price,
+            },
+          ],
+        },
+      }),
+    },
+    include: {
+      items: { include: { product: true } },
     },
   });
 
@@ -134,14 +172,24 @@ export const createOrder = asyncHandler(async (req: Request, res: Response) => {
     delivery_address: deliveryAddress || "123, Sample Street, Mumbai – 400001",
     total_amount: Number(order.totalAmount),
     carrier_name: "Bluedart",
-    awb_number: `BD${Date.now().toString().slice(-8)}`,
+    awb_number: generatedAwb,
+    products: targetProduct
+      ? [
+          {
+            product: targetProduct.name,
+            price: Number(targetProduct.price),
+            product_code: targetProduct.sku,
+            product_quantity: 1,
+          },
+        ]
+      : undefined,
   }).catch((err) => {
     console.warn(`[Shipway Push Notice] Order #${order.orderNumber} push error: ${err.message}`);
   });
 
   res.status(201).json({
     success: true,
-    message: "Order created and pushed to Shipway Experience successfully",
+    message: "Order created and dispatched to In Transit successfully",
     order,
   });
 });
