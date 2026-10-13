@@ -302,7 +302,7 @@ export const signinVerifyOtp = asyncHandler(async (req: Request, res: Response) 
         countryCode: updatedSeller.countryCode,
         phoneNumber: updatedSeller.phoneNumber,
         email: updatedSeller.email,
-        businessName: updatedSeller.businessName,
+        businessName: updatedSeller.businessName || updatedSeller.onboarding?.businessName || "",
         kycVerified: updatedSeller.kycVerified,
         onboardingStatus: updatedSeller.onboardingStatus,
         merchantAgreementAccepted: isDoneAgreement,
@@ -375,7 +375,7 @@ export const sellerLogin = asyncHandler(async (req: Request, res: Response) => {
       id: seller.id,
       phone: seller.phone,
       email: seller.email,
-      businessName: seller.businessName,
+      businessName: seller.businessName || seller.onboarding?.businessName || "",
       kycVerified: seller.kycVerified,
       onboardingStatus: seller.onboardingStatus,
       merchantAgreementAccepted: isDoneAgreement,
@@ -513,7 +513,10 @@ export const getMe = asyncHandler(async (req: Request, res: Response) => {
   const sellerId = req.seller!.id;
   const teamMemberId = req.seller!.teamMemberId;
 
-  const seller = await prisma.seller.findUnique({ where: { id: sellerId } });
+  const seller = await prisma.seller.findUnique({
+    where: { id: sellerId },
+    include: { onboarding: true },
+  });
   if (!seller) {
     res.status(404).json({ success: false, error: AUTH_ERRORS.USER_NOT_FOUND });
     return;
@@ -535,7 +538,7 @@ export const getMe = asyncHandler(async (req: Request, res: Response) => {
       countryCode: seller.countryCode,
       phoneNumber: seller.phoneNumber,
       email: seller.email,
-      businessName: seller.businessName,
+      businessName: seller.businessName || seller.onboarding?.businessName || "",
       kycVerified: seller.kycVerified,
       onboardingStatus: seller.onboardingStatus,
       role,

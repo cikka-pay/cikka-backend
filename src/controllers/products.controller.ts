@@ -88,10 +88,18 @@ export const createProduct = asyncHandler(async (req: Request, res: Response) =>
   // variants are optional
   const { variants, ...productData } = data;
 
+  const seller = await prisma.seller.findUnique({
+    where: { id: sellerId },
+    include: { onboarding: true },
+  });
+  const onboardedBrand = seller?.businessName || seller?.onboarding?.businessName;
+  const finalBrandName = onboardedBrand || productData.brandName || undefined;
+
   const product = await prisma.product.create({
     data: {
       sellerId,
       ...productData,
+      brandName: finalBrandName,
       status: 'PENDING_APPROVAL',
       variants: variants && variants.length > 0 ? {
         create: variants.map((v: any) => ({
@@ -119,6 +127,16 @@ export const updateProduct = asyncHandler(async (req: Request, res: Response) =>
   }
 
   const { variants, ...updateData } = data;
+
+  // Ensure brand name cannot be altered away from seller onboarded brand
+  const seller = await prisma.seller.findUnique({
+    where: { id: existing.sellerId },
+    include: { onboarding: true },
+  });
+  const onboardedBrand = seller?.businessName || seller?.onboarding?.businessName;
+  if (onboardedBrand) {
+    updateData.brandName = onboardedBrand;
+  }
 
   if (variants && Array.isArray(variants)) {
     await prisma.productVariant.deleteMany({ where: { productId: id } });
