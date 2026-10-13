@@ -3,7 +3,7 @@
 #   Install only production dependencies.
 #   Cached as long as package-lock.json doesn't change.
 # ─────────────────────────────────────────────────────────────────────────────
-FROM node:20-alpine AS deps
+FROM node:22-alpine AS deps
 
 WORKDIR /app
 
@@ -15,7 +15,7 @@ RUN npm ci --omit=dev
 # Stage 2: builder
 #   Install ALL deps (including devDeps), generate Prisma client, compile TS.
 # ─────────────────────────────────────────────────────────────────────────────
-FROM node:20-alpine AS builder
+FROM node:22-alpine AS builder
 
 WORKDIR /app
 
@@ -40,7 +40,7 @@ RUN npm run build
 #   No TypeScript compiler, no source files, no devDeps.
 #   Prisma 7 uses a TS-native engine — no Rust binaries or OpenSSL needed.
 # ─────────────────────────────────────────────────────────────────────────────
-FROM node:20-alpine AS runner
+FROM node:22-alpine AS runner
 
 # Security: run as non-root
 RUN addgroup --system --gid 1001 cikka && \
