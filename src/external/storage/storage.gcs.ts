@@ -1,6 +1,6 @@
 /**
- * Google Cloud Storage adapter — real implementation.
- * Used when EXTERNAL_SERVICES_MODE=real.
+ * Google Cloud Storage adapter — legacy, kept for rollback.
+ * Used when STORAGE_PROVIDER=gcs.
  *
  * Environment variables:
  *   GCS_PROJECT_ID       — GCP project ID
@@ -10,7 +10,8 @@
  */
 import { Storage, type Bucket } from "@google-cloud/storage";
 import { config } from "../../config/env";
-import type { StorageService, UploadOptions, UploadResult } from "./storage.interface";
+import type { StorageService, StoredObject, UploadOptions, UploadResult } from "./storage.interface";
+import { buildKey } from "./storage.utils";
 
 // ── Lazy singleton ──────────────────────────────────────────────────────────
 
@@ -38,26 +39,6 @@ function getBucket(): Bucket {
     );
   }
   return _bucket;
-}
-
-// ── Helpers ─────────────────────────────────────────────────────────────────
-
-/** Sanitize a filename to prevent path traversal and weird characters. */
-function sanitizeFilename(name: string): string {
-  return name.replace(/[^a-zA-Z0-9._-]/g, "_");
-}
-
-/** Build the storage key (object path) from upload options. */
-function buildKey(options: UploadOptions): string {
-  const timestamp = Date.now();
-  const safeName = sanitizeFilename(options.filename);
-  const parts: string[] = [];
-
-  if (options.folder) parts.push(options.folder);
-  if (options.entityId) parts.push(options.entityId);
-  parts.push(`${timestamp}-${safeName}`);
-
-  return parts.join("/");
 }
 
 // ── Implementation ──────────────────────────────────────────────────────────
@@ -143,6 +124,19 @@ export const storageGcs: StorageService = {
 
     console.log(`[STORAGE GCS] Signed URL for: ${key} (expires in ${ttl}s)`);
     return signedUrl;
+  },
+
+  async getObject(key: string): Promise<StoredObject | null> {
+    const file = getBucket().file(key);
+    const [fileExists] = await file.exists();
+    if (!fileExists) return null;
+    const [meta] = await file.getMetadata();
+    return {
+      body: file.createReadStream(),
+      contentType: meta.contentType,
+      contentLength: meta.size !== undefined ? Number(meta.size) : undefined,
+      etag: meta.etag,
+    };
   },
 
   async exists(key: string): Promise<boolean> {

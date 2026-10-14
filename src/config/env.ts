@@ -62,7 +62,28 @@ export const config = {
   shipwayUsername: process.env.SHIPWAY_USERNAME,
   shipwayLicenseKey: process.env.SHIPWAY_LICENSE_KEY,
 
-  // Google Cloud Storage
+  // Public base URL of this API — used to build absolute file URLs (GET /api/files/<key>)
+  publicBaseUrl: (
+    process.env.PUBLIC_BASE_URL ||
+    (process.env.RAILWAY_PUBLIC_DOMAIN ? `https://${process.env.RAILWAY_PUBLIC_DOMAIN}` : "")
+  ).replace(/\/+$/, ""),
+
+  // File storage provider: "s3" (Railway Bucket / any S3 API), "gcs" (legacy) or "local"
+  storageProvider: (
+    process.env.STORAGE_PROVIDER || (process.env.S3_BUCKET || process.env.BUCKET ? "s3" : "local")
+  ).toLowerCase(),
+
+  // S3-compatible storage (Railway Buckets). The unprefixed names are the ones
+  // Railway's bucket "Credentials" preset injects (BUCKET, ACCESS_KEY_ID, ...).
+  s3Endpoint: process.env.S3_ENDPOINT || process.env.ENDPOINT,
+  s3Region: process.env.S3_REGION || process.env.REGION || "auto",
+  s3Bucket: process.env.S3_BUCKET || process.env.BUCKET,
+  s3AccessKeyId: process.env.S3_ACCESS_KEY_ID || process.env.ACCESS_KEY_ID,
+  s3SecretAccessKey: process.env.S3_SECRET_ACCESS_KEY || process.env.SECRET_ACCESS_KEY,
+  s3ForcePathStyle: process.env.S3_FORCE_PATH_STYLE === "true",
+  s3SignedUrlExpiry: parseInt(process.env.S3_SIGNED_URL_EXPIRY || "3600", 10),
+
+  // Google Cloud Storage (legacy)
   gcsProjectId: process.env.GCS_PROJECT_ID,
   gcsBucketName: process.env.GCS_BUCKET_NAME || "cikka-uploads-dev",
   gcsKeyFile: process.env.GCS_KEY_FILE,

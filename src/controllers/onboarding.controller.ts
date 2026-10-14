@@ -2,6 +2,7 @@ import { Request, Response } from "express";
 import dns from "dns/promises";
 import { prisma } from "../config/prisma";
 import { asyncHandler } from "../utils/asyncHandler";
+import { uploadFile } from "../services/upload.service";
 import * as onboardingService from "../services/onboarding.service";
 import { BUSINESS_TYPE_MAP, FULFILLMENT_TYPE_MAP, SETTLEMENT_CYCLE_MAP } from "../utils/enumMaps";
 import { sendSellerWaitlistEmail } from "../utils/resend";
@@ -307,11 +308,11 @@ export const uploadLogo = asyncHandler(async (req: Request, res: Response) => {
     return;
   }
   
-  // Real implementation will use storage service
-  const url = `/uploads/${req.file.filename}`;
-  await prisma.sellerOnboarding.update({
+  const { url } = await uploadFile({ file: req.file, folder: "logos", entityId: sellerId });
+  await prisma.sellerOnboarding.upsert({
     where: { sellerId },
-    data: { logoUrl: url },
+    update: { logoUrl: url },
+    create: { sellerId, logoUrl: url },
   });
   
   res.json({ url });

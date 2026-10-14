@@ -9,11 +9,13 @@ import { kybStub } from "./kyb/kyb.stub";
 import { kybReal } from "./kyb/kyb.real";
 import { storageStub } from "./storage/storage.stub";
 import { storageGcs } from "./storage/storage.gcs";
+import { storageS3 } from "./storage/storage.s3";
 import { setuBbpsStub, setuBbpsReal } from "./setu/setu-bbps.client";
 import { setuStub } from "./setu/setu.stub";
 import { setuReal } from "./setu/setu.real";
 import { instantpayStub } from "./instantpay/instantpay.stub";
 import { instantpayReal } from "./instantpay/instantpay.real";
+import { config } from "../config/env";
 import type { OtpService } from "./otp/otp.interface";
 import type { KybService } from "./kyb/kyb.interface";
 import type { StorageService } from "./storage/storage.interface";
@@ -29,10 +31,20 @@ if (mode !== "stub" && mode !== "real") {
 
 export const otpService: OtpService = mode === "real" ? otpReal : otpStub;
 export const kybService: KybService = mode === "real" ? kybReal : kybStub;
-export const storageService: StorageService = mode === "real" ? storageGcs : storageStub;
+// Storage is chosen independently of EXTERNAL_SERVICES_MODE (see config.storageProvider).
+const storageProviders: Record<string, StorageService> = {
+  s3: storageS3,
+  gcs: storageGcs,
+  local: storageStub,
+};
+const storageProvider = config.storageProvider;
+if (!storageProviders[storageProvider]) {
+  throw new Error(`Invalid STORAGE_PROVIDER="${storageProvider}". Must be "s3", "gcs" or "local".`);
+}
+export const storageService: StorageService = storageProviders[storageProvider];
 export const setuBbpsService: SetuBbpsService = mode === "real" ? setuBbpsReal : setuBbpsStub;
 export const setuClient: SetuBbpsClient = mode === "real" ? setuReal : setuStub;
 export const instantpayClient: InstantPayClient = mode === "real" ? instantpayReal : instantpayStub;
 
-console.log(`[External Services] Mode: ${mode}`);
+console.log(`[External Services] Mode: ${mode}, storage: ${storageProvider}`);
 
