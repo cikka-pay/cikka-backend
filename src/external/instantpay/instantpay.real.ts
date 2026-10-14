@@ -12,10 +12,14 @@ export function encryptAadhaarAes(aadhaarNumber: string, clientSecret: string): 
     // 1. Generate random 16-byte IV (openssl_random_pseudo_bytes(16))
     const iv = crypto.randomBytes(16);
 
-    // 2. OpenSSL key derivation: if clientSecret is hex, use 32-byte hex buffer or 32-byte UTF8 string
+    // 2. OpenSSL key derivation: support 64-character hex (32-byte AES-256), 32-byte UTF-8, or 32-hex
     let key: Buffer;
     if (/^[0-9a-fA-F]{64}$/.test(clientSecret)) {
       key = Buffer.from(clientSecret, "hex");
+    } else if (Buffer.byteLength(clientSecret, "utf8") === 32) {
+      key = Buffer.from(clientSecret, "utf8");
+    } else if (/^[0-9a-fA-F]{32}$/.test(clientSecret)) {
+      key = Buffer.concat([Buffer.from(clientSecret, "hex"), Buffer.from(clientSecret, "hex")]);
     } else {
       key = Buffer.from(clientSecret.substring(0, 32).padEnd(32, "\0"), "utf8");
     }
@@ -217,35 +221,103 @@ export const instantpayReal: InstantPayClient = {
       typeof gstOrOptions === "string" ? { gstNumber: gstOrOptions } : gstOrOptions;
 
     const gstNumber = options.gstNumber.toUpperCase().trim();
-    const externalRef = options.externalRef || `ref_${Date.now()}`;
+    // InstantPay documentation requires externalRef to be unique and strictly alphanumeric
+    const externalRef =
+      options.externalRef && /^[a-zA-Z0-9]+$/.test(options.externalRef)
+        ? options.externalRef
+        : `REF${Date.now()}${Math.floor(Math.random() * 1000)}`;
     const latitude = options.latitude || "23.0000";
     const longitude = options.longitude || "45.0000";
 
     const endpoint = `${config.instantpayBaseUrl}/identity/verifyGstin`;
+    let endpointIp = config.instantpayEndpointIp || "2409:40c4:117f:290b:856b:3fd4:3a06:d5c0";
 
+    console.log(`[InstantPay Real] Initiating verifyGstin for: ${gstNumber}`);
+    console.log(`[InstantPay Real] Endpoint: ${endpoint}`);
+    console.log(`[InstantPay Real] Outgoing X-Ipay-Endpoint-Ip: ${endpointIp}`);
+
+    const requestPayload = {
+      gstNumber,
+      externalRef,
+      latitude,
+      lattitude: latitude, // Handles OpenAPI definition ("latitude") vs parameter table ("lattitude")
+      longitude,
+    };
     try {
-      const response = await fetch(endpoint, {
+      let response = await fetch(endpoint, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
           "X-Ipay-Client-Id": config.instantpayClientId,
           "X-Ipay-Client-Secret": config.instantpayClientSecret,
           "X-Ipay-Auth-Code": config.instantpayAuthSecret || "1",
-          "X-Ipay-Endpoint-Ip": config.instantpayEndpointIp || "2409:40c4:1161:bcab:ce9:f7f4:42e1:f933",
+          "X-Ipay-Endpoint-Ip": endpointIp,
         },
-        body: JSON.stringify({
-          gstNumber,
-          externalRef,
-          latitude,
-          longitude,
-        }),
+        body: JSON.stringify(requestPayload),
+        signal: AbortSignal.timeout(25000),
       });
 
-      if (!response.ok) {
-        throw new Error(`InstantPay HTTP ${response.status}: ${response.statusText}`);
+      const rawText = await response.text();
+      let data: any;
+      try {
+        data = JSON.parse(rawText);
+      } catch {
+        data = { statuscode: "ERR", status: rawText, message: rawText };
       }
 
-      const data: any = await response.json();
+      // Check if InstantPay returned an IP mismatch or IP whitelist error
+      const combinedStatus = `${data.status || ""} ${data.message || ""} ${rawText}`.toLowerCase();
+      let detectedIp: string | null = null;
+      const isIpError =
+        combinedStatus.includes("invalid ip address") ||
+        combinedStatus.includes("ip address not whitelisted") ||
+        combinedStatus.includes("not whitelisted") ||
+        combinedStatus.includes("endpoint ip");
+
+      if (isIpError) {
+        const match =
+          combinedStatus.match(/invalid ip address\s*-\s*([^\s,;]+)/i) ||
+          combinedStatus.match(/ip\s*([0-9a-fA-F:.]+)\s*not\s*whitelisted/i);
+        if (match && match[1]) {
+          detectedIp = match[1];
+        }
+
+        console.error(`==================================================`);
+        console.error(`🚨 [InstantPay IP Error] Endpoint IP Mismatch / Not Whitelisted!`);
+        console.error(`   Configured IP (in .env): ${endpointIp}`);
+        if (detectedIp) {
+          console.error(`   Detected Outgoing IP:    ${detectedIp}`);
+          console.error(`👉 ACTION: Update INSTANTPAY_ENDPOINT_IP in your .env to: ${detectedIp}`);
+        } else {
+          console.error(`   InstantPay Message:      ${data.status || data.message || rawText}`);
+          console.error(`👉 ACTION: Ensure your current public IP is whitelisted on the InstantPay portal.`);
+        }
+        console.error(`==================================================`);
+
+        // If detected IP is found and differs from configured IP, attempt automatic retry with detected IP
+        if (detectedIp && detectedIp !== endpointIp) {
+          console.warn(`[InstantPay Real Notice] Retrying verifyGstin with detected IP: ${detectedIp}`);
+          endpointIp = detectedIp;
+          const retryRes = await fetch(endpoint, {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              "X-Ipay-Client-Id": config.instantpayClientId,
+              "X-Ipay-Client-Secret": config.instantpayClientSecret,
+              "X-Ipay-Auth-Code": config.instantpayAuthSecret || "1",
+              "X-Ipay-Endpoint-Ip": detectedIp,
+            },
+            body: JSON.stringify(requestPayload),
+            signal: AbortSignal.timeout(20000),
+          });
+          const retryRawText = await retryRes.text();
+          try {
+            data = JSON.parse(retryRawText);
+          } catch {
+            data = { statuscode: "ERR", status: retryRawText, message: retryRawText };
+          }
+        }
+      }
 
       if (data.statuscode === "TXN" || data.statuscode === "00" || data.status === "Transaction Successful" || data.statuscode === "IAB") {
         const resData = data.data || {};
@@ -270,6 +342,8 @@ export const instantpayReal: InstantPayClient = {
         const resolvedState = resolveGstState(gstNumber, gstDetails.stcd || gstDetails.state);
         const resolvedConstitution = resolveGstConstitution(legalName, tradeName, gstDetails.ctb);
 
+        console.log(`[InstantPay Real Success] GSTIN verified: ${gstNumber} (${legalName})`);
+
         return {
           valid: (gstDetails.sts || "").toUpperCase() === "ACTIVE" || data.statuscode === "TXN" || data.statuscode === "00",
           gstin: gstNumber,
@@ -283,15 +357,45 @@ export const instantpayReal: InstantPayClient = {
         };
       }
 
+      const errorMessage = data.message || data.status || `InstantPay returned status: ${data.statuscode || response.status}`;
+      const ipSuffix = isIpError
+        ? ` (Endpoint IP: ${endpointIp}${detectedIp ? `, Detected IP: ${detectedIp}` : ""})`
+        : "";
+
+      console.error(`[InstantPay Real Error] verifyGstin unsuccessful:`);
+      console.error(`   Status Code: ${data?.statuscode || response.status}`);
+      console.error(`   Status:      ${data?.status}`);
+      console.error(`   Message:     ${data?.message}`);
+      console.error(`   Endpoint IP: ${endpointIp}`);
+
       return {
         valid: false,
         gstin: gstNumber,
         status: data.status || data.message || "FAILED",
+        error: `${errorMessage}${ipSuffix}`,
         rawResponse: data,
       };
     } catch (err: any) {
-      console.error(`[InstantPay Real Error] verifyGstin failed: ${err.message}`);
-      return instantpayStub.verifyGstin(gstOrOptions);
+      const isTimeout = err.name === "TimeoutError" || err.message?.toLowerCase().includes("timeout");
+      console.error(`==================================================`);
+      if (isTimeout) {
+        console.error(`🚨 [InstantPay Timeout Error] verifyGstin connection timed out after 25s!`);
+        console.error(`   Endpoint:    ${endpoint}`);
+        console.error(`   Endpoint IP: ${endpointIp}`);
+        console.error(`👉 Potential Cause: InstantPay firewall is dropping packets because "${endpointIp}" is not whitelisted.`);
+      } else {
+        console.error(`🚨 [InstantPay Real Error] verifyGstin network failure: ${err.message}`);
+        console.error(`   Endpoint IP in use: ${endpointIp}`);
+      }
+      console.error(`==================================================`);
+      return {
+        valid: false,
+        gstin: gstNumber,
+        status: "FAILED",
+        error: isTimeout
+          ? `InstantPay gateway timed out after 25s (Endpoint IP: ${endpointIp}). This usually indicates your IP is not whitelisted on InstantPay's portal.`
+          : `InstantPay request failed: ${err.message} (Endpoint IP: ${endpointIp})`,
+      };
     }
   },
 
@@ -381,14 +485,32 @@ export const instantpayReal: InstantPayClient = {
         ? encryptAadhaarAes(aadhaarNumber, config.instantpayEncryptionKey || config.instantpayClientSecret)
         : aadhaarNumber);
 
-    const externalRef = options.externalRef || `ref_${Date.now()}`;
+    // InstantPay requires strictly alphanumeric externalRef
+    const externalRef =
+      options.externalRef && /^[a-zA-Z0-9]+$/.test(options.externalRef)
+        ? options.externalRef
+        : `REF${Date.now()}${Math.floor(Math.random() * 1000)}`;
     const latitude = options.latitude || "23.0000";
     const longitude = options.longitude || "45.0000";
 
     const endpoint = `${config.instantpayBaseUrl}/identity/verifyAadhaar`;
+    let endpointIp = config.instantpayEndpointIp || "2409:40c4:117f:290b:856b:3fd4:3a06:d5c0";
+
+    const maskedAadhaar = aadhaarNumber.replace(/(\d{4})\d{4}(\d{4})/, "$1XXXX$2");
+    console.log(`[InstantPay Real] Initiating verifyAadhaar for: ${maskedAadhaar}`);
+    console.log(`[InstantPay Real] Endpoint: ${endpoint}`);
+    console.log(`[InstantPay Real] Outgoing X-Ipay-Endpoint-Ip: ${endpointIp}`);
+
+    const requestPayload = {
+      aadhaarNumber: payloadAadhaar,
+      latitude,
+      longitude,
+      externalRef,
+      consent: "Y",
+    };
 
     try {
-      const response = await fetch(endpoint, {
+      let response = await fetch(endpoint, {
         method: "POST",
         headers: {
           "Accept": "application/json",
@@ -396,26 +518,79 @@ export const instantpayReal: InstantPayClient = {
           "X-Ipay-Client-Id": config.instantpayClientId,
           "X-Ipay-Client-Secret": config.instantpayClientSecret,
           "X-Ipay-Auth-Code": config.instantpayAuthSecret || "1",
-          "X-Ipay-Endpoint-Ip": config.instantpayEndpointIp,
+          "X-Ipay-Endpoint-Ip": endpointIp,
         },
-        body: JSON.stringify({
-          aadhaarNumber: payloadAadhaar,
-          name: options.name,
-          externalRef,
-          latitude,
-          longitude,
-          consent: "Y",
-        }),
+        body: JSON.stringify(requestPayload),
+        signal: AbortSignal.timeout(25000),
       });
 
-      if (!response.ok) {
-        throw new Error(`InstantPay HTTP ${response.status}`);
+      const rawText = await response.text();
+      let data: any;
+      try {
+        data = JSON.parse(rawText);
+      } catch {
+        data = { statuscode: "ERR", status: rawText, message: rawText };
       }
 
-      const data: any = await response.json();
+      // Check if InstantPay returned an IP mismatch or IP whitelist error
+      const combinedStatus = `${data.status || ""} ${data.message || ""} ${rawText}`.toLowerCase();
+      let detectedIp: string | null = null;
+      const isIpError =
+        combinedStatus.includes("invalid ip address") ||
+        combinedStatus.includes("ip address not whitelisted") ||
+        combinedStatus.includes("not whitelisted") ||
+        combinedStatus.includes("endpoint ip");
+
+      if (isIpError) {
+        const match =
+          combinedStatus.match(/invalid ip address\s*-\s*([^\s,;]+)/i) ||
+          combinedStatus.match(/ip\s*([0-9a-fA-F:.]+)\s*not\s*whitelisted/i);
+        if (match && match[1]) {
+          detectedIp = match[1];
+        }
+
+        console.error(`==================================================`);
+        console.error(`🚨 [InstantPay IP Error] Endpoint IP Mismatch / Not Whitelisted for Aadhaar!`);
+        console.error(`   Configured IP (in .env): ${endpointIp}`);
+        if (detectedIp) {
+          console.error(`   Detected Outgoing IP:    ${detectedIp}`);
+          console.error(`👉 ACTION: Update INSTANTPAY_ENDPOINT_IP in your .env to: ${detectedIp}`);
+        } else {
+          console.error(`   InstantPay Message:      ${data.status || data.message || rawText}`);
+          console.error(`👉 ACTION: Ensure your current public IP is whitelisted on the InstantPay portal.`);
+        }
+        console.error(`==================================================`);
+
+        // If detected IP is found and differs from configured IP, attempt automatic retry with detected IP
+        if (detectedIp && detectedIp !== endpointIp) {
+          console.warn(`[InstantPay Real Notice] Retrying verifyAadhaar with detected IP: ${detectedIp}`);
+          endpointIp = detectedIp;
+          const retryRes = await fetch(endpoint, {
+            method: "POST",
+            headers: {
+              "Accept": "application/json",
+              "Content-Type": "application/json",
+              "X-Ipay-Client-Id": config.instantpayClientId,
+              "X-Ipay-Client-Secret": config.instantpayClientSecret,
+              "X-Ipay-Auth-Code": config.instantpayAuthSecret || "1",
+              "X-Ipay-Endpoint-Ip": detectedIp,
+            },
+            body: JSON.stringify(requestPayload),
+            signal: AbortSignal.timeout(20000),
+          });
+          const retryRawText = await retryRes.text();
+          try {
+            data = JSON.parse(retryRawText);
+          } catch {
+            data = { statuscode: "ERR", status: retryRawText, message: retryRawText };
+          }
+        }
+      }
 
       if (data.statuscode === "TXN" || data.statuscode === "00" || data.status === "Aadhaar Verification Successful" || data.statuscode === "IAB") {
         const payloadData = data.data || {};
+
+        console.log(`[InstantPay Real Success] Aadhaar verified: ${maskedAadhaar}`);
 
         return {
           valid: data.statuscode === "TXN" || data.statuscode === "00",
@@ -430,24 +605,45 @@ export const instantpayReal: InstantPayClient = {
         };
       }
 
-      if (data.statuscode === "SNA") {
-        return {
-          valid: false,
-          aadhaarNumber,
-          status: "ACCESS_DENIED",
-          rawResponse: data,
-        };
-      }
+      const errorMessage = data.message || data.status || `InstantPay returned status: ${data.statuscode || response.status}`;
+      const ipSuffix = isIpError
+        ? ` (Endpoint IP: ${endpointIp}${detectedIp ? `, Detected IP: ${detectedIp}` : ""})`
+        : "";
+
+      console.error(`[InstantPay Real Error] verifyAadhaar unsuccessful:`);
+      console.error(`   Status Code: ${data?.statuscode || response.status}`);
+      console.error(`   Status:      ${data?.status}`);
+      console.error(`   Message:     ${data?.message}`);
+      console.error(`   Endpoint IP: ${endpointIp}`);
 
       return {
         valid: false,
         aadhaarNumber,
-        status: data.status || "INVALID",
+        status: data.status || data.message || "FAILED",
+        error: `${errorMessage}${ipSuffix}`,
         rawResponse: data,
       };
     } catch (err: any) {
-      console.error(`[InstantPay Real Error] verifyAadhaar failed: ${err.message}`);
-      throw err;
+      const isTimeout = err.name === "TimeoutError" || err.message?.toLowerCase().includes("timeout");
+      console.error(`==================================================`);
+      if (isTimeout) {
+        console.error(`🚨 [InstantPay Timeout Error] verifyAadhaar connection timed out after 25s!`);
+        console.error(`   Endpoint:    ${endpoint}`);
+        console.error(`   Endpoint IP: ${endpointIp}`);
+        console.error(`👉 Potential Cause: InstantPay firewall is dropping packets because "${endpointIp}" is not whitelisted.`);
+      } else {
+        console.error(`🚨 [InstantPay Real Error] verifyAadhaar network failure: ${err.message}`);
+        console.error(`   Endpoint IP in use: ${endpointIp}`);
+      }
+      console.error(`==================================================`);
+      return {
+        valid: false,
+        aadhaarNumber,
+        status: "FAILED",
+        error: isTimeout
+          ? `InstantPay gateway timed out after 25s (Endpoint IP: ${endpointIp}). This usually indicates your IP is not whitelisted on InstantPay's portal.`
+          : `InstantPay request failed: ${err.message} (Endpoint IP: ${endpointIp})`,
+      };
     }
   },
 

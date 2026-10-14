@@ -61,9 +61,14 @@ export const verifyGstin = asyncHandler(async (req: Request, res: Response) => {
     longitude,
   });
 
+  const failureMessage =
+    result.error ||
+    (result.status && result.status !== "Active" ? `GSTIN verification failed: ${result.status}` : "GSTIN verification failed");
+
   res.status(200).json({
-    success: true,
-    message: result.valid ? "GSTIN verified successfully" : "GSTIN verification failed",
+    success: result.valid,
+    message: result.valid ? "GSTIN verified successfully" : failureMessage,
+    error: result.valid ? undefined : failureMessage,
     data: result,
   });
 });
@@ -114,9 +119,14 @@ export const verifyAadhaar = asyncHandler(async (req: Request, res: Response) =>
     longitude,
   });
 
+  const failureMessage =
+    result.error ||
+    (result.status && result.status !== "VALID" ? `Aadhaar verification failed: ${result.status}` : "Aadhaar verification failed");
+
   res.status(200).json({
-    success: true,
-    message: result.valid ? "Aadhaar verified successfully" : "Aadhaar verification failed",
+    success: result.valid,
+    message: result.valid ? "Aadhaar verified successfully" : failureMessage,
+    error: result.valid ? undefined : failureMessage,
     data: result,
   });
 });

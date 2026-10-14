@@ -169,6 +169,8 @@ export async function verifyGstinService(dto: VerifyGstinDTO) {
     businessType: result.businessType || "Proprietorship",
     state: result.state || null,
     address: result.address || null,
+    error: result.error,
+    rawResponse: result.rawResponse,
   };
 }
 
@@ -293,7 +295,9 @@ export async function verifyAadhaarService(dto: VerifyAadhaarDTO) {
     ageBand: result.ageBand || null,
     gender: result.gender || null,
     maskedMobile: result.maskedMobile || null,
-    status: result.status || "VALID",
+    status: result.status || (result.valid ? "VALID" : "INVALID"),
+    error: result.error,
+    rawResponse: result.rawResponse,
   };
 }
 
