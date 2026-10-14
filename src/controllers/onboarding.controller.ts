@@ -446,19 +446,6 @@ export const validateDomain = asyncHandler(async (req: Request, res: Response) =
     return;
   }
 
-  // 5. Social media platform check
-  const isSocial = /^(www\.)?(instagram\.com|facebook\.com|fb\.com|linkedin\.com|twitter\.com|x\.com|youtube\.com|pinterest\.com|tiktok\.com)$/i.test(hostname);
-  if (isSocial) {
-    res.json({
-      valid: true,
-      reachable: true,
-      isSocial: true,
-      hostname,
-      normalizedUrl: normalized,
-      message: "Valid social media profile link",
-    });
-    return;
-  }
 
   // 6. Domain structure check (must have valid extension)
   if (!hostname.includes(".") || hostname.endsWith(".") || hostname.startsWith(".")) {

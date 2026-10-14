@@ -112,11 +112,32 @@ export const getOrder = asyncHandler(async (req: Request, res: Response) => {
 
 
 export const createOrder = asyncHandler(async (req: Request, res: Response) => {
-  const sellerId = req.seller?.id || (await prisma.seller.findFirst())?.id;
-  if (!sellerId) {
-    res.status(400).json({ error: "Seller ID is required to create order" });
+  const rawSellerId = req.seller?.id || req.body?.sellerId;
+  let seller = null;
+
+  if (rawSellerId) {
+    seller = await prisma.seller.findFirst({
+      where: {
+        OR: [
+          { id: rawSellerId },
+          { onboarding: { applicationId: rawSellerId } },
+          { businessName: { equals: rawSellerId, mode: "insensitive" } },
+        ],
+      },
+    });
+  }
+
+  // Fallback to first registered seller if specific Cikka ID or rawSellerId is not found
+  if (!seller) {
+    seller = await prisma.seller.findFirst();
+  }
+
+  if (!seller) {
+    res.status(400).json({ error: "No registered seller found in database to attach order to. Please complete onboarding first." });
     return;
   }
+
+  const sellerId = seller.id;
 
   const { customerName, customerCity, totalAmount, customerEmail, customerPhone, deliveryAddress, sku, productId, items } = req.body;
   const orderNumber = `ORD-${Date.now().toString().slice(-6)}`;
@@ -136,32 +157,39 @@ export const createOrder = asyncHandler(async (req: Request, res: Response) => {
 
   const finalAmount = totalAmount || (targetProduct ? Number(targetProduct.price) : 32989);
 
-  const order = await prisma.order.create({
-    data: {
-      sellerId,
-      orderNumber,
-      customerName: customerName || "Cikka Customer",
-      customerCity: customerCity || "Mumbai",
-      totalAmount: finalAmount,
-      status: OrderStatus.SHIPPED,
-      trackingNumber: generatedAwb,
-      courier: "Bluedart Express (0.5kg)",
-      ...(targetProduct && {
-        items: {
-          create: [
-            {
-              productId: targetProduct.id,
-              quantity: 1,
-              unitPrice: targetProduct.price,
-            },
-          ],
-        },
-      }),
-    },
-    include: {
-      items: { include: { product: true } },
-    },
-  });
+  let order;
+  try {
+    order = await prisma.order.create({
+      data: {
+        sellerId,
+        orderNumber,
+        customerName: customerName || "Cikka Customer",
+        customerCity: customerCity || "Mumbai",
+        totalAmount: finalAmount,
+        status: OrderStatus.SHIPPED,
+        trackingNumber: generatedAwb,
+        courier: "Bluedart Express (0.5kg)",
+        ...(targetProduct && {
+          items: {
+            create: [
+              {
+                productId: targetProduct.id,
+                quantity: 1,
+                unitPrice: targetProduct.price,
+              },
+            ],
+          },
+        }),
+      },
+      include: {
+        items: { include: { product: true } },
+      },
+    });
+  } catch (dbError: any) {
+    console.error(`[Order Creation DB Error]`, dbError);
+    res.status(500).json({ error: dbError.message || "Failed to create order in database" });
+    return;
+  }
 
   // Automatically push shipment to Shipway Experience
   shipwayService.pushOrderData({
