@@ -8,12 +8,13 @@ import { otpReal } from "./otp/otp.real";
 import { kybStub } from "./kyb/kyb.stub";
 import { kybReal } from "./kyb/kyb.real";
 import { storageStub } from "./storage/storage.stub";
-import { storageGcs } from "./storage/storage.gcs";
+import { storageRailway } from "./storage/storage.railway";
 import { setuBbpsStub, setuBbpsReal } from "./setu/setu-bbps.client";
 import { setuStub } from "./setu/setu.stub";
 import { setuReal } from "./setu/setu.real";
 import { instantpayStub } from "./instantpay/instantpay.stub";
 import { instantpayReal } from "./instantpay/instantpay.real";
+import { config } from "../config/env";
 import type { OtpService } from "./otp/otp.interface";
 import type { KybService } from "./kyb/kyb.interface";
 import type { StorageService } from "./storage/storage.interface";
@@ -29,10 +30,26 @@ if (mode !== "stub" && mode !== "real") {
 
 export const otpService: OtpService = mode === "real" ? otpReal : otpStub;
 export const kybService: KybService = mode === "real" ? kybReal : kybStub;
-export const storageService: StorageService = mode === "real" ? storageGcs : storageStub;
+// Storage is chosen independently of EXTERNAL_SERVICES_MODE (see config.storageProvider):
+// Railway Bucket in production, local disk for dev / tests.
+const storageProviders: Record<string, StorageService> = {
+  railway: storageRailway,
+  local: storageStub,
+};
+const storageProvider = config.storageProvider;
+if (!storageProviders[storageProvider]) {
+  throw new Error(`Invalid STORAGE_PROVIDER="${storageProvider}". Must be "railway" or "local".`);
+}
+if (storageProvider === "local" && config.isProduction) {
+  console.warn(
+    "[External Services] WARNING: STORAGE_PROVIDER=local in production — uploads are written to the " +
+      "container disk and lost on every redeploy. Connect a Railway Bucket (BUCKET, ACCESS_KEY_ID, ...)."
+  );
+}
+export const storageService: StorageService = storageProviders[storageProvider];
 export const setuBbpsService: SetuBbpsService = mode === "real" ? setuBbpsReal : setuBbpsStub;
 export const setuClient: SetuBbpsClient = mode === "real" ? setuReal : setuStub;
 export const instantpayClient: InstantPayClient = mode === "real" ? instantpayReal : instantpayStub;
 
-console.log(`[External Services] Mode: ${mode}`);
+console.log(`[External Services] Mode: ${mode}, storage: ${storageProvider}`);
 

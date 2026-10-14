@@ -2,12 +2,13 @@
  * Storage Service Interface — provider-agnostic file storage abstraction.
  *
  * Implementations:
- *   - storage.stub.ts  → local filesystem (dev / test)
- *   - storage.gcs.ts   → Google Cloud Storage (production)
+ *   - storage.railway.ts → Railway Bucket (production)
+ *   - storage.stub.ts    → local filesystem (dev / test)
  *
- * To add a new provider (e.g. AWS S3), create a new file that satisfies
- * this interface and wire it up in external/index.ts.
+ * To add a new provider, create a new file that satisfies this interface
+ * and wire it up in external/index.ts.
  */
+import type { Readable } from "stream";
 
 // ── Upload Options ──────────────────────────────────────────────────────────
 
@@ -43,6 +44,16 @@ export interface UploadResult {
   mimeType: string;
 }
 
+// ── Stored Object ───────────────────────────────────────────────────────────
+
+export interface StoredObject {
+  /** Object contents as a stream */
+  body: Readable;
+  contentType?: string;
+  contentLength?: number;
+  etag?: string;
+}
+
 // ── Service Contract ────────────────────────────────────────────────────────
 
 export interface StorageService {
@@ -54,6 +65,9 @@ export interface StorageService {
 
   /** Generate a signed / temporary URL for a private file */
   getSignedUrl(key: string, expiresInSeconds?: number): Promise<string>;
+
+  /** Stream a file's contents. Resolves to null when the key does not exist. */
+  getObject(key: string): Promise<StoredObject | null>;
 
   /** Check if a file exists in storage */
   exists(key: string): Promise<boolean>;

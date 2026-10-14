@@ -2,7 +2,7 @@
  * Upload Service — thin orchestration layer over the storage provider.
  *
  * Any controller or service can import these helpers to upload, delete,
- * or generate URLs for files. The underlying provider (GCS / stub) is
+ * or generate URLs for files. The underlying provider (Railway Bucket / local) is
  * selected automatically via the external services factory.
  */
 import { storageService } from "../external";
