@@ -4,16 +4,19 @@
 // Covers Product.imageUrls (JSON string[]) and SellerOnboarding.logoUrl.
 // Idempotent: values that are not data URLs are left untouched.
 //
-// Usage:
+// Usage (local, via tsx):
 //   npm run migrate:images -- --dry-run
-//   npm run migrate:images
+// Usage (inside the Railway container, compiled):
+//   railway ssh --service cikka-backend
+//   node dist/scripts/migrate-base64-images.js --dry-run
+//   node dist/scripts/migrate-base64-images.js
 // Needs DATABASE_URL, the Railway Bucket vars (BUCKET, ACCESS_KEY_ID, ...) and PUBLIC_BASE_URL.
 import "dotenv/config";
-import { PrismaClient } from "../src/generated/prisma/client";
+import { PrismaClient } from "../generated/prisma/client";
 import { PrismaPg } from "@prisma/adapter-pg";
 import pg from "pg";
-import { config } from "../src/config/env";
-import { storageService } from "../src/external";
+import { config } from "../config/env";
+import { storageService } from "../external";
 
 const pool = new pg.Pool({ connectionString: process.env.DATABASE_URL });
 const prisma = new PrismaClient({ adapter: new PrismaPg(pool) });
