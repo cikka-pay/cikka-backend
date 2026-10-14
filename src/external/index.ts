@@ -8,8 +8,7 @@ import { otpReal } from "./otp/otp.real";
 import { kybStub } from "./kyb/kyb.stub";
 import { kybReal } from "./kyb/kyb.real";
 import { storageStub } from "./storage/storage.stub";
-import { storageGcs } from "./storage/storage.gcs";
-import { storageS3 } from "./storage/storage.s3";
+import { storageRailway } from "./storage/storage.railway";
 import { setuBbpsStub, setuBbpsReal } from "./setu/setu-bbps.client";
 import { setuStub } from "./setu/setu.stub";
 import { setuReal } from "./setu/setu.real";
@@ -31,15 +30,21 @@ if (mode !== "stub" && mode !== "real") {
 
 export const otpService: OtpService = mode === "real" ? otpReal : otpStub;
 export const kybService: KybService = mode === "real" ? kybReal : kybStub;
-// Storage is chosen independently of EXTERNAL_SERVICES_MODE (see config.storageProvider).
+// Storage is chosen independently of EXTERNAL_SERVICES_MODE (see config.storageProvider):
+// Railway Bucket in production, local disk for dev / tests.
 const storageProviders: Record<string, StorageService> = {
-  s3: storageS3,
-  gcs: storageGcs,
+  railway: storageRailway,
   local: storageStub,
 };
 const storageProvider = config.storageProvider;
 if (!storageProviders[storageProvider]) {
-  throw new Error(`Invalid STORAGE_PROVIDER="${storageProvider}". Must be "s3", "gcs" or "local".`);
+  throw new Error(`Invalid STORAGE_PROVIDER="${storageProvider}". Must be "railway" or "local".`);
+}
+if (storageProvider === "local" && config.isProduction) {
+  console.warn(
+    "[External Services] WARNING: STORAGE_PROVIDER=local in production — uploads are written to the " +
+      "container disk and lost on every redeploy. Connect a Railway Bucket (BUCKET, ACCESS_KEY_ID, ...)."
+  );
 }
 export const storageService: StorageService = storageProviders[storageProvider];
 export const setuBbpsService: SetuBbpsService = mode === "real" ? setuBbpsReal : setuBbpsStub;

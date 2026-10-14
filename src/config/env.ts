@@ -68,13 +68,15 @@ export const config = {
     (process.env.RAILWAY_PUBLIC_DOMAIN ? `https://${process.env.RAILWAY_PUBLIC_DOMAIN}` : "")
   ).replace(/\/+$/, ""),
 
-  // File storage provider: "s3" (Railway Bucket / any S3 API), "gcs" (legacy) or "local"
-  storageProvider: (
-    process.env.STORAGE_PROVIDER || (process.env.S3_BUCKET || process.env.BUCKET ? "s3" : "local")
-  ).toLowerCase(),
+  // File storage provider: "railway" (Railway Bucket, production) or "local" (dev / tests).
+  // Defaults to "railway" once bucket credentials are present. "s3" is accepted as an alias.
+  storageProvider: (() => {
+    const p = (process.env.STORAGE_PROVIDER || (process.env.S3_BUCKET || process.env.BUCKET ? "railway" : "local")).toLowerCase();
+    return p === "s3" ? "railway" : p;
+  })(),
 
-  // S3-compatible storage (Railway Buckets). The unprefixed names are the ones
-  // Railway's bucket "Credentials" preset injects (BUCKET, ACCESS_KEY_ID, ...).
+  // Railway Bucket (S3 API). The unprefixed names are the ones Railway's bucket
+  // "Credentials" preset injects (BUCKET, ACCESS_KEY_ID, ...).
   s3Endpoint: process.env.S3_ENDPOINT || process.env.ENDPOINT,
   s3Region: process.env.S3_REGION || process.env.REGION || "auto",
   s3Bucket: process.env.S3_BUCKET || process.env.BUCKET,
@@ -82,12 +84,6 @@ export const config = {
   s3SecretAccessKey: process.env.S3_SECRET_ACCESS_KEY || process.env.SECRET_ACCESS_KEY,
   s3ForcePathStyle: process.env.S3_FORCE_PATH_STYLE === "true",
   s3SignedUrlExpiry: parseInt(process.env.S3_SIGNED_URL_EXPIRY || "3600", 10),
-
-  // Google Cloud Storage (legacy)
-  gcsProjectId: process.env.GCS_PROJECT_ID,
-  gcsBucketName: process.env.GCS_BUCKET_NAME || "cikka-uploads-dev",
-  gcsKeyFile: process.env.GCS_KEY_FILE,
-  gcsSignedUrlExpiry: parseInt(process.env.GCS_SIGNED_URL_EXPIRY || "3600", 10),
 };
 
 

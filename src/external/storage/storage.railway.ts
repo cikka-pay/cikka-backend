@@ -1,15 +1,19 @@
 /**
- * S3-compatible storage adapter — used for Railway Buckets (or any S3 API:
- * AWS S3, Cloudflare R2, MinIO).
- * Selected when STORAGE_PROVIDER=s3 (or S3_BUCKET is set).
+ * Railway Bucket storage — production file storage.
+ * Railway Buckets speak the S3 API, so this uses the AWS S3 SDK.
+ * Selected when STORAGE_PROVIDER=railway (the default once a bucket is configured).
+ *
+ * Credentials: connect the bucket's "Credentials" preset to the service
+ * (BUCKET, ACCESS_KEY_ID, SECRET_ACCESS_KEY, REGION, ENDPOINT), or set the
+ * S3_* equivalents below.
  *
  * Environment variables:
- *   S3_ENDPOINT          — e.g. https://storage.railway.app (omit for AWS)
+ *   S3_ENDPOINT          — bucket endpoint from the Credentials tab
  *   S3_REGION            — bucket region (default: "auto")
  *   S3_BUCKET            — bucket name
  *   S3_ACCESS_KEY_ID     — access key
  *   S3_SECRET_ACCESS_KEY — secret key
- *   S3_FORCE_PATH_STYLE  — "true" for MinIO-style path addressing (default: false)
+ *   S3_FORCE_PATH_STYLE  — "true" if the Credentials tab says path-style (default: false)
  *   S3_SIGNED_URL_EXPIRY — signed URL TTL in seconds (default: 3600)
  *
  * Railway Buckets are private, so the URL returned by uploadFile() points at
@@ -37,7 +41,7 @@ function getClient(): S3Client {
   if (!_client) {
     if (!config.s3Bucket || !config.s3AccessKeyId || !config.s3SecretAccessKey) {
       throw new Error(
-        "S3 storage is not configured (S3_BUCKET, S3_ACCESS_KEY_ID, S3_SECRET_ACCESS_KEY)"
+        "Railway Bucket storage is not configured (BUCKET, ACCESS_KEY_ID, SECRET_ACCESS_KEY)"
       );
     }
     _client = new S3Client({
@@ -50,8 +54,8 @@ function getClient(): S3Client {
       },
     });
     console.log(
-      `[STORAGE S3] Initialized — bucket: ${config.s3Bucket}, ` +
-        `endpoint: ${config.s3Endpoint || "(aws default)"}`
+      `[STORAGE RAILWAY] Initialized — bucket: ${config.s3Bucket}, ` +
+        `endpoint: ${config.s3Endpoint || "(default)"}`
     );
   }
   return _client;
@@ -64,7 +68,7 @@ function isNotFound(err: unknown): boolean {
 
 // ── Implementation ──────────────────────────────────────────────────────────
 
-export const storageS3: StorageService = {
+export const storageRailway: StorageService = {
   async uploadFile(options: UploadOptions): Promise<UploadResult> {
     const key = buildKey(options);
 
@@ -79,7 +83,7 @@ export const storageS3: StorageService = {
     );
 
     console.log(
-      `[STORAGE S3] Uploaded: ${key} (${options.buffer.length} bytes, ${options.mimeType})`
+      `[STORAGE RAILWAY] Uploaded: ${key} (${options.buffer.length} bytes, ${options.mimeType})`
     );
 
     return {
@@ -93,7 +97,7 @@ export const storageS3: StorageService = {
 
   async deleteFile(key: string): Promise<void> {
     await getClient().send(new DeleteObjectCommand({ Bucket: config.s3Bucket, Key: key }));
-    console.log(`[STORAGE S3] Deleted: ${key}`);
+    console.log(`[STORAGE RAILWAY] Deleted: ${key}`);
   },
 
   async getSignedUrl(key: string, expiresInSeconds?: number): Promise<string> {

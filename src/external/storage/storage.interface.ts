@@ -2,9 +2,8 @@
  * Storage Service Interface — provider-agnostic file storage abstraction.
  *
  * Implementations:
- *   - storage.stub.ts  → local filesystem (dev / test)
- *   - storage.s3.ts    → S3-compatible bucket (Railway Buckets — production)
- *   - storage.gcs.ts   → Google Cloud Storage (legacy)
+ *   - storage.railway.ts → Railway Bucket (production)
+ *   - storage.stub.ts    → local filesystem (dev / test)
  *
  * To add a new provider, create a new file that satisfies this interface
  * and wire it up in external/index.ts.

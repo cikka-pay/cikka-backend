@@ -1,5 +1,5 @@
 // Moves base64 `data:image/...` values out of Postgres into the configured
-// storage provider (Railway Bucket) and replaces them with /api/files/<key> URLs.
+// Railway Bucket and replaces them with /api/files/<key> URLs.
 //
 // Covers Product.imageUrls (JSON string[]) and SellerOnboarding.logoUrl.
 // Idempotent: values that are not data URLs are left untouched.
@@ -7,7 +7,7 @@
 // Usage:
 //   npm run migrate:images -- --dry-run
 //   npm run migrate:images
-// Needs DATABASE_URL, the S3_* storage vars and PUBLIC_BASE_URL (so stored URLs are absolute).
+// Needs DATABASE_URL, the Railway Bucket vars (BUCKET, ACCESS_KEY_ID, ...) and PUBLIC_BASE_URL.
 import "dotenv/config";
 import { PrismaClient } from "../src/generated/prisma/client";
 import { PrismaPg } from "@prisma/adapter-pg";
@@ -121,7 +121,7 @@ async function main() {
     process.exit(1);
   }
   if (!dryRun && config.storageProvider === "local") {
-    console.error("STORAGE_PROVIDER is local — set the S3_* vars so images go to the bucket.");
+    console.error("STORAGE_PROVIDER is local — set the Railway Bucket vars (BUCKET, ACCESS_KEY_ID, ...) so images go to the bucket.");
     process.exit(1);
   }
 

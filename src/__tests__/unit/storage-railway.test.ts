@@ -1,5 +1,5 @@
 /**
- * S3 storage adapter (Railway Buckets) with a mocked S3 client.
+ * Railway Bucket storage adapter with a mocked S3 client.
  */
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { Readable } from "stream";
@@ -30,11 +30,11 @@ vi.mock("../../config/env", async (importOriginal) => {
   };
 });
 
-import { storageS3 } from "../../external/storage/storage.s3";
+import { storageRailway as storageS3 } from "../../external/storage/storage.railway";
 
 const notFound = Object.assign(new Error("NotFound"), { name: "NotFound", $metadata: { httpStatusCode: 404 } });
 
-describe("Storage S3", () => {
+describe("Storage Railway", () => {
   beforeEach(() => send.mockReset());
 
   it("uploads with PutObject and returns a stable public file URL", async () => {
