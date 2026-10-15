@@ -9,6 +9,7 @@ export const AUTH_ERRORS = {
   INVALID_TOKEN: "Invalid or expired token",
   INVALID_SELLER_TOKEN: "Invalid token role: expected seller",
   INVALID_USER_TOKEN: "Invalid token role: expected user",
+  INVALID_ADMIN_TOKEN: "Invalid or expired admin token",
   PHONE_REQUIRED: "Phone number is required",
   PHONE_AND_OTP_REQUIRED: "Phone and OTP are required",
   NO_PENDING_OTP: "No pending OTP found for this phone number",

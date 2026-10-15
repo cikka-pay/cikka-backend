@@ -1,44 +1,38 @@
+import crypto from "crypto";
+import bcrypt from "bcryptjs";
 import { Request, Response } from "express";
 import { asyncHandler } from "../utils/asyncHandler";
 import { prisma } from "../config/prisma";
-import jwt from "jsonwebtoken";
+import { config } from "../config/env";
+import { signAdminToken } from "../utils/jwt";
 
-const JWT_SECRET = process.env.JWT_SECRET || "cikka_super_secret_jwt_key_2026";
+// Constant-time string comparison (hash first so differing lengths don't leak via timing).
+function safeEqual(a: string, b: string): boolean {
+  const ha = crypto.createHash("sha256").update(a).digest();
+  const hb = crypto.createHash("sha256").update(b).digest();
+  return crypto.timingSafeEqual(ha, hb);
+}
 
 export const adminLogin = asyncHandler(async (req: Request, res: Response) => {
-  const { email, password } = req.body;
+  const { email, password } = req.body || {};
 
-  if (!email || !password) {
+  if (typeof email !== "string" || typeof password !== "string" || !email || !password) {
     res.status(400).json({ error: "Email and password are required" });
     return;
   }
 
-  // Find admin user or fallback mock authentication for initial setup
-  let admin = await prisma.adminUser.findUnique({
-    where: { email: email.toLowerCase() },
+  // Admin accounts are provisioned with `npm run create-admin`.
+  const admin = await prisma.adminUser.findUnique({
+    where: { email: email.toLowerCase().trim() },
   });
 
-  if (!admin && email === "admin@cikka.in" && password === "admin123") {
-    admin = await prisma.adminUser.create({
-      data: {
-        email: "admin@cikka.in",
-        name: "Cikka Admin Officer",
-        passwordHash: "$2b$10$e7e...stub",
-        role: "SUPER_ADMIN",
-      },
-    });
-  }
-
-  if (!admin) {
+  const passwordOk = admin ? await bcrypt.compare(password, admin.passwordHash) : false;
+  if (!admin || !passwordOk || !admin.isActive) {
     res.status(401).json({ error: "Invalid admin credentials" });
     return;
   }
 
-  const token = jwt.sign(
-    { id: admin.id, email: admin.email, role: admin.role, type: "ADMIN" },
-    JWT_SECRET,
-    { expiresIn: "7d" }
-  );
+  const token = signAdminToken({ id: admin.id, email: admin.email, role: admin.role });
 
   res.json({
     token,
@@ -52,70 +46,62 @@ export const adminLogin = asyncHandler(async (req: Request, res: Response) => {
 });
 
 export const getAdminProfile = asyncHandler(async (req: Request, res: Response) => {
-  const adminId = (req as any).user?.id;
-  if (!adminId) {
+  const tokenAdmin = req.admin;
+  if (!tokenAdmin) {
     res.status(401).json({ error: "Unauthorized" });
     return;
   }
 
   const admin = await prisma.adminUser.findUnique({
-    where: { id: adminId },
+    where: { id: tokenAdmin.id },
     select: { id: true, email: true, name: true, role: true, isActive: true },
   });
 
-  if (!admin) {
-    res.status(404).json({ error: "Admin account not found" });
-    return;
-  }
-
-  res.json({ admin });
+  // Access-code sessions have no admin_users row — answer from the token claims.
+  res.json({ admin: admin ?? { ...tokenAdmin, isActive: true } });
 });
 
 export const verifyAccessCode = asyncHandler(async (req: Request, res: Response) => {
-  const { accessCode, panelType } = req.body;
+  const { accessCode, panelType } = req.body || {};
 
-  if (!accessCode) {
+  if (typeof accessCode !== "string" || !accessCode.trim()) {
     res.status(400).json({ error: "Access Code is required" });
     return;
   }
 
   const isSellerAdmin = panelType === "SELLER_ADMIN";
+  const expectedCode = isSellerAdmin ? config.sellerAdminAccessCode : config.superAdminAccessCode;
 
-  const expectedCode = isSellerAdmin
-    ? process.env.SELLER_ADMIN_ACCESS_CODE || "CIKKA_SELLER_ADMIN_2026_SECRET"
-    : process.env.SUPER_ADMIN_ACCESS_CODE || "CIKKA_SUPER_2026_SECURE";
+  if (!expectedCode) {
+    res.status(503).json({ error: "Admin access code is not configured on the server" });
+    return;
+  }
 
-  // Allow standard fallback aliases e.g. "admin123", "seller123", "123456" for convenience
-  const allowedCodes = [
-    expectedCode.trim(),
-    isSellerAdmin ? "selleradmin123" : "admin123",
-    "123456",
-    "cikka2026",
-  ];
-
-  if (!allowedCodes.includes(accessCode.trim())) {
+  if (!safeEqual(accessCode.trim(), expectedCode.trim())) {
     res.status(401).json({ error: "Invalid Secret Access Code" });
     return;
   }
 
-  const role = isSellerAdmin ? "ONBOARDING_VERIFIER" : "SUPER_ADMIN";
-  const email = isSellerAdmin ? "seller.admin@cikka.in" : "admin@cikka.in";
+  const user = isSellerAdmin
+    ? {
+        id: "sel_admin_root",
+        email: "seller.admin@cikka.in",
+        name: "Cikka Seller Onboarding Admin",
+        role: "ONBOARDING_VERIFIER",
+      }
+    : {
+        id: "super_admin_root",
+        email: "admin@cikka.in",
+        name: "Cikka Master Control Officer",
+        role: "SUPER_ADMIN",
+      };
 
-  const token = jwt.sign(
-    { id: isSellerAdmin ? "sel_admin_root" : "super_admin_root", email, role, type: "ADMIN" },
-    JWT_SECRET,
-    { expiresIn: "7d" }
-  );
+  const token = signAdminToken(user);
 
   res.json({
     valid: true,
     message: "Access Granted",
     token,
-    user: {
-      id: isSellerAdmin ? "sel_admin_root" : "super_admin_root",
-      email,
-      name: isSellerAdmin ? "Cikka Seller Onboarding Admin" : "Cikka Master Control Officer",
-      role,
-    },
+    user,
   });
 });

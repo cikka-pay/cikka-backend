@@ -46,38 +46,26 @@ export function verifyToken(token: string): CustomJwtPayload {
 }
 
 export function verifySellerToken(token: string): CustomJwtPayload {
-  const secrets = [
-    process.env.JWT_SELLER_SECRET,
-    process.env.JWT_SECRET,
-    SELLER_SECRET,
-    "cikka-seller-dev-secret-0000000000000000",
-    "cikka-dev-secret-do-not-use-in-production-0000000000000000",
-  ].filter(Boolean) as string[];
+  // Tokens are signed with JWT_SELLER_SECRET, or JWT_SECRET when that is unset.
+  const secrets = [...new Set([process.env.JWT_SELLER_SECRET, process.env.JWT_SECRET, SELLER_SECRET])].filter(
+    Boolean
+  ) as string[];
 
   for (const secret of secrets) {
+    let payload: CustomJwtPayload;
     try {
-      const payload = jwt.verify(token, secret) as CustomJwtPayload;
-      if (payload.role && payload.role !== "seller") {
-        throw new Error(AUTH_ERRORS.INVALID_SELLER_TOKEN);
-      }
-      return payload;
-    } catch (err: any) {
-      if (err.message === AUTH_ERRORS.INVALID_SELLER_TOKEN) {
-        throw err;
-      }
-      // try next secret
+      payload = jwt.verify(token, secret) as CustomJwtPayload;
+    } catch (_err) {
+      continue; // try next secret
     }
-  }
-
-  const decoded = jwt.decode(token) as CustomJwtPayload;
-  if (decoded && decoded.sub && (!decoded.role || decoded.role === "seller")) {
-    return decoded;
+    if ((payload.role && payload.role !== "seller") || !payload.sub) {
+      throw new Error(AUTH_ERRORS.INVALID_SELLER_TOKEN);
+    }
+    return payload;
   }
 
   throw new Error(AUTH_ERRORS.INVALID_SELLER_TOKEN);
 }
-
-
 
 export function verifyUserToken(token: string): CustomJwtPayload {
   const secret = process.env.JWT_USER_SECRET || process.env.JWT_CUSTOMER_SECRET || process.env.JWT_SECRET || USER_SECRET;
@@ -94,3 +82,31 @@ export function verifyUserToken(token: string): CustomJwtPayload {
 }
 
 
+
+export interface AdminJwtPayload extends JwtPayload {
+  id: string;
+  email: string;
+  role: string;
+  type: "ADMIN";
+}
+
+export function signAdminToken(admin: { id: string; email: string; role: string }): string {
+  return jwt.sign(
+    { id: admin.id, email: admin.email, role: admin.role, type: "ADMIN" },
+    config.jwtAdminSecret,
+    { expiresIn: config.jwtAdminExpiresIn } as jwt.SignOptions
+  );
+}
+
+export function verifyAdminToken(token: string): AdminJwtPayload {
+  let payload: AdminJwtPayload;
+  try {
+    payload = jwt.verify(token, config.jwtAdminSecret) as AdminJwtPayload;
+  } catch (_err) {
+    throw new Error(AUTH_ERRORS.INVALID_ADMIN_TOKEN);
+  }
+  if (payload.type !== "ADMIN" || !payload.id) {
+    throw new Error(AUTH_ERRORS.INVALID_ADMIN_TOKEN);
+  }
+  return payload;
+}

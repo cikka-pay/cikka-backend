@@ -19,6 +19,14 @@ export const config = {
   jwtSellerSecret: process.env.JWT_SELLER_SECRET || process.env.JWT_SECRET || "dev_seller_secret",
   jwtUserSecret: process.env.JWT_USER_SECRET || process.env.JWT_CUSTOMER_SECRET || process.env.JWT_SECRET || "dev_user_secret",
   jwtExpiresIn: process.env.JWT_EXPIRES_IN || "7d",
+  jwtAdminSecret: process.env.JWT_ADMIN_SECRET || process.env.JWT_SECRET || "dev_admin_secret",
+  jwtAdminExpiresIn: process.env.JWT_ADMIN_EXPIRES_IN || "12h",
+
+  // Admin panel access codes. No fallback in production — the gate refuses to open until they are set.
+  superAdminAccessCode:
+    process.env.SUPER_ADMIN_ACCESS_CODE || (NODE_ENV === "production" ? undefined : "CIKKA_SUPER_2026_SECURE"),
+  sellerAdminAccessCode:
+    process.env.SELLER_ADMIN_ACCESS_CODE || (NODE_ENV === "production" ? undefined : "CIKKA_SELLER_ADMIN_2026_SECRET"),
 
   // External service modes
   externalServicesMode: EXTERNAL_SERVICES_MODE,
@@ -86,4 +94,16 @@ export const config = {
   s3SignedUrlExpiry: parseInt(process.env.S3_SIGNED_URL_EXPIRY || "3600", 10),
 };
 
-
+// Refuse to boot in production with signing secrets that fall back to the
+// hardcoded dev defaults above — anyone could mint tokens with them.
+if (config.isProduction) {
+  const missing = [
+    !(process.env.JWT_SELLER_SECRET || process.env.JWT_SECRET) && "JWT_SELLER_SECRET (or JWT_SECRET)",
+    !(process.env.JWT_USER_SECRET || process.env.JWT_CUSTOMER_SECRET || process.env.JWT_SECRET) &&
+      "JWT_USER_SECRET (or JWT_SECRET)",
+    !(process.env.JWT_ADMIN_SECRET || process.env.JWT_SECRET) && "JWT_ADMIN_SECRET (or JWT_SECRET)",
+  ].filter(Boolean);
+  if (missing.length > 0) {
+    throw new Error(`Missing required secrets in production: ${missing.join(", ")}`);
+  }
+}
