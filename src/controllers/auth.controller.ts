@@ -199,8 +199,8 @@ export const signinSendOtp = asyncHandler(async (req: Request, res: Response) =>
   const otp = generateOtp(6);
   const expiresAt = new Date(Date.now() + 10 * 60 * 1000);
 
-  // If they have an active team member invite and their seller profile is INCOMPLETE (accidental signup), prefer team member
-  if (teamMember && (!seller || seller.onboardingStatus === "INCOMPLETE")) {
+  // If they have an active team member invite/membership and do not have their own verified business, prefer team member
+  if (teamMember && (!seller || seller.onboardingStatus !== "VERIFIED")) {
     await prisma.teamMember.updateMany({
       where: { phone, status: "ACTIVE" },
       data: {
@@ -236,7 +236,7 @@ export const signinVerifyOtp = asyncHandler(async (req: Request, res: Response) 
     return;
   }
 
-  if (teamMember && (!seller || seller.onboardingStatus === "INCOMPLETE")) {
+  if (teamMember && (!seller || seller.onboardingStatus !== "VERIFIED")) {
     if (!isOtpValid(teamMember.phoneOtpCode || null, otp, teamMember.phoneOtpExpiresAt || null)) {
       res.status(401).json({ success: false, error: AUTH_ERRORS.INVALID_OTP });
       return;
@@ -251,23 +251,38 @@ export const signinVerifyOtp = asyncHandler(async (req: Request, res: Response) 
     });
 
     // Fetch the parent seller
-    const parentSeller = await prisma.seller.findUnique({ where: { id: teamMember.sellerId } });
+    const parentSeller = await prisma.seller.findUnique({
+      where: { id: teamMember.sellerId },
+      include: { onboarding: true },
+    });
+
+    if (!parentSeller) {
+      res.status(404).json({ success: false, error: "Associated business not found" });
+      return;
+    }
 
     const token = signToken(teamMember.sellerId, undefined, teamMember.id);
     res.json({
       success: true,
       token,
       seller: {
-        id: parentSeller!.id,
-        phone: parentSeller!.phone,
-        countryCode: parentSeller!.countryCode,
-        phoneNumber: parentSeller!.phoneNumber,
-        email: parentSeller!.email,
-        businessName: parentSeller!.businessName,
-        kycVerified: parentSeller!.kycVerified,
-        onboardingStatus: parentSeller!.onboardingStatus,
+        id: parentSeller.id,
+        phone: teamMember.phone,
+        countryCode: parentSeller.countryCode,
+        phoneNumber: teamMember.phone.replace(/^\+91/, ""),
+        email: teamMember.email || parentSeller.email,
+        businessName: parentSeller.businessName || parentSeller.onboarding?.businessName || "",
+        logoUrl: parentSeller.onboarding?.logoUrl || null,
+        kycVerified: true,
+        onboardingStatus: "VERIFIED",
+        merchantAgreementAccepted: true,
+        agreementAccepted: true,
+        isTeamMember: true,
         role: teamMember.role,
         teamMemberId: teamMember.id,
+        memberName: teamMember.name,
+        memberPhone: teamMember.phone,
+        memberEmail: teamMember.email || "",
       },
     });
     return;
@@ -303,11 +318,15 @@ export const signinVerifyOtp = asyncHandler(async (req: Request, res: Response) 
         phoneNumber: updatedSeller.phoneNumber,
         email: updatedSeller.email,
         businessName: updatedSeller.businessName || updatedSeller.onboarding?.businessName || "",
+        logoUrl: updatedSeller.onboarding?.logoUrl || null,
         kycVerified: updatedSeller.kycVerified,
         onboardingStatus: updatedSeller.onboardingStatus,
         merchantAgreementAccepted: isDoneAgreement,
         agreementAccepted: isDoneAgreement,
         role: "ADMIN",
+        isTeamMember: false,
+        memberName: updatedSeller.onboarding?.signatoryName || updatedSeller.businessName || "Store Owner",
+        memberPhone: updatedSeller.phone,
       },
     });
     return;
@@ -376,11 +395,15 @@ export const sellerLogin = asyncHandler(async (req: Request, res: Response) => {
       phone: seller.phone,
       email: seller.email,
       businessName: seller.businessName || seller.onboarding?.businessName || "",
+      logoUrl: seller.onboarding?.logoUrl || null,
       kycVerified: seller.kycVerified,
       onboardingStatus: seller.onboardingStatus,
       merchantAgreementAccepted: isDoneAgreement,
       agreementAccepted: isDoneAgreement,
       role: "ADMIN",
+      isTeamMember: false,
+      memberName: seller.onboarding?.signatoryName || seller.businessName || "Store Owner",
+      memberPhone: seller.phone,
     },
   });
 });
@@ -391,7 +414,9 @@ export const resendSellerOtp = asyncHandler(async (req: Request, res: Response) 
   const { phone, countryCode, phoneNumber } = normalizePhone(phoneRaw);
 
   const existingSeller = await prisma.seller.findUnique({ where: { phone } });
-  if (!existingSeller && purpose !== "signup") {
+  const teamMember = await prisma.teamMember.findFirst({ where: { phone, status: "ACTIVE" } });
+
+  if (!existingSeller && !teamMember && purpose !== "signup") {
     res.status(404).json({ success: false, error: AUTH_ERRORS.USER_NOT_FOUND });
     return;
   }
@@ -399,30 +424,40 @@ export const resendSellerOtp = asyncHandler(async (req: Request, res: Response) 
   const otp = generateOtp(6);
   const expiresAt = new Date(Date.now() + 10 * 60 * 1000);
 
-  const updateData: any =
-    purpose === "reset"
-      ? { resetOtpCode: otp, resetOtpExpiresAt: expiresAt }
-      : { phoneOtpCode: otp, phoneOtpExpiresAt: expiresAt };
-
-  if (existingSeller) {
-    await prisma.seller.update({
-      where: { phone },
+  if (teamMember && (!existingSeller || existingSeller.onboardingStatus !== "VERIFIED") && purpose === "signin") {
+    await prisma.teamMember.updateMany({
+      where: { phone, status: "ACTIVE" },
       data: {
-        countryCode,
-        phoneNumber,
-        ...updateData,
+        phoneOtpCode: otp,
+        phoneOtpExpiresAt: expiresAt,
       },
     });
   } else {
-    await prisma.seller.create({
-      data: {
-        phone,
-        countryCode,
-        phoneNumber,
-        onboardingStatus: OnboardingStatus.INCOMPLETE,
-        ...updateData,
-      },
-    });
+    const updateData: any =
+      purpose === "reset"
+        ? { resetOtpCode: otp, resetOtpExpiresAt: expiresAt }
+        : { phoneOtpCode: otp, phoneOtpExpiresAt: expiresAt };
+
+    if (existingSeller) {
+      await prisma.seller.update({
+        where: { phone },
+        data: {
+          countryCode,
+          phoneNumber,
+          ...updateData,
+        },
+      });
+    } else {
+      await prisma.seller.create({
+        data: {
+          phone,
+          countryCode,
+          phoneNumber,
+          onboardingStatus: OnboardingStatus.INCOMPLETE,
+          ...updateData,
+        },
+      });
+    }
   }
 
   const resendResult = await otpService.resendSms(phone, retryType as "text" | "voice");
@@ -523,26 +558,46 @@ export const getMe = asyncHandler(async (req: Request, res: Response) => {
   }
 
   let role = "ADMIN";
+  let isTeamMember = false;
+  let memberName = seller.onboarding?.signatoryName || seller.businessName || "Store Owner";
+  let memberPhone = seller.phone;
+  let memberEmail = seller.email || "";
+
   if (teamMemberId) {
     const teamMember = await prisma.teamMember.findUnique({ where: { id: teamMemberId } });
     if (teamMember) {
       role = teamMember.role;
+      isTeamMember = true;
+      memberName = teamMember.name;
+      memberPhone = teamMember.phone;
+      memberEmail = teamMember.email || "";
     }
   }
+
+  const isDoneAgreement = Boolean(
+    seller.onboarding?.merchantAgreementAccepted && seller.onboarding?.digitalSignature
+  );
 
   res.json({
     success: true,
     seller: {
       id: seller.id,
-      phone: seller.phone,
+      phone: memberPhone,
       countryCode: seller.countryCode,
-      phoneNumber: seller.phoneNumber,
-      email: seller.email,
+      phoneNumber: memberPhone.replace(/^\+91/, ""),
+      email: memberEmail || seller.email,
       businessName: seller.businessName || seller.onboarding?.businessName || "",
-      kycVerified: seller.kycVerified,
-      onboardingStatus: seller.onboardingStatus,
+      logoUrl: seller.onboarding?.logoUrl || null,
+      kycVerified: isTeamMember ? true : seller.kycVerified,
+      onboardingStatus: isTeamMember ? "VERIFIED" : seller.onboardingStatus,
+      merchantAgreementAccepted: isTeamMember ? true : isDoneAgreement,
+      agreementAccepted: isTeamMember ? true : isDoneAgreement,
+      isTeamMember,
       role,
       teamMemberId,
+      memberName,
+      memberPhone,
+      memberEmail,
     },
   });
 });

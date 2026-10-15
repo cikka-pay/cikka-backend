@@ -45,10 +45,12 @@ export const SETTLEMENT_CYCLE_MAP: Record<string, SettlementCycle> = {
   // UI radio values (from HTML)
   "T+1": "T_PLUS_1",
   "T+3": "T_PLUS_3",
+  "T+4": "T_PLUS_3",
   "T+7": "T_PLUS_7",
   "T+14": "T_PLUS_14",
   "t1": "T_PLUS_1",
   "t3": "T_PLUS_3",
+  "t4": "T_PLUS_3",
   "t7": "T_PLUS_7",
   "t14": "T_PLUS_14",
   // Passthrough

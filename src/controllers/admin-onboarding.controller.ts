@@ -1,7 +1,7 @@
 import { Request, Response } from "express";
 import { asyncHandler } from "../utils/asyncHandler";
 import { prisma } from "../config/prisma";
-import { sendSellerWelcomeEmail, sendSellerRejectionEmail } from "../utils/resend";
+import { sendSellerWelcomeEmail, sendSellerRejectionEmail, sendMissingDocumentEmail } from "../utils/resend";
 import { generateApplicationId } from "../services/auth.service";
 import { razorpayRouteService } from "../services/razorpayRoute.service";
 
@@ -183,21 +183,25 @@ export const updateApplicationStatus = asyncHandler(async (req: Request, res: Re
 
   // Send Resend Welcome Email to Seller ONCE when status transitions to VERIFIED
   if (isApproved && previousSeller?.onboardingStatus !== "VERIFIED") {
-    const sellerEmail = updatedSeller.email || updatedSeller.onboarding?.signatoryEmail || process.env.RESEND_TEST_RECIPIENT || "vedantvyas79@gmail.com";
-    sendSellerWelcomeEmail({
-      to: sellerEmail,
-      sellerName: updatedSeller.businessName || updatedSeller.onboarding?.signatoryName || "Partner",
-    }).catch((err) => console.error("Failed to send welcome email via Resend:", err));
+    const sellerEmail = (updatedSeller.email || updatedSeller.onboarding?.signatoryEmail)?.trim();
+    if (sellerEmail && sellerEmail.includes("@")) {
+      sendSellerWelcomeEmail({
+        to: sellerEmail,
+        sellerName: updatedSeller.businessName || updatedSeller.onboarding?.signatoryName || "Partner",
+      }).catch((err) => console.error("Failed to send welcome email via Resend:", err));
+    }
   }
 
   // Send Resend Rejection Email to Seller ONCE when status transitions to REJECTED
   if (status === "REJECTED" && previousSeller?.onboardingStatus !== "REJECTED") {
-    const sellerEmail = updatedSeller.email || updatedSeller.onboarding?.signatoryEmail || process.env.RESEND_TEST_RECIPIENT || "vedantvyas79@gmail.com";
-    sendSellerRejectionEmail({
-      to: sellerEmail,
-      sellerName: updatedSeller.businessName || updatedSeller.onboarding?.signatoryName || "Partner",
-      reason: reviewNotes || "Document verification details required updating",
-    }).catch((err) => console.error("Failed to send rejection email via Resend:", err));
+    const sellerEmail = (updatedSeller.email || updatedSeller.onboarding?.signatoryEmail)?.trim();
+    if (sellerEmail && sellerEmail.includes("@")) {
+      sendSellerRejectionEmail({
+        to: sellerEmail,
+        sellerName: updatedSeller.businessName || updatedSeller.onboarding?.signatoryName || "Partner",
+        reason: reviewNotes || "Document verification details required updating",
+      }).catch((err) => console.error("Failed to send rejection email via Resend:", err));
+    }
   }
 
   const finalSeller = await prisma.seller.findUnique({
@@ -260,6 +264,22 @@ export const notifyMissingDocument = asyncHandler(async (req: Request, res: Resp
     },
   });
 
+  // Also dispatch real-time Resend email notice directly to seller
+  const seller = await prisma.seller.findUnique({
+    where: { id: sellerId },
+    select: { email: true, businessName: true },
+  });
+  const targetEmail = (seller?.email || onboarding.signatoryEmail)?.trim();
+  if (targetEmail && targetEmail.includes("@")) {
+    sendMissingDocumentEmail({
+      to: targetEmail,
+      sellerName: seller?.businessName || onboarding.signatoryName || "Partner",
+      documentTitle,
+      reason,
+      uploadLink: "http://localhost:5173/onboarding",
+    }).catch((err) => console.error("Failed to send missing document email via Resend:", err));
+  }
+
   res.json({
     message: "Missing document notification sent to seller",
     missingDocument: newMissingItem,
@@ -299,7 +319,10 @@ export const getApprovedSellers = asyncHandler(async (req: Request, res: Respons
   const sellers = await prisma.seller.findMany({
     where: { 
       onboardingStatus: "VERIFIED",
-      email: { not: { endsWith: "@testbrand.com" } }
+      OR: [
+        { email: null },
+        { email: { not: { endsWith: "@testbrand.com" } } }
+      ]
     },
     include: {
       onboarding: true,

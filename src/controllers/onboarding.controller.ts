@@ -7,6 +7,7 @@ import { BUSINESS_TYPE_MAP, FULFILLMENT_TYPE_MAP, SETTLEMENT_CYCLE_MAP } from ".
 import { sendSellerWaitlistEmail } from "../utils/resend";
 import { generateApplicationId } from "../services/auth.service";
 import { razorpayRouteService } from "../services/razorpayRoute.service";
+import { uploadFile } from "../services/upload.service";
 
 
 export const getOnboardingState = asyncHandler(async (req: Request, res: Response) => {
@@ -34,6 +35,15 @@ export const getOnboardingState = asyncHandler(async (req: Request, res: Respons
       data: { applicationId: cikkaId },
     }).catch(() => {});
     seller.onboarding.applicationId = cikkaId;
+  }
+
+  // Clean up corrupted logo URL if it previously saved as undefined
+  if (seller.onboarding?.logoUrl && seller.onboarding.logoUrl.includes("undefined")) {
+    seller.onboarding.logoUrl = null as any;
+    await prisma.sellerOnboarding.update({
+      where: { sellerId: seller.id },
+      data: { logoUrl: null },
+    }).catch(() => {});
   }
 
   res.json({
@@ -264,7 +274,7 @@ export const updateStep5 = asyncHandler(async (req: Request, res: Response) => {
       monthlySalesTarget: data.monthlySalesTarget ? Number(data.monthlySalesTarget) : undefined,
       // Map UI values → Prisma enums
       settlementCycle: data.settlementCycle
-        ? SETTLEMENT_CYCLE_MAP[data.settlementCycle] ?? data.settlementCycle
+        ? (SETTLEMENT_CYCLE_MAP[data.settlementCycle] || "T_PLUS_7")
         : undefined,
       fulfillmentType: data.fulfillmentType
         ? FULFILLMENT_TYPE_MAP[data.fulfillmentType] ?? data.fulfillmentType
@@ -287,13 +297,15 @@ export const updateStep5 = asyncHandler(async (req: Request, res: Response) => {
   // Dispatch Resend "Application Under Review" Email to Seller ONCE on initial submission
   const isFirstSubmission = !existingSeller?.onboardingStatus || existingSeller.onboardingStatus === "INCOMPLETE";
   if (isFirstSubmission) {
-    const recipientEmail = existingSeller?.email || onboarding?.signatoryEmail || data.signatoryEmail || process.env.RESEND_TEST_RECIPIENT || "vedantvyas79@gmail.com";
+    const recipientEmail = (existingSeller?.email || onboarding?.signatoryEmail || data.signatoryEmail)?.trim();
     const recipientName = data.businessName || existingSeller?.businessName || onboarding?.signatoryName || "Partner";
 
-    sendSellerWaitlistEmail({
-      to: recipientEmail,
-      sellerName: recipientName,
-    }).catch((err) => console.error("Failed to send Application Under Review email via Resend:", err));
+    if (recipientEmail && recipientEmail.includes("@")) {
+      sendSellerWaitlistEmail({
+        to: recipientEmail,
+        sellerName: recipientName,
+      }).catch((err) => console.error("Failed to send Application Under Review email via Resend:", err));
+    }
   }
 
   res.json(onboarding);
@@ -307,14 +319,30 @@ export const uploadLogo = asyncHandler(async (req: Request, res: Response) => {
     return;
   }
   
-  // Real implementation will use storage service
-  const url = `/uploads/${req.file.filename}`;
+  const uploadResult = await uploadFile({
+    file: req.file,
+    folder: "logos",
+    entityId: sellerId,
+    public: true,
+  });
+
+  const url = uploadResult.url;
   await prisma.sellerOnboarding.update({
     where: { sellerId },
     data: { logoUrl: url },
   });
   
-  res.json({ url });
+  res.json({ url, success: true });
+});
+
+export const removeLogo = asyncHandler(async (req: Request, res: Response) => {
+  const sellerId = req.seller!.id;
+  await prisma.sellerOnboarding.update({
+    where: { sellerId },
+    data: { logoUrl: null },
+  });
+
+  res.json({ success: true, message: "Logo removed successfully" });
 });
 
 export const updateStep6 = asyncHandler(async (req: Request, res: Response) => {

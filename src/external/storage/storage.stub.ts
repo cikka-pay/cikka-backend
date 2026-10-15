@@ -41,6 +41,16 @@ export const storageStub: StorageService = {
 
     fs.writeFileSync(filePath, options.buffer);
 
+    // Also mirror to project uploads directory so the developer can see it locally
+    try {
+      const projectFilePath = path.join(process.cwd(), "uploads", key);
+      const projectDir = path.dirname(projectFilePath);
+      if (!fs.existsSync(projectDir)) {
+        fs.mkdirSync(projectDir, { recursive: true });
+      }
+      fs.writeFileSync(projectFilePath, options.buffer);
+    } catch {}
+
     const url = `/uploads/${key}`;
     console.log(`[STORAGE STUB] Uploaded: ${url} (${options.buffer.length} bytes, ${options.mimeType})`);
 
@@ -61,6 +71,12 @@ export const storageStub: StorageService = {
     } else {
       console.warn(`[STORAGE STUB] File not found for deletion: ${key}`);
     }
+    try {
+      const projectFilePath = path.join(process.cwd(), "uploads", key);
+      if (fs.existsSync(projectFilePath)) {
+        fs.unlinkSync(projectFilePath);
+      }
+    } catch {}
   },
 
   async getSignedUrl(key: string, _expiresInSeconds?: number): Promise<string> {

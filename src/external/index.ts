@@ -27,12 +27,18 @@ if (mode !== "stub" && mode !== "real") {
   throw new Error(`Invalid EXTERNAL_SERVICES_MODE="${mode}". Must be "stub" or "real".`);
 }
 
+// Storage service:
+// GCS requires a real GCP bucket and credentials. If GCS is not explicitly
+// configured with credentials or if STORAGE_SERVICE_MODE="stub", default to local storageStub.
+const hasGcsConfig = Boolean(process.env.GCS_BUCKET_NAME && (process.env.GCS_PROJECT_ID || process.env.GCS_KEY_FILE));
+const storageMode = process.env.STORAGE_SERVICE_MODE ?? (hasGcsConfig && mode === "real" ? "real" : "stub");
+
 export const otpService: OtpService = mode === "real" ? otpReal : otpStub;
 export const kybService: KybService = mode === "real" ? kybReal : kybStub;
-export const storageService: StorageService = mode === "real" ? storageGcs : storageStub;
+export const storageService: StorageService = storageMode === "real" ? storageGcs : storageStub;
 export const setuBbpsService: SetuBbpsService = mode === "real" ? setuBbpsReal : setuBbpsStub;
 export const setuClient: SetuBbpsClient = mode === "real" ? setuReal : setuStub;
 export const instantpayClient: InstantPayClient = mode === "real" ? instantpayReal : instantpayStub;
 
-console.log(`[External Services] Mode: ${mode}`);
+console.log(`[External Services] Mode: ${mode}, Storage: ${storageMode}`);
 

@@ -22,7 +22,11 @@ export function isOtpValid(
   if (!storedCode || !expiresAt) return false;
   if (isOtpExpired(expiresAt)) return false;
 
-  if (inputCode === "1111" || inputCode === "111111") return true; // Dev bypass
+  const isRealMode = process.env.EXTERNAL_SERVICES_MODE === "real" || process.env.NODE_ENV === "production";
+  if (!isRealMode && (inputCode === "1111" || inputCode === "111111")) {
+    return true; // Dev bypass only allowed in stub/test mode
+  }
+
   return storedCode === inputCode;
 }
 

@@ -67,6 +67,10 @@ export const config = {
   gcsBucketName: process.env.GCS_BUCKET_NAME || "cikka-uploads-dev",
   gcsKeyFile: process.env.GCS_KEY_FILE,
   gcsSignedUrlExpiry: parseInt(process.env.GCS_SIGNED_URL_EXPIRY || "3600", 10),
+
+  // Resend Email Service Config
+  resendApiKey: process.env.RESEND_API_KEY || "",
+  resendFromEmail: process.env.RESEND_FROM_EMAIL || "noreply@cikka.club",
 };
 
 

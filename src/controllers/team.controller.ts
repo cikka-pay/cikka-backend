@@ -57,8 +57,25 @@ export const inviteTeamMember = asyncHandler(async (req: Request, res: Response)
     });
   }
 
-  // Send OTP
+  // Send OTP via SMS
   await otpService.sendSms(phone, otp);
+
+  // If email provided, dispatch team invite email via Resend
+  if (email && email.includes("@")) {
+    const seller = await prisma.seller.findUnique({
+      where: { id: sellerId },
+      select: { businessName: true },
+    });
+    const { sendTeamInviteEmail } = await import("../utils/resend");
+    sendTeamInviteEmail({
+      to: email.trim(),
+      inviteeName: name,
+      businessName: seller?.businessName || "Cikka Partner Store",
+      role,
+      otpCode: otp,
+      loginUrl: "http://localhost:5173/login",
+    }).catch((err) => console.error("Failed to send team invite email via Resend:", err));
+  }
 
   res.json({ success: true, message: "Invite OTP sent successfully." });
 });

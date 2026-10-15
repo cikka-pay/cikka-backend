@@ -164,9 +164,50 @@ export const razorpayRouteService = {
       const errorMsg = errData?.error?.description || err.message || "Failed to create Razorpay Route linked account";
       console.warn(`[Razorpay Route Warning] Account creation API notice: ${errorMsg}`);
 
-      // Robust Dev/Sandbox Fallback: Generate mock linked account if Route is in sandbox/testing mode
-      const isTestKey = (process.env.RAZORPAY_KEY_ID || "").startsWith("rzp_test");
-      if (isTestKey || config.isDevelopment || config.isTest) {
+      // 1. Detect if Razorpay indicated an existing linked account for this merchant email
+      // Example: "Merchant email already exists for account - SgpZQu8q5qVsrI"
+      const existingAccountMatch = errorMsg.match(/account\s*-\s*([A-Za-z0-9_-]+)/i);
+      if (existingAccountMatch && existingAccountMatch[1]) {
+        const rawId = existingAccountMatch[1];
+        const realAccountId = rawId.startsWith("acc_") ? rawId : `acc_${rawId}`;
+        console.log(`[Razorpay Route - Live Mode] Existing live account detected from Razorpay: ${realAccountId}. Linking to seller.`);
+
+        try {
+          await prisma.seller.update({
+            where: { id: data.sellerId },
+            data: {
+              razorpayAccountId: realAccountId,
+              razorpayAccountStatus: "ACTIVATED",
+            } as any,
+          });
+
+          await prisma.sellerOnboarding.updateMany({
+            where: { sellerId: data.sellerId },
+            data: {
+              razorpayAccountId: realAccountId,
+              razorpayAccountStatus: "ACTIVATED",
+            } as any,
+          });
+        } catch (dbErr: any) {
+          console.warn(`[DB Notice] Linked account save notice: ${dbErr.message}`);
+        }
+
+        return {
+          success: true,
+          accountId: realAccountId,
+          status: "ACTIVATED",
+          message: `Linked to existing Razorpay Route Account (${realAccountId}).`,
+          rawResponse: errData,
+        };
+      }
+
+      // 2. Check if Real/Live Mode is active
+      const keyId = (process.env.RAZORPAY_KEY_ID || config.razorpayKeyId || "").trim();
+      const isLiveKey = keyId.startsWith("rzp_live");
+      const isRealMode = isLiveKey || process.env.EXTERNAL_SERVICES_MODE === "real";
+
+      // Only generate mock accounts if strictly in test/stub mode with test keys
+      if (!isRealMode && keyId.startsWith("rzp_test")) {
         const mockAccountId = `acc_test_${Date.now().toString(36)}_${Math.random().toString(36).substring(2, 6)}`;
         console.log(`[Razorpay Route - Sandbox Mode] Assigned Linked Account ID: ${mockAccountId} for testing.`);
 

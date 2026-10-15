@@ -3,6 +3,7 @@ import app from "./app";
 
 const port = parseInt(process.env.PORT as string, 10) || 4000;
 
+// Server instance
 const server = app.listen(port, "0.0.0.0", () => {
   console.log(`\n==================================================`);
   console.log(`🚀 Cikka Backend API listening on port ${port}`);

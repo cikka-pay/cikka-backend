@@ -1,11 +1,11 @@
 import { Router } from "express";
+import { z } from "zod";
 import {
-  listOrders,
-  getOrder,
   createOrder,
+  getOrder,
+  listOrders,
   updateOrderStatus,
 } from "../controllers/orders.controller";
-import { z } from "zod";
 import { validate } from "../middleware/validate.middleware";
 
 const router = Router();
