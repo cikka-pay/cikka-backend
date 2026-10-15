@@ -93,8 +93,16 @@ export const razorpayRouteService = {
       else if (bt.includes("individual")) rzpBusinessType = "individual";
     }
 
+    const cleanEmail = (data.email || "").trim().toLowerCase();
+    if (!cleanEmail) {
+      return {
+        success: false,
+        error: "Seller email is required to create Razorpay Route linked account.",
+      };
+    }
+
     const payload: any = {
-      email: data.email,
+      email: cleanEmail,
       phone: data.phone.replace(/\D/g, "").slice(-10),
       type: "route",
       legal_business_name: data.businessName || "Cikka Merchant Partner",

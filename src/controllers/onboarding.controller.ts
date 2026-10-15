@@ -167,6 +167,11 @@ export const updateStep3 = asyncHandler(async (req: Request, res: Response) => {
   const sellerId = req.seller!.id;
   const data = req.body;
 
+  const currentSeller = await prisma.seller.findUnique({ where: { id: sellerId } });
+
+  // Prioritize provided signatoryEmail, fallback to verified email from signup
+  const resolvedEmail = (data.signatoryEmail && data.signatoryEmail.trim()) || currentSeller?.email || undefined;
+
   const onboarding = await prisma.sellerOnboarding.update({
     where: { sellerId },
     data: {
@@ -175,16 +180,16 @@ export const updateStep3 = asyncHandler(async (req: Request, res: Response) => {
       signatoryPersonalPan: data.signatoryPersonalPan,
       signatoryAadhaar: data.signatoryAadhaar,
       signatoryMobile: data.signatoryMobile,
-      signatoryEmail: data.signatoryEmail,
+      signatoryEmail: resolvedEmail,
       completedSteps: 3,
     },
   });
 
-  // Sync email to Seller record if provided
-  if (data.signatoryEmail && data.signatoryEmail.trim()) {
+  // Sync email to Seller record if resolved
+  if (resolvedEmail && resolvedEmail.trim()) {
     await prisma.seller.update({
       where: { id: sellerId },
-      data: { email: data.signatoryEmail.trim() },
+      data: { email: resolvedEmail.trim() },
     }).catch(() => {});
   }
 
@@ -227,17 +232,24 @@ export const updateStep4 = asyncHandler(async (req: Request, res: Response) => {
   // Auto-provision or update Razorpay Route linked account if bank details are valid
   if (data.bankAccountNumber && data.bankIfsc) {
     const seller = await prisma.seller.findUnique({ where: { id: sellerId } });
-    razorpayRouteService.createLinkedAccount({
-      sellerId,
-      businessName: seller?.businessName || onboarding.businessName || "Merchant Partner",
-      businessType: onboarding.businessType as any,
-      email: seller?.email || onboarding.signatoryEmail || "seller@cikka.club",
-      phone: seller?.phone || "9876543210",
-      signatoryName: onboarding.signatoryName || undefined,
-      bankAccountNumber: data.bankAccountNumber,
-      bankIfsc: data.bankIfsc,
-      bankAccountHolder: data.bankAccountHolder,
-    }).catch((err) => console.warn(`[Razorpay Route Step 4 Provisioning Notice] ${err.message}`));
+    const targetEmail = (seller?.email && seller.email.trim())
+      || (onboarding.signatoryEmail && onboarding.signatoryEmail.trim());
+
+    if (!targetEmail) {
+      console.warn(`[Razorpay Route Step 4] Cannot create linked account for seller ${sellerId}: verified email missing.`);
+    } else {
+      razorpayRouteService.createLinkedAccount({
+        sellerId,
+        businessName: seller?.businessName || onboarding.businessName || "Merchant Partner",
+        businessType: onboarding.businessType as any,
+        email: targetEmail,
+        phone: seller?.phone || "9876543210",
+        signatoryName: onboarding.signatoryName || undefined,
+        bankAccountNumber: data.bankAccountNumber,
+        bankIfsc: data.bankIfsc,
+        bankAccountHolder: data.bankAccountHolder,
+      }).catch((err) => console.warn(`[Razorpay Route Step 4 Provisioning Notice] ${err.message}`));
+    }
   }
 
   res.json(onboarding);

@@ -160,24 +160,31 @@ export const updateApplicationStatus = asyncHandler(async (req: Request, res: Re
 
   // Provision Razorpay Route Linked Account whenever seller is approved
   if (isApproved) {
-    try {
-      const linkedAccResult = await razorpayRouteService.createLinkedAccount({
-        sellerId: updatedSeller.id,
-        businessName: updatedSeller.businessName || updatedSeller.onboarding?.businessName || "Merchant Partner",
-        businessType: updatedSeller.onboarding?.businessType as any,
-        email: updatedSeller.email || updatedSeller.onboarding?.signatoryEmail || "seller@cikka.club",
-        phone: updatedSeller.phone,
-        signatoryName: updatedSeller.onboarding?.signatoryName || undefined,
-        panNumber: updatedSeller.onboarding?.panNumber || updatedSeller.onboarding?.signatoryPersonalPan || undefined,
-        gstNumber: updatedSeller.onboarding?.gstNumber || undefined,
-        bankAccountNumber: updatedSeller.onboarding?.bankAccountNumber || undefined,
-        bankIfsc: updatedSeller.onboarding?.bankIfsc || undefined,
-        bankAccountHolder: updatedSeller.onboarding?.bankAccountHolder || undefined,
-        address: updatedSeller.onboarding?.pickupAddress as any,
-      });
-      console.log(`[Admin Approval] Razorpay Route Linked Account status: ${linkedAccResult.status}, ID: ${linkedAccResult.accountId}`);
-    } catch (err: any) {
-      console.warn(`[Razorpay Route Auto-Provisioning Notice] ${err.message}`);
+    const targetEmail = (updatedSeller.email && updatedSeller.email.trim())
+      || (updatedSeller.onboarding?.signatoryEmail && updatedSeller.onboarding.signatoryEmail.trim());
+
+    if (!targetEmail) {
+      console.warn(`[Admin Approval] Skipping Razorpay Route linked account creation for ${sellerId}: verified email missing.`);
+    } else {
+      try {
+        const linkedAccResult = await razorpayRouteService.createLinkedAccount({
+          sellerId: updatedSeller.id,
+          businessName: updatedSeller.businessName || updatedSeller.onboarding?.businessName || "Merchant Partner",
+          businessType: updatedSeller.onboarding?.businessType as any,
+          email: targetEmail,
+          phone: updatedSeller.phone,
+          signatoryName: updatedSeller.onboarding?.signatoryName || undefined,
+          panNumber: updatedSeller.onboarding?.panNumber || updatedSeller.onboarding?.signatoryPersonalPan || undefined,
+          gstNumber: updatedSeller.onboarding?.gstNumber || undefined,
+          bankAccountNumber: updatedSeller.onboarding?.bankAccountNumber || undefined,
+          bankIfsc: updatedSeller.onboarding?.bankIfsc || undefined,
+          bankAccountHolder: updatedSeller.onboarding?.bankAccountHolder || undefined,
+          address: updatedSeller.onboarding?.pickupAddress as any,
+        });
+        console.log(`[Admin Approval] Razorpay Route Linked Account status: ${linkedAccResult.status}, ID: ${linkedAccResult.accountId}`);
+      } catch (err: any) {
+        console.warn(`[Razorpay Route Auto-Provisioning Notice] ${err.message}`);
+      }
     }
   }
 

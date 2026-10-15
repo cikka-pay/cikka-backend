@@ -183,11 +183,14 @@ export async function disburseSettlement(
     const bankIfsc = onboarding?.bankIfsc || "HDFC0001234";
     const bankAccountHolder = onboarding?.bankAccountHolder || seller.businessName || "Merchant Partner";
 
+    const targetEmail = (seller.email && seller.email.trim())
+      || (onboarding?.signatoryEmail && onboarding.signatoryEmail.trim());
+
     const accountRes = await razorpayRouteService.createLinkedAccount({
       sellerId: seller.id,
       businessName: seller.businessName || onboarding?.businessName || "Merchant Partner",
       businessType: onboarding?.businessType as any,
-      email: seller.email || onboarding?.signatoryEmail || "seller@cikka.club",
+      email: targetEmail || "seller@cikka.club",
       phone: seller.phone,
       signatoryName: onboarding?.signatoryName || undefined,
       panNumber: onboarding?.panNumber || onboarding?.signatoryPersonalPan || undefined,
