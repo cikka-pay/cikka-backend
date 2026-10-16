@@ -279,6 +279,7 @@ export const signinVerifyOtp = asyncHandler(async (req: Request, res: Response) 
         agreementAccepted: true,
         isTeamMember: true,
         role: teamMember.role,
+        canViewFinancials: Boolean(teamMember.canViewFinancials),
         teamMemberId: teamMember.id,
         memberName: teamMember.name,
         memberPhone: teamMember.phone,
@@ -563,6 +564,8 @@ export const getMe = asyncHandler(async (req: Request, res: Response) => {
   let memberPhone = seller.phone;
   let memberEmail = seller.email || "";
 
+  let canViewFinancials = false;
+
   if (teamMemberId) {
     const teamMember = await prisma.teamMember.findUnique({ where: { id: teamMemberId } });
     if (teamMember) {
@@ -571,6 +574,7 @@ export const getMe = asyncHandler(async (req: Request, res: Response) => {
       memberName = teamMember.name;
       memberPhone = teamMember.phone;
       memberEmail = teamMember.email || "";
+      canViewFinancials = Boolean(teamMember.canViewFinancials);
     }
   }
 
@@ -594,6 +598,7 @@ export const getMe = asyncHandler(async (req: Request, res: Response) => {
       agreementAccepted: isTeamMember ? true : isDoneAgreement,
       isTeamMember,
       role,
+      canViewFinancials,
       teamMemberId,
       memberName,
       memberPhone,

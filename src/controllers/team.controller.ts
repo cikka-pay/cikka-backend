@@ -8,10 +8,16 @@ import { signToken } from "../utils/jwt";
 
 export const inviteTeamMember = asyncHandler(async (req: Request, res: Response) => {
   const sellerId = req.seller!.id;
-  const { name, phone: phoneRaw, email, role } = req.body;
+  const { name, phone: phoneRaw, email, role, canViewFinancials } = req.body;
   
   if (!name || !phoneRaw || !role) {
     res.status(400).json({ success: false, error: "Name, phone, and role are required." });
+    return;
+  }
+
+  const callerRole = (req as any).userRole || (req.seller as any)?.role || "ADMIN";
+  if (callerRole === "EXECUTIVE" && role.toUpperCase() !== "VIEWER") {
+    res.status(403).json({ success: false, error: "Executives can only invite members with the Viewer role." });
     return;
   }
 
@@ -38,6 +44,7 @@ export const inviteTeamMember = asyncHandler(async (req: Request, res: Response)
         role,
         name,
         email,
+        canViewFinancials: role.toUpperCase() === 'EXECUTIVE' ? Boolean(canViewFinancials) : false,
         phoneOtpCode: otp,
         phoneOtpExpiresAt: expiresAt,
       }
@@ -51,6 +58,7 @@ export const inviteTeamMember = asyncHandler(async (req: Request, res: Response)
         email,
         role,
         status: "INVITED",
+        canViewFinancials: role.toUpperCase() === 'EXECUTIVE' ? Boolean(canViewFinancials) : false,
         phoneOtpCode: otp,
         phoneOtpExpiresAt: expiresAt,
       }
@@ -127,6 +135,7 @@ export const getTeamMembers = asyncHandler(async (req: Request, res: Response) =
       email: true,
       role: true,
       status: true,
+      canViewFinancials: true,
       createdAt: true
     }
   });
@@ -137,7 +146,7 @@ export const getTeamMembers = asyncHandler(async (req: Request, res: Response) =
 export const updateTeamMemberRole = asyncHandler(async (req: Request, res: Response) => {
   const sellerId = req.seller!.id;
   const { id } = req.params;
-  const { role } = req.body;
+  const { role, canViewFinancials } = req.body;
 
   if (!role || !["ADMIN", "EXECUTIVE", "VIEWER"].includes(role.toUpperCase())) {
     res.status(400).json({ success: false, error: "Valid role (ADMIN, EXECUTIVE, VIEWER) is required." });
@@ -155,7 +164,10 @@ export const updateTeamMemberRole = asyncHandler(async (req: Request, res: Respo
 
   const updated = await prisma.teamMember.update({
     where: { id },
-    data: { role: role.toUpperCase() },
+    data: {
+      role: role.toUpperCase(),
+      ...(canViewFinancials !== undefined ? { canViewFinancials: Boolean(canViewFinancials) } : {}),
+    },
     select: {
       id: true,
       name: true,
@@ -163,6 +175,7 @@ export const updateTeamMemberRole = asyncHandler(async (req: Request, res: Respo
       email: true,
       role: true,
       status: true,
+      canViewFinancials: true,
       createdAt: true
     }
   });
