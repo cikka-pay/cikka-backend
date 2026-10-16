@@ -1,6 +1,7 @@
 import { Request, Response } from "express";
 import { asyncHandler } from "../utils/asyncHandler";
 import { prisma } from "../config/prisma";
+import { config } from "../config/env";
 import { razorpayRouteService } from "../services/razorpayRoute.service";
 import { disburseSettlement } from "../services/settlement.service";
 
@@ -17,14 +18,18 @@ export const handleRouteWebhook = asyncHandler(async (req: Request, res: Respons
   const signature = (req.headers["x-razorpay-signature"] as string) || "";
   const rawBody = (req as any).rawBody || JSON.stringify(req.body);
 
-  // If signature is supplied, verify it
-  if (signature && process.env.RAZORPAY_WEBHOOK_SECRET) {
-    const isValid = razorpayRouteService.verifyWebhookSignature(rawBody, signature);
-    if (!isValid) {
-      console.warn("[Razorpay Route Webhook] Invalid webhook signature received.");
+  // Every webhook must be signed. Only outside production, with no secret configured,
+  // are unsigned events accepted (local dev / tests).
+  if (config.razorpayWebhookSecret) {
+    if (!razorpayRouteService.verifyWebhookSignature(rawBody, signature)) {
+      console.warn("[Razorpay Route Webhook] Missing or invalid webhook signature.");
       res.status(400).json({ success: false, error: "Invalid webhook signature" });
       return;
     }
+  } else if (config.isProduction) {
+    console.error("[Razorpay Route Webhook] RAZORPAY_WEBHOOK_SECRET is not set — rejecting webhook.");
+    res.status(503).json({ success: false, error: "Webhook secret not configured" });
+    return;
   }
 
   const event = req.body?.event;

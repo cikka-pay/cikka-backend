@@ -414,8 +414,8 @@ export const razorpayRouteService = {
    * 6. Verify incoming Razorpay Webhook signature
    */
   verifyWebhookSignature(rawBody: string | Buffer, signature: string): boolean {
-    const webhookSecret = process.env.RAZORPAY_WEBHOOK_SECRET || "cikka_webhook_secret_default";
-    if (!signature) return false;
+    const webhookSecret = config.razorpayWebhookSecret;
+    if (!signature || !webhookSecret) return false;
 
     const bodyString = typeof rawBody === "string" ? rawBody : rawBody.toString("utf-8");
     const expectedSignature = crypto

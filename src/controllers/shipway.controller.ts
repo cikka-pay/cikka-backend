@@ -143,7 +143,7 @@ export const bookReversePickup = asyncHandler(async (req: Request, res: Response
   }
 
   const returnRecord = await prisma.return.findFirst({
-    where: { id: returnId },
+    where: { id: returnId, order: { sellerId } },
     include: {
       order: { include: { seller: { include: { onboarding: true } } } },
       product: true,
@@ -225,16 +225,20 @@ export const resolveNdr = asyncHandler(async (req: Request, res: Response) => {
     return;
   }
 
+  // Only act on the seller's own orders.
+  const order = await prisma.order.findFirst({
+    where: { sellerId: req.seller?.id, OR: [{ orderNumber: orderId }, { id: orderId }] },
+  });
+  if (!order) {
+    res.status(404).json({ success: false, error: "Order not found" });
+    return;
+  }
+
   const result = await shipwayService.actionNdr(orderId, action, {
     reattemptDate,
     updatedAddress,
     updatedPhone,
     remarks,
-  });
-
-  // Find and update local order notification if needed
-  const order = await prisma.order.findFirst({
-    where: { OR: [{ orderNumber: orderId }, { id: orderId }] },
   });
 
   if (order && order.sellerId) {
@@ -295,6 +299,14 @@ export const getShipwayDashboardStats = asyncHandler(async (req: Request, res: R
  */
 export const getShippingLabel = asyncHandler(async (req: Request, res: Response) => {
   const { id } = req.params;
+  // Labels carry the customer's address — only for the seller's own orders.
+  const order = await prisma.order.findFirst({
+    where: { sellerId: req.seller?.id, OR: [{ id }, { orderNumber: id }, { trackingNumber: id }] },
+  });
+  if (!order) {
+    res.status(404).json({ success: false, error: "Order not found" });
+    return;
+  }
   const result = await shipwayService.generateShippingLabel(id);
   res.status(200).json({ success: true, ...result });
 });

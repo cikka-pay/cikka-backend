@@ -4,7 +4,13 @@ import { config } from "../config/env";
 
 function getRazorpayClient() {
   const key_id = (process.env.RAZORPAY_KEY_ID || config.razorpayKeyId || "rzp_test_TXf15TcVB0VM09").trim();
-  const key_secret = (process.env.RAZORPAY_KEY_SECRET || config.razorpayKeySecret || "k9HbahlhYk1frXYxKm20Snf5").trim();
+  // The test-mode fallback key is public (it is in this repo) — never use it in production,
+  // or anyone could forge payment signatures.
+  const configuredSecret = process.env.RAZORPAY_KEY_SECRET || config.razorpayKeySecret;
+  if (!configuredSecret && config.isProduction) {
+    throw new Error("RAZORPAY_KEY_SECRET is not set");
+  }
+  const key_secret = (configuredSecret || "k9HbahlhYk1frXYxKm20Snf5").trim();
 
   return {
     client: new Razorpay({ key_id, key_secret }),
@@ -75,10 +81,12 @@ export const razorpayService = {
       return false;
     }
 
+    // Dev/test shortcuts — never honoured in production.
     if (
-      razorpay_order_id.startsWith("order_dev_") ||
+      !config.isProduction &&
+      (razorpay_order_id.startsWith("order_dev_") ||
       razorpay_payment_id.startsWith("pay_dev_") ||
-      razorpay_signature === "mock_signature_valid"
+        razorpay_signature === "mock_signature_valid")
     ) {
       return true;
     }

@@ -5,6 +5,7 @@ import { shipwayService } from "../services/shipway.service";
 import { asyncHandler } from "../utils/asyncHandler";
 import { prisma } from "../config/prisma";
 import { OrderStatus } from "../generated/prisma/client";
+import { config } from "../config/env";
 
 /**
  * POST /api/payment/create-order
@@ -226,6 +227,13 @@ export const verifyPayment = asyncHandler(async (req: Request, res: Response) =>
  * Process customized in-app payment directly using Razorpay REST API without opening popup modal.
  */
 export const processCustomPayment = asyncHandler(async (req: Request, res: Response) => {
+  // This simulates a payment: it invents a payment id and signs it with the real key
+  // secret, so the result passes /verify-payment without any money moving. Dev only.
+  if (config.isProduction) {
+    res.status(404).json({ success: false, error: "Not found" });
+    return;
+  }
+
   const {
     amount,
     order_id: incomingOrderId,

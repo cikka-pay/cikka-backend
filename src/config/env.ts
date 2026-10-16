@@ -64,7 +64,7 @@ export const config = {
   // Razorpay Gateway & Route Config
   razorpayKeyId: process.env.RAZORPAY_KEY_ID,
   razorpayKeySecret: process.env.RAZORPAY_KEY_SECRET,
-  razorpayWebhookSecret: process.env.RAZORPAY_WEBHOOK_SECRET || "cikka_route_prod_secret_2026",
+  razorpayWebhookSecret: process.env.RAZORPAY_WEBHOOK_SECRET,
 
   // Shipway Experience API Config
   shipwayUsername: process.env.SHIPWAY_USERNAME,

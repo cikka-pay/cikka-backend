@@ -4,6 +4,7 @@ import app from "../../app";
 import { prisma } from "../../config/prisma";
 import { cleanTestData, createTestSeller } from "../helpers";
 import { razorpayRouteService } from "../../services/razorpayRoute.service";
+import { signAdminToken } from "../../utils/jwt";
 
 describe("Razorpay Route Integration Tests", () => {
   let token = "";
@@ -134,6 +135,7 @@ describe("Razorpay Route Integration Tests", () => {
 
       const res = await request(app)
         .post(`/api/razorpay-route/disburse/${settlement.id}`)
+        .set("Authorization", `Bearer ${signAdminToken({ id: "admin_test", email: "admin@test", role: "SUPER_ADMIN" })}`)
         .send({ forceEarlyRelease: false });
 
       expect(res.status).toBe(200);

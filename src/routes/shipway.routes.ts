@@ -16,18 +16,20 @@ import {
   getOptimalCarrier,
 } from "../controllers/shipway.controller";
 
+import { requireAdminAuth, requireAnyAuth, requireSellerAuth } from "../middleware/auth.middleware";
+
 const router = Router();
 
-// Seller Operations Endpoints
-router.post("/dispatch-order", dispatchOrder);
-router.post("/reverse-pickup", bookReversePickup);
-router.post("/ndr-action", resolveNdr);
-router.get("/dashboard-stats", getShipwayDashboardStats);
-router.get("/label/:id", getShippingLabel);
+// Seller Operations Endpoints — scoped to req.seller.id
+router.post("/dispatch-order", requireSellerAuth, dispatchOrder);
+router.post("/reverse-pickup", requireSellerAuth, bookReversePickup);
+router.post("/ndr-action", requireSellerAuth, resolveNdr);
+router.get("/dashboard-stats", requireSellerAuth, getShipwayDashboardStats);
+router.get("/label/:id", requireSellerAuth, getShippingLabel);
 
-// Push Order Data to Shipway
-router.post("/push-order", pushOrder);
-router.post("/pushOrderData", pushOrder);
+// Push Order Data to Shipway (seller dashboard or signed-in app user)
+router.post("/push-order", requireAnyAuth, pushOrder);
+router.post("/pushOrderData", requireAnyAuth, pushOrder);
 
 // Get Order Shipment Tracking Details (Forward and Reverse)
 router.get("/tracking/:orderId", getShipmentDetails);
@@ -44,11 +46,11 @@ router.get("/pincode-serviceable", checkPincodeServiceable);
 router.get("/pincodeserviceable", checkPincodeServiceable);
 router.get("/optimal-carrier", getOptimalCarrier);
 
-// Webhook Configuration
-router.post("/webhooks/add", addWebhooks);
-router.post("/addwebhooks", addWebhooks);
-router.post("/webhooks/delete", deleteWebhooks);
-router.post("/delete_webhooks", deleteWebhooks);
+// Webhook Configuration — admin only
+router.post("/webhooks/add", requireAdminAuth, addWebhooks);
+router.post("/addwebhooks", requireAdminAuth, addWebhooks);
+router.post("/webhooks/delete", requireAdminAuth, deleteWebhooks);
+router.post("/delete_webhooks", requireAdminAuth, deleteWebhooks);
 
 // Webhook Receiver Callback (Public for Shipway webhook engine)
 router.post("/webhook", handleWebhook);

@@ -1,5 +1,6 @@
 import { Router } from 'express';
 import { HubbleController } from '../controllers/hubble.controller';
+import { requireHubbleSecret } from '../middleware/hubble-auth.middleware';
 
 const router = Router();
 
@@ -12,9 +13,10 @@ router.post('/sso', HubbleController.getSSOToken);
 router.get('/sso', HubbleController.getSSOToken);
 
 // Hubble Partner Coins Integration APIs
-router.get('/balance', HubbleController.getBalance);
-router.post('/debit', HubbleController.debitCoins);
-router.post('/reverse', HubbleController.reverseDebit);
+// Called by Hubble's servers — authenticated with the X-Hubble-Secret header.
+router.get('/balance', requireHubbleSecret, HubbleController.getBalance);
+router.post('/debit', requireHubbleSecret, HubbleController.debitCoins);
+router.post('/reverse', requireHubbleSecret, HubbleController.reverseDebit);
 
 // Hubble REST API Endpoints (Brands catalog, Order placement, Wallet)
 router.get('/brands', HubbleController.getBrands);
