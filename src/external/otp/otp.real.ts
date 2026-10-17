@@ -1,6 +1,6 @@
 /**
  * Real OTP Service Integration with DLT compliance for India.
- * Supports MSG91, Fast2SMS, and Twilio gateways based on environment configuration.
+ * Sends SMS OTPs via MSG91 when configured; otherwise logs the OTP to the console.
  */
 import type { OtpService } from "./otp.interface";
 
@@ -33,31 +33,7 @@ export const otpReal: OtpService = {
       return;
     }
 
-    // 2. Fast2SMS DLT Route Integration
-    if (process.env.FAST2SMS_API_KEY && process.env.FAST2SMS_TEMPLATE_ID) {
-      const response = await fetch("https://www.fast2sms.com/dev/bulkV2", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          authorization: process.env.FAST2SMS_API_KEY,
-        },
-        body: JSON.stringify({
-          route: "dlt",
-          sender_id: process.env.FAST2SMS_SENDER_ID || "CIKKAP",
-          message: process.env.FAST2SMS_TEMPLATE_ID,
-          variables_values: `${code}|`,
-          numbers: rawNumber,
-        }),
-      });
-
-      if (!response.ok) {
-        const errorText = await response.text();
-        throw new Error(`Fast2SMS sending failed: ${errorText}`);
-      }
-      return;
-    }
-
-    // 3. Fallback check for missing credentials
+    // 2. Fallback check for missing credentials
     console.log(`
 ==================================================
   📱 CIKKA DEV OTP GENERATED
