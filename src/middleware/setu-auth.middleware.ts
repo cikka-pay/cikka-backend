@@ -8,9 +8,13 @@ import { AUTH_ERRORS, SETU_ERRORS } from "../constants/errors";
 export function requireSetuAuth(req: Request, res: Response, next: NextFunction): void {
   const authHeader = req.headers.authorization;
 
-  // If no auth header is provided by Setu, allow webhook unless strict auth is explicitly enabled
+  // Missing auth is rejected in production (payment-status webhooks must not be spoofable).
+  // Outside production it is allowed unless SETU_STRICT_AUTH=true. SETU_STRICT_AUTH=false opts out explicitly.
   if (!authHeader) {
-    if (process.env.SETU_STRICT_AUTH === "true") {
+    const strict = process.env.SETU_STRICT_AUTH
+      ? process.env.SETU_STRICT_AUTH === "true"
+      : process.env.NODE_ENV === "production";
+    if (strict) {
       res.status(401).json({ success: false, error: AUTH_ERRORS.MISSING_AUTH_HEADER });
       return;
     }
@@ -19,15 +23,16 @@ export function requireSetuAuth(req: Request, res: Response, next: NextFunction)
     return;
   }
 
-  const expectedUsername = process.env.SETU_BASIC_AUTH_USER || "setu_user";
-  const expectedPassword = process.env.SETU_BASIC_AUTH_PASS || "setu_secret_pass";
+  const isProd = process.env.NODE_ENV === "production";
+  const expectedUsername = process.env.SETU_BASIC_AUTH_USER || (isProd ? "" : "setu_user");
+  const expectedPassword = process.env.SETU_BASIC_AUTH_PASS || (isProd ? "" : "setu_secret_pass");
   const expectedSecretToken = process.env.SETU_BEARER_TOKEN;
 
   // 1. Check HTTP Basic Auth
   if (authHeader.startsWith("Basic ")) {
     const credentials = Buffer.from(authHeader.split(" ")[1], "base64").toString("ascii");
     const [username, password] = credentials.split(":");
-    if (username === expectedUsername && password === expectedPassword) {
+    if (expectedUsername && expectedPassword && username === expectedUsername && password === expectedPassword) {
       next();
       return;
     }

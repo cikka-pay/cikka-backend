@@ -1,5 +1,5 @@
 import { Request, Response, NextFunction } from "express";
-import { verifySellerToken, verifyUserToken } from "../utils/jwt";
+import { verifySellerToken, verifyUserToken, verifyAdminToken } from "../utils/jwt";
 import { AUTH_ERRORS } from "../constants/errors";
 
 import { prisma } from "../config/prisma";
@@ -187,3 +187,22 @@ export function requireAnyAuth(req: Request, res: Response, next: NextFunction):
 
 
 
+
+// Verifies the admin-panel JWT (issued by /api/admin/auth/*) and attaches `req.admin`.
+export function requireAdminAuth(req: Request, res: Response, next: NextFunction): void {
+  const header = req.headers.authorization || "";
+  const [scheme, token] = header.split(" ");
+
+  if (scheme !== "Bearer" || !token) {
+    res.status(401).json({ error: AUTH_ERRORS.MISSING_AUTH_HEADER });
+    return;
+  }
+
+  try {
+    const payload = verifyAdminToken(token);
+    req.admin = { id: payload.id, email: payload.email, role: payload.role };
+    next();
+  } catch {
+    res.status(401).json({ error: "Invalid or expired admin token" });
+  }
+}
