@@ -46,13 +46,13 @@ export function verifyToken(token: string): CustomJwtPayload {
 }
 
 export function verifySellerToken(token: string): CustomJwtPayload {
-  const secrets = [
+  // Only secrets we control. Never accept hardcoded dev secrets or unsigned tokens —
+  // anyone could mint a seller token for any sellerId with those.
+  const secrets = Array.from(new Set([
     process.env.JWT_SELLER_SECRET,
     process.env.JWT_SECRET,
     SELLER_SECRET,
-    "cikka-seller-dev-secret-0000000000000000",
-    "cikka-dev-secret-do-not-use-in-production-0000000000000000",
-  ].filter(Boolean) as string[];
+  ].filter(Boolean) as string[]));
 
   for (const secret of secrets) {
     try {
@@ -67,11 +67,6 @@ export function verifySellerToken(token: string): CustomJwtPayload {
       }
       // try next secret
     }
-  }
-
-  const decoded = jwt.decode(token) as CustomJwtPayload;
-  if (decoded && decoded.sub && (!decoded.role || decoded.role === "seller")) {
-    return decoded;
   }
 
   throw new Error(AUTH_ERRORS.INVALID_SELLER_TOKEN);
@@ -94,3 +89,27 @@ export function verifyUserToken(token: string): CustomJwtPayload {
 }
 
 
+export interface AdminJwtPayload extends JwtPayload {
+  id: string;
+  email: string;
+  role: string;
+  type: "ADMIN";
+}
+
+export function getAdminSecret(): string {
+  const secret = process.env.JWT_SECRET || (config.isProduction ? undefined : "cikka_super_secret_jwt_key_2026");
+  if (!secret) throw new Error("JWT_SECRET is not set");
+  return secret;
+}
+
+export function signAdminToken(admin: { id: string; email: string; role: string }): string {
+  return jwt.sign({ ...admin, type: "ADMIN" }, getAdminSecret(), { expiresIn: "7d" });
+}
+
+export function verifyAdminToken(token: string): AdminJwtPayload {
+  const payload = jwt.verify(token, getAdminSecret()) as AdminJwtPayload;
+  if (payload.type !== "ADMIN" || !payload.id) {
+    throw new Error("Invalid admin token");
+  }
+  return payload;
+}

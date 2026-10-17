@@ -4,6 +4,7 @@ import { razorpayService } from "../services/razorpay.service";
 import { shipwayService } from "../services/shipway.service";
 import { asyncHandler } from "../utils/asyncHandler";
 import { prisma } from "../config/prisma";
+import { config } from "../config/env";
 import { OrderStatus } from "../generated/prisma/client";
 
 /**
@@ -226,6 +227,16 @@ export const verifyPayment = asyncHandler(async (req: Request, res: Response) =>
  * Process customized in-app payment directly using Razorpay REST API without opening popup modal.
  */
 export const processCustomPayment = asyncHandler(async (req: Request, res: Response) => {
+  // This endpoint fabricates a payment id and signs it server-side without charging anyone,
+  // which would let any caller forge a "verified" payment. Only allow it against stubs.
+  if (config.isRealExternalServices) {
+    res.status(501).json({
+      success: false,
+      error: "Custom payment simulation is disabled in real mode. Use /api/payment/create-order and /api/payment/verify-payment.",
+    });
+    return;
+  }
+
   const {
     amount,
     order_id: incomingOrderId,

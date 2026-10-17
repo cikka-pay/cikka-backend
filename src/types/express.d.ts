@@ -7,6 +7,7 @@ declare global {
     interface Request {
       seller?: { id: string, teamMemberId?: string, role?: string };
       user?: { id: string };
+      admin?: { id: string, email: string, role: string };
     }
   }
 }
