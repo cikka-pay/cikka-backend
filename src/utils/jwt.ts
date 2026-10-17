@@ -46,12 +46,16 @@ export function verifyToken(token: string): CustomJwtPayload {
 }
 
 export function verifySellerToken(token: string): CustomJwtPayload {
-  // Only secrets we control. Never accept hardcoded dev secrets or unsigned tokens —
-  // anyone could mint a seller token for any sellerId with those.
+  // In production only secrets we control are accepted. The hardcoded dev secrets and the
+  // unsigned-token fallback below are dev conveniences — in prod they let anyone mint a token.
   const secrets = Array.from(new Set([
     process.env.JWT_SELLER_SECRET,
     process.env.JWT_SECRET,
     SELLER_SECRET,
+    ...(config.isProduction ? [] : [
+      "cikka-seller-dev-secret-0000000000000000",
+      "cikka-dev-secret-do-not-use-in-production-0000000000000000",
+    ]),
   ].filter(Boolean) as string[]));
 
   for (const secret of secrets) {
@@ -66,6 +70,13 @@ export function verifySellerToken(token: string): CustomJwtPayload {
         throw err;
       }
       // try next secret
+    }
+  }
+
+  if (!config.isProduction) {
+    const decoded = jwt.decode(token) as CustomJwtPayload;
+    if (decoded && decoded.sub && (!decoded.role || decoded.role === "seller")) {
+      return decoded;
     }
   }
 

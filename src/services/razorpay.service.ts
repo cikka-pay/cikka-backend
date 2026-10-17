@@ -75,9 +75,9 @@ export const razorpayService = {
       return false;
     }
 
-    // Dev/mock bypasses must never apply when talking to real Razorpay.
+    // Dev/mock bypasses must never apply in production.
     if (
-      !config.isRealExternalServices &&
+      !config.isProduction &&
       (razorpay_order_id.startsWith("order_dev_") ||
       razorpay_payment_id.startsWith("pay_dev_") ||
       razorpay_signature === "mock_signature_valid")

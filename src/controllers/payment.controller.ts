@@ -228,11 +228,11 @@ export const verifyPayment = asyncHandler(async (req: Request, res: Response) =>
  */
 export const processCustomPayment = asyncHandler(async (req: Request, res: Response) => {
   // This endpoint fabricates a payment id and signs it server-side without charging anyone,
-  // which would let any caller forge a "verified" payment. Only allow it against stubs.
-  if (config.isRealExternalServices) {
+  // which would let any caller forge a "verified" payment. Never allow it in production.
+  if (config.isProduction) {
     res.status(501).json({
       success: false,
-      error: "Custom payment simulation is disabled in real mode. Use /api/payment/create-order and /api/payment/verify-payment.",
+      error: "Custom payment simulation is disabled in production. Use /api/payment/create-order and /api/payment/verify-payment.",
     });
     return;
   }
