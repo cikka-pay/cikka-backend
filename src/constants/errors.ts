@@ -39,11 +39,11 @@ export const BBPS_ERRORS = {
 
 export const INSTANTPAY_ERRORS = {
   PAN_REQUIRED: "PAN number is required",
-  INVALID_PAN_FORMAT: "Invalid PAN format. Example: ABCDE1234F",
+  INVALID_PAN_FORMAT: "Invalid PAN format. Example: AAAAA1111A",
   VERIFICATION_FAILED: "InstantPay PAN verification failed",
   CREDENTIALS_MISSING: "InstantPay API credentials are not configured",
   GSTIN_REQUIRED: "GSTIN number is required",
-  INVALID_GSTIN_FORMAT: "Invalid GSTIN format. Example: 24ABSCS9486L1Z7",
+  INVALID_GSTIN_FORMAT: "Invalid GSTIN format. Example: 11AAAAA1111A1Z1",
   VERIFICATION_FAILED_GSTIN: "InstantPay GSTIN verification failed",
   CIN_REQUIRED: "CIN number is required",
   INVALID_CIN_FORMAT: "Invalid MCA CIN format. Example: U74999MH2019PTC123456",

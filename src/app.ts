@@ -1,3 +1,5 @@
+import path from "path";
+import fs from "fs";
 import express from "express";
 import cors from "cors";
 import morgan from "morgan";
@@ -38,6 +40,16 @@ app.use(express.urlencoded({ limit: "50mb", extended: true }));
 app.use(morgan("dev"));
 
 app.get("/health", (_req, res) => res.json({ status: "ok" }));
+
+// Serve uploaded files statically
+const tmpUploadsDir = path.resolve("/tmp", "uploads");
+if (!fs.existsSync(tmpUploadsDir)) {
+  try {
+    fs.mkdirSync(tmpUploadsDir, { recursive: true });
+  } catch {}
+}
+app.use("/uploads", express.static(tmpUploadsDir));
+app.use("/uploads", express.static(path.resolve(process.cwd(), "uploads")));
 
 // Direct Setu endpoint matching POST {ourBaseURL}/setu/v1/*
 app.use("/setu/v1", setuRoutes);

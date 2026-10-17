@@ -1,4 +1,5 @@
 import { Request, Response } from "express";
+import { prisma } from "../config/prisma";
 import {
   verifyAadhaarService,
   verifyBankAccountService,
@@ -15,8 +16,9 @@ import { asyncHandler } from "../utils/asyncHandler";
  * Perform PAN authentication and identity verification via InstantPay.
  */
 export const verifyPan = asyncHandler(async (req: Request, res: Response) => {
-  const { pan } = req.body;
-  const userId = req.user?.id || req.seller?.id;
+  const { pan, phone } = req.body;
+  const sellerId = req.seller?.id;
+  const userId = req.user?.id || sellerId;
 
   const result = await verifyPanService({ userId, pan });
 
@@ -35,10 +37,53 @@ export const verifyPan = asyncHandler(async (req: Request, res: Response) => {
     return;
   }
 
+  // Sync verified PAN to User profile if mobile app user is authenticated or phone is provided
+  if (req.user?.id) {
+    await prisma.user.update({
+      where: { id: req.user.id },
+      data: {
+        name: result.registeredName || undefined,
+        panNumber: result.pan,
+        panVerified: true,
+      },
+    }).catch((err) => console.warn(`[InstantPay User Sync] User name sync notice: ${err.message}`));
+  } else if (phone) {
+    const cleanPhoneDigits = String(phone).replace(/\D/g, "").slice(-10);
+    await prisma.user.updateMany({
+      where: { phone: { contains: cleanPhoneDigits } },
+      data: {
+        name: result.registeredName || undefined,
+        panNumber: result.pan,
+        panVerified: true,
+      },
+    }).catch((err) => console.warn(`[InstantPay User Sync] User phone sync notice: ${err.message}`));
+  }
+
+  // Sync verified PAN to SellerOnboarding if seller is authenticated
+  if (sellerId) {
+    await prisma.sellerOnboarding.upsert({
+      where: { sellerId },
+      update: {
+        panNumber: result.pan,
+        panVerified: true,
+        panData: result as any,
+      },
+      create: {
+        sellerId,
+        panNumber: result.pan,
+        panVerified: true,
+        panData: result as any,
+      },
+    }).catch((err) => console.warn(`[InstantPay Onboarding Sync] PAN sync skipped: ${err.message}`));
+  }
+
   res.status(200).json({
     success: true,
     message: result.isDevBypass ? "⚡ PAN verified via Dev Bypass" : "PAN verified successfully",
-    data: result,
+    data: {
+      ...result,
+      panVerified: true,
+    },
   });
 });
 
@@ -61,9 +106,32 @@ export const verifyGstin = asyncHandler(async (req: Request, res: Response) => {
     longitude,
   });
 
+  const failureMessage =
+    result.error ||
+    (result.status && result.status !== "Active" ? `GSTIN verification failed: ${result.status}` : "GSTIN verification failed");
+
+  // Sync verified GSTIN to SellerOnboarding if seller is authenticated
+  if (result.valid && sellerId) {
+    await prisma.sellerOnboarding.upsert({
+      where: { sellerId },
+      update: {
+        gstNumber: result.gstin,
+        gstVerified: true,
+        gstData: result as any,
+      },
+      create: {
+        sellerId,
+        gstNumber: result.gstin,
+        gstVerified: true,
+        gstData: result as any,
+      },
+    }).catch((err) => console.warn(`[InstantPay Onboarding Sync] GSTIN sync skipped: ${err.message}`));
+  }
+
   res.status(200).json({
-    success: true,
-    message: result.valid ? "GSTIN verified successfully" : "GSTIN verification failed",
+    success: result.valid,
+    message: result.valid ? "GSTIN verified successfully" : failureMessage,
+    error: result.valid ? undefined : failureMessage,
     data: result,
   });
 });
@@ -86,6 +154,24 @@ export const verifyCin = asyncHandler(async (req: Request, res: Response) => {
     latitude,
     longitude,
   });
+
+  // Sync verified CIN to SellerOnboarding if seller is authenticated
+  if (result.valid && sellerId) {
+    await prisma.sellerOnboarding.upsert({
+      where: { sellerId },
+      update: {
+        cinNumber: result.cin,
+        cinVerified: true,
+        cinData: result as any,
+      },
+      create: {
+        sellerId,
+        cinNumber: result.cin,
+        cinVerified: true,
+        cinData: result as any,
+      },
+    }).catch((err) => console.warn(`[InstantPay Onboarding Sync] CIN sync skipped: ${err.message}`));
+  }
 
   res.status(200).json({
     success: true,
@@ -114,9 +200,33 @@ export const verifyAadhaar = asyncHandler(async (req: Request, res: Response) =>
     longitude,
   });
 
+  const failureMessage =
+    result.error ||
+    (result.status && result.status !== "VALID" ? `Aadhaar verification failed: ${result.status}` : "Aadhaar verification failed");
+
+  // Sync verified Aadhaar to SellerOnboarding if seller is authenticated
+  if (result.valid && sellerId) {
+    const verifiedName = result.aadhaarHolderName || name || undefined;
+    await prisma.sellerOnboarding.upsert({
+      where: { sellerId },
+      update: {
+        signatoryAadhaar: result.aadhaarNumber || aadhaarNumber,
+        signatoryAadhaarVerified: true,
+        ...(verifiedName ? { signatoryName: verifiedName } : {}),
+      },
+      create: {
+        sellerId,
+        signatoryAadhaar: result.aadhaarNumber || aadhaarNumber,
+        signatoryAadhaarVerified: true,
+        signatoryName: verifiedName,
+      },
+    }).catch((err) => console.warn(`[InstantPay Onboarding Sync] Aadhaar sync skipped: ${err.message}`));
+  }
+
   res.status(200).json({
-    success: true,
-    message: result.valid ? "Aadhaar verified successfully" : "Aadhaar verification failed",
+    success: result.valid,
+    message: result.valid ? "Aadhaar verified successfully" : failureMessage,
+    error: result.valid ? undefined : failureMessage,
     data: result,
   });
 });
@@ -155,7 +265,7 @@ export const verifyVpa = asyncHandler(async (req: Request, res: Response) => {
  * Perform Bank Account Penny Drop verification via InstantPay verifyBankAccount API.
  */
 export const verifyBankAccount = asyncHandler(async (req: Request, res: Response) => {
-  const { accountNumber, bankIfsc, name, externalRef, latitude, longitude } = req.body;
+  const { accountNumber, bankIfsc, name, bankName, externalRef, latitude, longitude } = req.body;
   const sellerId = req.seller?.id;
   const userId = req.user?.id;
 
@@ -169,6 +279,31 @@ export const verifyBankAccount = asyncHandler(async (req: Request, res: Response
     latitude,
     longitude,
   });
+
+  // Sync verified Bank details to SellerOnboarding if seller is authenticated
+  if (result.valid && sellerId) {
+    const verifiedHolder = result.accountHolderName || name || undefined;
+    await prisma.sellerOnboarding.upsert({
+      where: { sellerId },
+      update: {
+        bankAccountNumber: accountNumber,
+        bankIfsc: bankIfsc,
+        bankVerified: true,
+        ...(bankName ? { bankName } : {}),
+        ...(verifiedHolder ? { bankAccountHolder: verifiedHolder } : {}),
+        bankData: result as any,
+      },
+      create: {
+        sellerId,
+        bankAccountNumber: accountNumber,
+        bankIfsc: bankIfsc,
+        bankVerified: true,
+        bankName: bankName || null,
+        bankAccountHolder: verifiedHolder,
+        bankData: result as any,
+      },
+    }).catch((err) => console.warn(`[InstantPay Onboarding Sync] Bank sync skipped: ${err.message}`));
+  }
 
   const errorReason = (result as any).rawResponse?.message || (result as any).rawResponse?.status || (result.status !== "INVALID" ? result.status : null);
   res.status(200).json({

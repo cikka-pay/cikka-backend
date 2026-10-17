@@ -532,6 +532,9 @@ model User {
   name          String?
   email         String?  @unique
   phoneVerified Boolean  @default(false)
+  panNumber     String?
+  panVerified   Boolean  @default(false)
+  profilePic    String?
 
   addresses     UserAddress[]
 
@@ -916,6 +919,7 @@ model TeamMember {
   email       String?
   role        String   // ADMIN | EXECUTIVE | VIEWER
   status      String   @default("INVITED") // INVITED | ACTIVE
+  canViewFinancials Boolean @default(false)
   
   // OTP state for inviting/login
   phoneOtpCode      String?

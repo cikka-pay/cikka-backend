@@ -18,7 +18,11 @@ export const sendWaitlistEmailHandler = asyncHandler(async (req: Request, res: R
     }
   }
 
-  const recipientEmail = email || process.env.RESEND_TEST_RECIPIENT || "vedantvyas79@gmail.com";
+  const recipientEmail = email?.trim();
+  if (!recipientEmail || !recipientEmail.includes("@")) {
+    res.status(400).json({ error: "Valid recipient email address is required" });
+    return;
+  }
 
   const result = await sendSellerWaitlistEmail({
     to: recipientEmail,
@@ -37,7 +41,7 @@ export const sendWelcomeEmailHandler = asyncHandler(async (req: Request, res: Re
   let { email, sellerName, businessName } = req.body;
   const sellerId = req.seller?.id;
 
-  if (!email || email.includes("@cikka.club") || email.trim() === "") {
+  if (!email || email.trim() === "") {
     if (sellerId) {
       const seller = await prisma.seller.findUnique({
         where: { id: sellerId },
@@ -47,7 +51,11 @@ export const sendWelcomeEmailHandler = asyncHandler(async (req: Request, res: Re
     }
   }
 
-  const recipientEmail = email || process.env.RESEND_TEST_RECIPIENT || "vedantvyas79@gmail.com";
+  const recipientEmail = email?.trim();
+  if (!recipientEmail || !recipientEmail.includes("@")) {
+    res.status(400).json({ error: "Valid recipient email address is required" });
+    return;
+  }
 
   const result = await sendSellerWelcomeEmail({
     to: recipientEmail,

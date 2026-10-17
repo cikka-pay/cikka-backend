@@ -35,6 +35,7 @@ export interface InstantPayGstinResult {
   businessType?: string;   // Proprietorship | Pvt Ltd | LLP
   state?: string;          // stj
   address?: any;           // pradr.addr
+  error?: string;
   rawResponse?: any;
 }
 
@@ -74,6 +75,7 @@ export interface InstantPayAadhaarResult {
   gender?: string;
   maskedMobile?: string;
   status?: string;
+  error?: string;
   rawResponse?: any;
 }
 

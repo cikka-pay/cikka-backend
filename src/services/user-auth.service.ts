@@ -12,7 +12,7 @@ const pendingOtps = new Map<string, { code: string; expiresAt: Date }>();
 
 export async function sendUserOtpService(phoneRaw: string) {
   const { phone } = normalizePhone(phoneRaw);
-  const otp = generateOtp(4);
+  const otp = generateOtp(6);
   const expiresAt = new Date(Date.now() + 10 * 60 * 1000); // 10 minutes
 
   // Prune expired OTP entries
@@ -26,6 +26,17 @@ export async function sendUserOtpService(phoneRaw: string) {
   // Store OTP in transient cache store
   pendingOtps.set(phone, { code: otp, expiresAt });
 
+  // Check if user already exists and has completed PAN onboarding (has name and verified)
+  let isExistingUser = false;
+  let isVerified = false;
+  try {
+    const existing = await prisma.user.findUnique({ where: { phone } });
+    isExistingUser = Boolean(existing && (existing.phoneVerified || existing.name));
+    isVerified = Boolean(existing && existing.panVerified && existing.name && existing.name !== 'DEV BYPASS USER');
+  } catch (_e) {
+    // If DB check fails in dev/test, fallback cleanly
+  }
+
   // Ensure user record exists via upsert
   try {
     await prisma.user.upsert({
@@ -38,9 +49,11 @@ export async function sendUserOtpService(phoneRaw: string) {
     console.warn(`[DB Warning] User upsert skipped in dev mode: ${err.message}`);
   }
 
+  const templateType = isExistingUser ? "app_login" : "app_signup";
+
   // Send OTP via configured SMS Gateway (MSG91)
   try {
-    await otpService.sendSms(phone, otp);
+    await otpService.sendSms(phone, otp, templateType);
   } catch (err: any) {
     if (config.isProduction) {
       throw err;
@@ -57,13 +70,15 @@ export async function sendUserOtpService(phoneRaw: string) {
   console.log('\n' + '='.repeat(50));
   console.log(`  📱 CIKKA DEV OTP GENERATED`);
   console.log(`  Phone : ${phone}`);
-  console.log(`  OTP   : ${otp}  (Dev bypass: 1111)`);
+  console.log(`  OTP   : ${otp}  (Dev bypass: 111111)`);
   console.log('='.repeat(50) + '\n');
 
   const isDev = !config.isProduction && !config.isRealExternalServices;
   return {
     otp,
     isDev,
+    isExistingUser,
+    isVerified,
   };
 }
 
@@ -73,7 +88,7 @@ export async function resendUserOtpService(phoneRaw: string, retryType: "text" |
 
   let otp = pending?.code;
   if (!otp || (pending && pending.expiresAt < new Date())) {
-    otp = generateOtp(4);
+    otp = generateOtp(6);
   }
 
   const expiresAt = new Date(Date.now() + 10 * 60 * 1000);
@@ -118,14 +133,40 @@ export async function verifyUserOtpService(phoneRaw: string, otp: string) {
   // Clear OTP state
   pendingOtps.delete(phone);
 
-  let updatedUser = { id: `user_${Date.now()}`, phone, name: null as string | null, email: null as string | null };
+  let isExistingUser = false;
+  let isVerified = false;
+  let updatedUser = {
+    id: `user_${Date.now()}`,
+    phone,
+    name: null as string | null,
+    email: null as string | null,
+    panVerified: false,
+    panNumber: null as string | null,
+    profilePic: null as string | null,
+  };
+
   try {
+    const existing = await prisma.user.findUnique({ where: { phone } });
+    if (existing && existing.phoneVerified) {
+      isExistingUser = true;
+    }
+
     const dbUser = await prisma.user.upsert({
       where: { phone },
       update: { phoneVerified: true },
       create: { phone, phoneVerified: true },
     });
-    updatedUser = { id: dbUser.id, phone: dbUser.phone, name: dbUser.name, email: dbUser.email };
+
+    isVerified = Boolean(dbUser.panVerified && dbUser.name && dbUser.name !== 'DEV BYPASS USER');
+    updatedUser = {
+      id: dbUser.id,
+      phone: dbUser.phone,
+      name: dbUser.name,
+      email: dbUser.email,
+      panVerified: dbUser.panVerified,
+      panNumber: dbUser.panNumber,
+      profilePic: dbUser.profilePic,
+    };
   } catch (err: any) {
     if (config.isProduction) throw err;
     console.warn(`[DB Warning] User verify upsert skipped in dev mode: ${err.message}`);
@@ -137,6 +178,8 @@ export async function verifyUserOtpService(phoneRaw: string, otp: string) {
   return {
     token,
     user: updatedUser,
+    isExistingUser,
+    isVerified,
   };
 }
 
@@ -149,6 +192,9 @@ export async function getUserProfileService(userId: string) {
       name: true,
       email: true,
       phoneVerified: true,
+      panVerified: true,
+      panNumber: true,
+      profilePic: true,
       createdAt: true,
     },
   });
@@ -156,6 +202,29 @@ export async function getUserProfileService(userId: string) {
   if (!user) {
     throw new Error(AUTH_ERRORS.USER_NOT_FOUND);
   }
+
+  return user;
+}
+
+export async function updateUserProfileService(
+  userId: string,
+  data: { name?: string; email?: string; profilePic?: string | null }
+) {
+  const user = await prisma.user.update({
+    where: { id: userId },
+    data,
+    select: {
+      id: true,
+      phone: true,
+      name: true,
+      email: true,
+      phoneVerified: true,
+      panVerified: true,
+      panNumber: true,
+      profilePic: true,
+      createdAt: true,
+    },
+  });
 
   return user;
 }

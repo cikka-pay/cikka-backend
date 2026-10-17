@@ -37,6 +37,15 @@ export const getOnboardingState = asyncHandler(async (req: Request, res: Respons
     seller.onboarding.applicationId = cikkaId;
   }
 
+  // Clean up corrupted logo URL if it previously saved as undefined
+  if (seller.onboarding?.logoUrl && seller.onboarding.logoUrl.includes("undefined")) {
+    seller.onboarding.logoUrl = null as any;
+    await prisma.sellerOnboarding.update({
+      where: { sellerId: seller.id },
+      data: { logoUrl: null },
+    }).catch(() => {});
+  }
+
   res.json({
     sellerId: seller.id,
     email: seller.email,
@@ -158,6 +167,11 @@ export const updateStep3 = asyncHandler(async (req: Request, res: Response) => {
   const sellerId = req.seller!.id;
   const data = req.body;
 
+  const currentSeller = await prisma.seller.findUnique({ where: { id: sellerId } });
+
+  // Prioritize provided signatoryEmail, fallback to verified email from signup
+  const resolvedEmail = (data.signatoryEmail && data.signatoryEmail.trim()) || currentSeller?.email || undefined;
+
   const onboarding = await prisma.sellerOnboarding.update({
     where: { sellerId },
     data: {
@@ -166,16 +180,16 @@ export const updateStep3 = asyncHandler(async (req: Request, res: Response) => {
       signatoryPersonalPan: data.signatoryPersonalPan,
       signatoryAadhaar: data.signatoryAadhaar,
       signatoryMobile: data.signatoryMobile,
-      signatoryEmail: data.signatoryEmail,
+      signatoryEmail: resolvedEmail,
       completedSteps: 3,
     },
   });
 
-  // Sync email to Seller record if provided
-  if (data.signatoryEmail && data.signatoryEmail.trim()) {
+  // Sync email to Seller record if resolved
+  if (resolvedEmail && resolvedEmail.trim()) {
     await prisma.seller.update({
       where: { id: sellerId },
-      data: { email: data.signatoryEmail.trim() },
+      data: { email: resolvedEmail.trim() },
     }).catch(() => {});
   }
 
@@ -218,17 +232,24 @@ export const updateStep4 = asyncHandler(async (req: Request, res: Response) => {
   // Auto-provision or update Razorpay Route linked account if bank details are valid
   if (data.bankAccountNumber && data.bankIfsc) {
     const seller = await prisma.seller.findUnique({ where: { id: sellerId } });
-    razorpayRouteService.createLinkedAccount({
-      sellerId,
-      businessName: seller?.businessName || onboarding.businessName || "Merchant Partner",
-      businessType: onboarding.businessType as any,
-      email: seller?.email || onboarding.signatoryEmail || "seller@cikka.club",
-      phone: seller?.phone || "9876543210",
-      signatoryName: onboarding.signatoryName || undefined,
-      bankAccountNumber: data.bankAccountNumber,
-      bankIfsc: data.bankIfsc,
-      bankAccountHolder: data.bankAccountHolder,
-    }).catch((err) => console.warn(`[Razorpay Route Step 4 Provisioning Notice] ${err.message}`));
+    const targetEmail = (seller?.email && seller.email.trim())
+      || (onboarding.signatoryEmail && onboarding.signatoryEmail.trim());
+
+    if (!targetEmail) {
+      console.warn(`[Razorpay Route Step 4] Cannot create linked account for seller ${sellerId}: verified email missing.`);
+    } else {
+      razorpayRouteService.createLinkedAccount({
+        sellerId,
+        businessName: seller?.businessName || onboarding.businessName || "Merchant Partner",
+        businessType: onboarding.businessType as any,
+        email: targetEmail,
+        phone: seller?.phone || "9876543210",
+        signatoryName: onboarding.signatoryName || undefined,
+        bankAccountNumber: data.bankAccountNumber,
+        bankIfsc: data.bankIfsc,
+        bankAccountHolder: data.bankAccountHolder,
+      }).catch((err) => console.warn(`[Razorpay Route Step 4 Provisioning Notice] ${err.message}`));
+    }
   }
 
   res.json(onboarding);
@@ -265,7 +286,7 @@ export const updateStep5 = asyncHandler(async (req: Request, res: Response) => {
       monthlySalesTarget: data.monthlySalesTarget ? Number(data.monthlySalesTarget) : undefined,
       // Map UI values → Prisma enums
       settlementCycle: data.settlementCycle
-        ? SETTLEMENT_CYCLE_MAP[data.settlementCycle] ?? data.settlementCycle
+        ? (SETTLEMENT_CYCLE_MAP[data.settlementCycle] || "T_PLUS_7")
         : undefined,
       fulfillmentType: data.fulfillmentType
         ? FULFILLMENT_TYPE_MAP[data.fulfillmentType] ?? data.fulfillmentType
@@ -288,13 +309,15 @@ export const updateStep5 = asyncHandler(async (req: Request, res: Response) => {
   // Dispatch Resend "Application Under Review" Email to Seller ONCE on initial submission
   const isFirstSubmission = !existingSeller?.onboardingStatus || existingSeller.onboardingStatus === "INCOMPLETE";
   if (isFirstSubmission) {
-    const recipientEmail = existingSeller?.email || onboarding?.signatoryEmail || data.signatoryEmail || process.env.RESEND_TEST_RECIPIENT || "vedantvyas79@gmail.com";
+    const recipientEmail = (existingSeller?.email || onboarding?.signatoryEmail || data.signatoryEmail)?.trim();
     const recipientName = data.businessName || existingSeller?.businessName || onboarding?.signatoryName || "Partner";
 
-    sendSellerWaitlistEmail({
-      to: recipientEmail,
-      sellerName: recipientName,
-    }).catch((err) => console.error("Failed to send Application Under Review email via Resend:", err));
+    if (recipientEmail && recipientEmail.includes("@")) {
+      sendSellerWaitlistEmail({
+        to: recipientEmail,
+        sellerName: recipientName,
+      }).catch((err) => console.error("Failed to send Application Under Review email via Resend:", err));
+    }
   }
 
   res.json(onboarding);
@@ -308,14 +331,30 @@ export const uploadLogo = asyncHandler(async (req: Request, res: Response) => {
     return;
   }
   
-  const { url } = await uploadFile({ file: req.file, folder: "logos", entityId: sellerId });
+  const { url } = await uploadFile({
+    file: req.file,
+    folder: "logos",
+    entityId: sellerId,
+    public: true,
+  });
+
   await prisma.sellerOnboarding.upsert({
     where: { sellerId },
     update: { logoUrl: url },
     create: { sellerId, logoUrl: url },
   });
-  
-  res.json({ url });
+
+  res.json({ url, success: true });
+});
+
+export const removeLogo = asyncHandler(async (req: Request, res: Response) => {
+  const sellerId = req.seller!.id;
+  await prisma.sellerOnboarding.update({
+    where: { sellerId },
+    data: { logoUrl: null },
+  });
+
+  res.json({ success: true, message: "Logo removed successfully" });
 });
 
 export const updateStep6 = asyncHandler(async (req: Request, res: Response) => {
@@ -447,19 +486,6 @@ export const validateDomain = asyncHandler(async (req: Request, res: Response) =
     return;
   }
 
-  // 5. Social media platform check
-  const isSocial = /^(www\.)?(instagram\.com|facebook\.com|fb\.com|linkedin\.com|twitter\.com|x\.com|youtube\.com|pinterest\.com|tiktok\.com)$/i.test(hostname);
-  if (isSocial) {
-    res.json({
-      valid: true,
-      reachable: true,
-      isSocial: true,
-      hostname,
-      normalizedUrl: normalized,
-      message: "Valid social media profile link",
-    });
-    return;
-  }
 
   // 6. Domain structure check (must have valid extension)
   if (!hostname.includes(".") || hostname.endsWith(".") || hostname.startsWith(".")) {

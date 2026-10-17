@@ -14,6 +14,7 @@ import {
   verifyBank,
   updateStep5,
   uploadLogo,
+  removeLogo,
   updateStep6,
   submitApplication,
   validateDomain,
@@ -56,6 +57,8 @@ router.post("/kyb/verify-bank", verifyBank);
 router.patch("/step/5", updateStep5);
 // Logo upload — multer parses multipart/form-data, populates req.file
 router.post("/upload/logo", uploadLogoMiddleware, uploadLogo, handleMulterError);
+router.delete("/upload/logo", removeLogo);
+router.delete("/logo", removeLogo);
 
 
 // Step 6: Agreements

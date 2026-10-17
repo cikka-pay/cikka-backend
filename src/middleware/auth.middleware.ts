@@ -110,6 +110,42 @@ export function optionalUserAuth(req: Request, res: Response, next: NextFunction
   next();
 }
 
+// Optionally verifies either seller JWT or user JWT if provided
+export function optionalAnyAuth(req: Request, res: Response, next: NextFunction): void {
+  const header = req.headers.authorization || "";
+  const [scheme, token] = header.split(" ");
+
+  if (scheme === "Bearer" && token) {
+    try {
+      const payload = verifySellerToken(token);
+      const sellerId = typeof payload.sub === "object" && payload.sub !== null
+        ? ((payload.sub as any).id || String(payload.sub))
+        : (payload.sub as string);
+
+      req.seller = { 
+        id: sellerId,
+        teamMemberId: payload.teamMemberId as string | undefined
+      };
+      next();
+      return;
+    } catch (_err) {
+      try {
+        const payload = verifyUserToken(token);
+        const userId = typeof payload.sub === "object" && payload.sub !== null
+          ? ((payload.sub as any).id || String(payload.sub))
+          : (payload.sub as string);
+
+        req.user = { id: userId };
+        next();
+        return;
+      } catch (_err2) {
+        // Token invalid — proceed unauthenticated
+      }
+    }
+  }
+  next();
+}
+
 // Verifies either seller JWT or user JWT for shared endpoints (e.g. KYC & Payment APIs).
 export function requireAnyAuth(req: Request, res: Response, next: NextFunction): void {
   const header = req.headers.authorization || "";

@@ -8,10 +8,16 @@ import { signToken } from "../utils/jwt";
 
 export const inviteTeamMember = asyncHandler(async (req: Request, res: Response) => {
   const sellerId = req.seller!.id;
-  const { name, phone: phoneRaw, email, role } = req.body;
+  const { name, phone: phoneRaw, email, role, canViewFinancials } = req.body;
   
   if (!name || !phoneRaw || !role) {
     res.status(400).json({ success: false, error: "Name, phone, and role are required." });
+    return;
+  }
+
+  const callerRole = (req as any).userRole || (req.seller as any)?.role || "ADMIN";
+  if (callerRole === "EXECUTIVE" && role.toUpperCase() !== "VIEWER") {
+    res.status(403).json({ success: false, error: "Executives can only invite members with the Viewer role." });
     return;
   }
 
@@ -38,6 +44,7 @@ export const inviteTeamMember = asyncHandler(async (req: Request, res: Response)
         role,
         name,
         email,
+        canViewFinancials: role.toUpperCase() === 'EXECUTIVE' ? Boolean(canViewFinancials) : false,
         phoneOtpCode: otp,
         phoneOtpExpiresAt: expiresAt,
       }
@@ -51,14 +58,32 @@ export const inviteTeamMember = asyncHandler(async (req: Request, res: Response)
         email,
         role,
         status: "INVITED",
+        canViewFinancials: role.toUpperCase() === 'EXECUTIVE' ? Boolean(canViewFinancials) : false,
         phoneOtpCode: otp,
         phoneOtpExpiresAt: expiresAt,
       }
     });
   }
 
-  // Send OTP
-  await otpService.sendSms(phone, otp);
+  // Send OTP via SMS
+  await otpService.sendSms(phone, otp, "team_invite");
+
+  // If email provided, dispatch team invite email via Resend
+  if (email && email.includes("@")) {
+    const seller = await prisma.seller.findUnique({
+      where: { id: sellerId },
+      select: { businessName: true },
+    });
+    const { sendTeamInviteEmail } = await import("../utils/resend");
+    sendTeamInviteEmail({
+      to: email.trim(),
+      inviteeName: name,
+      businessName: seller?.businessName || "Cikka Partner Store",
+      role,
+      otpCode: otp,
+      loginUrl: "http://localhost:5173/login",
+    }).catch((err) => console.error("Failed to send team invite email via Resend:", err));
+  }
 
   res.json({ success: true, message: "Invite OTP sent successfully." });
 });
@@ -110,6 +135,7 @@ export const getTeamMembers = asyncHandler(async (req: Request, res: Response) =
       email: true,
       role: true,
       status: true,
+      canViewFinancials: true,
       createdAt: true
     }
   });
@@ -120,7 +146,7 @@ export const getTeamMembers = asyncHandler(async (req: Request, res: Response) =
 export const updateTeamMemberRole = asyncHandler(async (req: Request, res: Response) => {
   const sellerId = req.seller!.id;
   const { id } = req.params;
-  const { role } = req.body;
+  const { role, canViewFinancials } = req.body;
 
   if (!role || !["ADMIN", "EXECUTIVE", "VIEWER"].includes(role.toUpperCase())) {
     res.status(400).json({ success: false, error: "Valid role (ADMIN, EXECUTIVE, VIEWER) is required." });
@@ -138,7 +164,10 @@ export const updateTeamMemberRole = asyncHandler(async (req: Request, res: Respo
 
   const updated = await prisma.teamMember.update({
     where: { id },
-    data: { role: role.toUpperCase() },
+    data: {
+      role: role.toUpperCase(),
+      ...(canViewFinancials !== undefined ? { canViewFinancials: Boolean(canViewFinancials) } : {}),
+    },
     select: {
       id: true,
       name: true,
@@ -146,6 +175,7 @@ export const updateTeamMemberRole = asyncHandler(async (req: Request, res: Respo
       email: true,
       role: true,
       status: true,
+      canViewFinancials: true,
       createdAt: true
     }
   });

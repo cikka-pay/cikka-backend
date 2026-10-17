@@ -13,7 +13,8 @@ const settlementQuerySchema = z.object({
   status: z.enum(["ALL", "PENDING", "PAID"]).optional(),
 });
 
-router.get("/", validate({ query: settlementQuerySchema }), listSettlements);
+// Strictly Admin only can view or manage settlements (Neither Executive nor Viewer can access)
+router.get("/", requireRole(["ADMIN"]), validate({ query: settlementQuerySchema }), listSettlements);
 
 // Strictly Admin only can withdraw or trigger disbursements
 router.post("/withdraw", requireRole(["ADMIN"]), createWithdrawal);

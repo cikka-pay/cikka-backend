@@ -5,11 +5,11 @@
  * In stub mode, the generated OTP is also logged to console so developers
  * can use it without SMS/email delivery.
  */
-import type { OtpService } from "./otp.interface";
+import type { OtpService, OtpTemplateType } from "./otp.interface";
 
 export const otpStub: OtpService = {
-  async sendSms(phone: string, code: string) {
-    console.log(`[OTP STUB] SMS to ${phone}: ${code}  (bypass: 111111)`);
+  async sendSms(phone: string, code: string, templateType?: OtpTemplateType) {
+    console.log(`[OTP STUB] SMS (${templateType || "default"}) to ${phone}: ${code}  (bypass: 111111)`);
   },
 
   async resendSms(phone: string, retryType: "text" | "voice" = "text") {

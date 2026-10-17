@@ -1,4 +1,5 @@
 import crypto from "crypto";
+import { config } from "../config/env";
 import { prisma } from "../config/prisma";
 import { INSTANTPAY_ERRORS } from "../constants/errors";
 import { instantpayClient } from "../external";
@@ -35,8 +36,8 @@ export async function verifyPanService(dto: VerifyPanDTO) {
 
   const formattedPan = pan.toUpperCase().trim();
 
-  // DEV BYPASS RULE for AAAAA1111A
-  if (formattedPan === "AAAAA1111A") {
+  // DEV BYPASS RULE for AAAAA1111A — only enabled in stub/offline development mode
+  if (!config.isRealExternalServices && formattedPan === "AAAAA1111A") {
     console.log("==================================================");
     console.log("⚡ [DEV BYPASS] InstantPay PAN Verification Bypassed!");
     console.log(`PAN: ${formattedPan}`);
@@ -169,6 +170,8 @@ export async function verifyGstinService(dto: VerifyGstinDTO) {
     businessType: result.businessType || "Proprietorship",
     state: result.state || null,
     address: result.address || null,
+    error: result.error,
+    rawResponse: result.rawResponse,
   };
 }
 
@@ -293,7 +296,9 @@ export async function verifyAadhaarService(dto: VerifyAadhaarDTO) {
     ageBand: result.ageBand || null,
     gender: result.gender || null,
     maskedMobile: result.maskedMobile || null,
-    status: result.status || "VALID",
+    status: result.status || (result.valid ? "VALID" : "INVALID"),
+    error: result.error,
+    rawResponse: result.rawResponse,
   };
 }
 

@@ -30,6 +30,7 @@ if (mode !== "stub" && mode !== "real") {
 
 export const otpService: OtpService = mode === "real" ? otpReal : otpStub;
 export const kybService: KybService = mode === "real" ? kybReal : kybStub;
+
 // Storage is chosen independently of EXTERNAL_SERVICES_MODE (see config.storageProvider):
 // Railway Bucket in production, local disk for dev / tests.
 const storageProviders: Record<string, StorageService> = {

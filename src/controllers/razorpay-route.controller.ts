@@ -177,11 +177,19 @@ export const createLinkedAccountHandler = asyncHandler(async (req: Request, res:
   }
 
   const onboarding = seller.onboarding;
+  const targetEmail = (seller.email && seller.email.trim())
+    || (onboarding?.signatoryEmail && onboarding.signatoryEmail.trim());
+
+  if (!targetEmail) {
+    res.status(400).json({ success: false, error: "Seller verified email is required to create a Razorpay Route linked account." });
+    return;
+  }
+
   const result = await razorpayRouteService.createLinkedAccount({
     sellerId: seller.id,
     businessName: seller.businessName || onboarding?.businessName || "Merchant Partner",
     businessType: onboarding?.businessType as any,
-    email: seller.email || onboarding?.signatoryEmail || "seller@cikka.club",
+    email: targetEmail,
     phone: seller.phone,
     signatoryName: onboarding?.signatoryName || undefined,
     panNumber: onboarding?.panNumber || onboarding?.signatoryPersonalPan || undefined,

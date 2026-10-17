@@ -10,9 +10,9 @@ import { requireRole } from "../middleware/auth.middleware";
 
 const router = Router();
 
-// Only strictly ADMIN / OWNER can invite, change roles, or remove team members
-router.post("/invite", requireRole(["ADMIN"]), inviteTeamMember);
-router.post("/verify-invite", requireRole(["ADMIN"]), verifyInviteOtp);
+// ADMIN can invite any role; EXECUTIVE can invite only VIEWER role (enforced in controller)
+router.post("/invite", requireRole(["ADMIN", "EXECUTIVE"]), inviteTeamMember);
+router.post("/verify-invite", requireRole(["ADMIN", "EXECUTIVE"]), verifyInviteOtp);
 router.patch("/:id/role", requireRole(["ADMIN"]), updateTeamMemberRole);
 router.delete("/:id", requireRole(["ADMIN"]), deleteTeamMember);
 

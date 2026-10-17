@@ -6,6 +6,7 @@
  * selected automatically via the external services factory.
  */
 import { storageService } from "../external";
+import { storageStub } from "../external/storage/storage.stub";
 import type { UploadResult } from "../external/storage/storage.interface";
 import { UPLOAD_ERRORS } from "../constants/errors";
 
@@ -52,6 +53,23 @@ export async function uploadFile(params: UploadFileParams): Promise<UploadResult
 
     return result;
   } catch (err) {
+    if (storageService !== storageStub) {
+      console.warn("[Upload Service] Primary storage failed, falling back to local filesystem stub:", err);
+      try {
+        const fallbackResult = await storageStub.uploadFile({
+          buffer: file.buffer,
+          filename: file.originalname,
+          mimeType: file.mimetype,
+          folder,
+          entityId,
+          public: isPublic,
+          metadata,
+        });
+        return fallbackResult;
+      } catch (fallbackErr) {
+        console.error("[Upload Service] Local fallback failed:", fallbackErr);
+      }
+    }
     console.error("[Upload Service] Upload failed:", err);
     throw Object.assign(new Error(UPLOAD_ERRORS.UPLOAD_FAILED), { status: 500 });
   }

@@ -47,4 +47,10 @@ router.get("/hubble", async (_req, res) => {
   }
 });
 
+// Resend Email Operations & Live Delivery Hub
+import * as adminResend from "../controllers/admin-resend.controller";
+router.get("/resend/overview", adminResend.getResendOverview);
+router.post("/resend/test", adminResend.sendTestEmail);
+router.get("/resend/preview/:templateId", adminResend.getTemplatePreviewHandler);
+
 export default router;
