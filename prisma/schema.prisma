@@ -452,8 +452,6 @@ model Settlement {
   razorpayPaymentId  String?
   holdUntil          DateTime?        // Exact T+7 auto-release timestamp
   transferStatus     String?          @default("PENDING") // PENDING | ON_HOLD | SETTLED | REVERSED | FAILED
-  decentroTxnId     String?          @unique
-  decentroUrn       String?
   utr               String?
   failureReason     String?
   disbursedAt       DateTime?
@@ -464,7 +462,6 @@ model Settlement {
   @@index([sellerId, periodStart])
   @@index([sellerId, status])
   @@index([razorpayTransferId])
-  @@index([decentroTxnId])
   @@map("settlements")
 }
 

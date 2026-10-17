@@ -2,12 +2,12 @@ import { Request, Response } from "express";
 import dns from "dns/promises";
 import { prisma } from "../config/prisma";
 import { asyncHandler } from "../utils/asyncHandler";
+import { uploadFile } from "../services/upload.service";
 import * as onboardingService from "../services/onboarding.service";
 import { BUSINESS_TYPE_MAP, FULFILLMENT_TYPE_MAP, SETTLEMENT_CYCLE_MAP } from "../utils/enumMaps";
 import { sendSellerWaitlistEmail } from "../utils/resend";
 import { generateApplicationId } from "../services/auth.service";
 import { razorpayRouteService } from "../services/razorpayRoute.service";
-import { uploadFile } from "../services/upload.service";
 
 
 export const getOnboardingState = asyncHandler(async (req: Request, res: Response) => {
@@ -331,19 +331,19 @@ export const uploadLogo = asyncHandler(async (req: Request, res: Response) => {
     return;
   }
   
-  const uploadResult = await uploadFile({
+  const { url } = await uploadFile({
     file: req.file,
     folder: "logos",
     entityId: sellerId,
     public: true,
   });
 
-  const url = uploadResult.url;
-  await prisma.sellerOnboarding.update({
+  await prisma.sellerOnboarding.upsert({
     where: { sellerId },
-    data: { logoUrl: url },
+    update: { logoUrl: url },
+    create: { sellerId, logoUrl: url },
   });
-  
+
   res.json({ url, success: true });
 });
 

@@ -39,7 +39,7 @@ describe("Storage Stub", () => {
 
       lastKey = result.key;
 
-      expect(result.url).toContain("/uploads/");
+      expect(result.url).toContain(`/api/files/${result.key}`);
       expect(result.key).toMatch(/\d+-test-image\.png$/);
       expect(result.bucket).toBe("local");
       expect(result.size).toBe(testBuffer.length);
@@ -130,7 +130,7 @@ describe("Storage Stub", () => {
       lastKey = result.key;
 
       const url = await storageStub.getSignedUrl(result.key);
-      expect(url).toBe(`/uploads/${result.key}`);
+      expect(url).toBe(`/api/files/${result.key}`);
     });
   });
 

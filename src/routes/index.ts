@@ -26,8 +26,13 @@ import hubbleRoutes from "./hubble.routes";
 import razorpayRouteRoutes from "./razorpay-route.routes";
 
 import emailRoutes from "./email.routes";
+import { filesRouter, uploadsRouter } from "./files.routes";
 
 const router = Router();
+
+// Stored files (public, read-only) and image uploads (seller or mobile-user JWT)
+router.use("/files", filesRouter);
+router.use("/uploads", uploadsRouter);
 
 // Email notification routes
 router.use("/email", emailRoutes);

@@ -71,6 +71,29 @@ export const config = {
   // Resend Email Service Config
   resendApiKey: process.env.RESEND_API_KEY || "",
   resendFromEmail: process.env.RESEND_FROM_EMAIL || "noreply@cikka.club",
+
+  // Public base URL of this API — used to build absolute file URLs (GET /api/files/<key>)
+  publicBaseUrl: (
+    process.env.PUBLIC_BASE_URL ||
+    (process.env.RAILWAY_PUBLIC_DOMAIN ? `https://${process.env.RAILWAY_PUBLIC_DOMAIN}` : "")
+  ).replace(/\/+$/, ""),
+
+  // File storage provider: "railway" (Railway Bucket, production) or "local" (dev / tests).
+  // Defaults to "railway" once bucket credentials are present. "s3" is accepted as an alias.
+  storageProvider: (() => {
+    const p = (process.env.STORAGE_PROVIDER || (process.env.S3_BUCKET || process.env.BUCKET ? "railway" : "local")).toLowerCase();
+    return p === "s3" ? "railway" : p;
+  })(),
+
+  // Railway Bucket (S3 API). The unprefixed names are the ones Railway's bucket
+  // "Credentials" preset injects (BUCKET, ACCESS_KEY_ID, ...).
+  s3Endpoint: process.env.S3_ENDPOINT || process.env.ENDPOINT,
+  s3Region: process.env.S3_REGION || process.env.REGION || "auto",
+  s3Bucket: process.env.S3_BUCKET || process.env.BUCKET,
+  s3AccessKeyId: process.env.S3_ACCESS_KEY_ID || process.env.ACCESS_KEY_ID,
+  s3SecretAccessKey: process.env.S3_SECRET_ACCESS_KEY || process.env.SECRET_ACCESS_KEY,
+  s3ForcePathStyle: process.env.S3_FORCE_PATH_STYLE === "true",
+  s3SignedUrlExpiry: parseInt(process.env.S3_SIGNED_URL_EXPIRY || "3600", 10),
 };
 
 

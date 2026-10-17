@@ -106,7 +106,7 @@ describe("Upload Service", () => {
     });
 
     it("should throw 500 if storage provider fails", async () => {
-      uploadFileSpy.mockRejectedValueOnce(new Error("GCS connection failed"));
+      uploadFileSpy.mockRejectedValueOnce(new Error("Storage connection failed"));
 
       await expect(
         uploadService.uploadFile({

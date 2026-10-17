@@ -20,7 +20,7 @@ import {
   validateDomain,
 } from "../controllers/onboarding.controller";
 import { requireAuth } from "../middleware/auth.middleware";
-import { uploadLogo as uploadLogoMiddleware } from "../middleware/upload.middleware";
+import { uploadLogo as uploadLogoMiddleware, handleMulterError } from "../middleware/upload.middleware";
 
 const router = Router();
 
@@ -56,7 +56,7 @@ router.post("/kyb/verify-bank", verifyBank);
 // Step 5: Brand & Logistics
 router.patch("/step/5", updateStep5);
 // Logo upload — multer parses multipart/form-data, populates req.file
-router.post("/upload/logo", uploadLogoMiddleware, uploadLogo);
+router.post("/upload/logo", uploadLogoMiddleware, uploadLogo, handleMulterError);
 router.delete("/upload/logo", removeLogo);
 router.delete("/logo", removeLogo);
 
