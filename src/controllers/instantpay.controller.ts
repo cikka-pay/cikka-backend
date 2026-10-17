@@ -16,7 +16,7 @@ import { asyncHandler } from "../utils/asyncHandler";
  * Perform PAN authentication and identity verification via InstantPay.
  */
 export const verifyPan = asyncHandler(async (req: Request, res: Response) => {
-  const { pan } = req.body;
+  const { pan, phone } = req.body;
   const sellerId = req.seller?.id;
   const userId = req.user?.id || sellerId;
 
@@ -35,6 +35,28 @@ export const verifyPan = asyncHandler(async (req: Request, res: Response) => {
       data: result,
     });
     return;
+  }
+
+  // Sync verified PAN to User profile if mobile app user is authenticated or phone is provided
+  if (req.user?.id) {
+    await prisma.user.update({
+      where: { id: req.user.id },
+      data: {
+        name: result.registeredName || undefined,
+        panNumber: result.pan,
+        panVerified: true,
+      },
+    }).catch((err) => console.warn(`[InstantPay User Sync] User name sync notice: ${err.message}`));
+  } else if (phone) {
+    const cleanPhoneDigits = String(phone).replace(/\D/g, "").slice(-10);
+    await prisma.user.updateMany({
+      where: { phone: { contains: cleanPhoneDigits } },
+      data: {
+        name: result.registeredName || undefined,
+        panNumber: result.pan,
+        panVerified: true,
+      },
+    }).catch((err) => console.warn(`[InstantPay User Sync] User phone sync notice: ${err.message}`));
   }
 
   // Sync verified PAN to SellerOnboarding if seller is authenticated
@@ -58,7 +80,10 @@ export const verifyPan = asyncHandler(async (req: Request, res: Response) => {
   res.status(200).json({
     success: true,
     message: result.isDevBypass ? "⚡ PAN verified via Dev Bypass" : "PAN verified successfully",
-    data: result,
+    data: {
+      ...result,
+      panVerified: true,
+    },
   });
 });
 

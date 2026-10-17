@@ -6,6 +6,7 @@ import {
   resendUserOtpService,
   verifyUserOtpService,
   getUserProfileService,
+  updateUserProfileService,
 } from "../services/user-auth.service";
 
 /**
@@ -13,10 +14,12 @@ import {
  */
 export const userSendOtp = asyncHandler(async (req: Request, res: Response) => {
   const { phone: phoneRaw } = req.body;
-  const { otp, isDev } = await sendUserOtpService(phoneRaw);
+  const { otp, isDev, isExistingUser, isVerified } = await sendUserOtpService(phoneRaw);
 
   res.status(200).json({
     message: "OTP sent successfully to mobile app user",
+    isExistingUser,
+    isVerified,
     ...(isDev && { devOtp: otp }),
   });
 });
@@ -46,6 +49,8 @@ export const userVerifyOtp = asyncHandler(async (req: Request, res: Response) =>
       message: "Mobile App login successful",
       token: result.token,
       user: result.user,
+      isExistingUser: result.isExistingUser,
+      isVerified: result.isVerified,
     });
   } catch (err: any) {
     res.status(400).json({ error: err.message || AUTH_ERRORS.INVALID_OTP });
@@ -69,6 +74,26 @@ export const getUserMe = asyncHandler(async (req: Request, res: Response) => {
     res.status(200).json({ user });
   } catch (err: any) {
     res.status(404).json({ error: err.message || AUTH_ERRORS.USER_NOT_FOUND });
+  }
+});
+
+/**
+ * Mobile App Auth: Update current user profile
+ */
+export const userUpdateProfile = asyncHandler(async (req: Request, res: Response) => {
+  const userId = req.user?.id;
+  const { name, email, profilePic } = req.body;
+
+  if (!userId) {
+    res.status(401).json({ error: AUTH_ERRORS.UNAUTHORIZED });
+    return;
+  }
+
+  try {
+    const updated = await updateUserProfileService(userId, { name, email, profilePic });
+    res.status(200).json({ success: true, user: updated });
+  } catch (err: any) {
+    res.status(400).json({ error: err.message || "Failed to update profile" });
   }
 });
 

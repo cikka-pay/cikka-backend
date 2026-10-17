@@ -535,6 +535,9 @@ model User {
   name          String?
   email         String?  @unique
   phoneVerified Boolean  @default(false)
+  panNumber     String?
+  panVerified   Boolean  @default(false)
+  profilePic    String?
 
   addresses     UserAddress[]
 

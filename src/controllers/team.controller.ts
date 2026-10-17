@@ -66,7 +66,7 @@ export const inviteTeamMember = asyncHandler(async (req: Request, res: Response)
   }
 
   // Send OTP via SMS
-  await otpService.sendSms(phone, otp);
+  await otpService.sendSms(phone, otp, "team_invite");
 
   // If email provided, dispatch team invite email via Resend
   if (email && email.includes("@")) {

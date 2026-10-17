@@ -4,6 +4,7 @@ import {
   userResendOtp,
   userVerifyOtp,
   getUserMe,
+  userUpdateProfile,
 } from "../controllers/user-auth.controller";
 import { requireUserAuth } from "../middleware/auth.middleware";
 import { validate } from "../middleware/validate.middleware";
@@ -16,8 +17,10 @@ router.post("/send-otp", validate({ body: phoneSchema }), userSendOtp);
 router.post("/resend-otp", validate({ body: resendOtpSchema }), userResendOtp);
 router.post("/verify-otp", validate({ body: otpSchema }), userVerifyOtp);
 
-// Protected User Profile Route
+// Protected User Profile Routes
 router.get("/me", requireUserAuth, getUserMe);
+router.patch("/profile", requireUserAuth, userUpdateProfile);
+router.put("/profile", requireUserAuth, userUpdateProfile);
 
 export default router;
 

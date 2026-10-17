@@ -49,7 +49,7 @@ export const signupSendPhoneOtp = asyncHandler(async (req: Request, res: Respons
     },
   });
 
-  await otpService.sendSms(phone, otp);
+  await otpService.sendSms(phone, otp, "seller_signup");
   res.json({ success: true, message: "OTP sent" });
 });
 
@@ -220,7 +220,7 @@ export const signinSendOtp = asyncHandler(async (req: Request, res: Response) =>
     });
   }
 
-  await otpService.sendSms(phone, otp);
+  await otpService.sendSms(phone, otp, "seller_login");
   res.json({ success: true, message: "OTP sent" });
 });
 
@@ -492,7 +492,7 @@ export const forgotPasswordSendOtp = asyncHandler(async (req: Request, res: Resp
     },
   });
 
-  await otpService.sendSms(phone, otp);
+  await otpService.sendSms(phone, otp, "seller_login");
   res.json({ success: true, message: "OTP sent" });
 });
 
