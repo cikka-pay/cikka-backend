@@ -13,6 +13,7 @@ import {
   resendSellerOtp,
   sellerLogin,
   getMe,
+  switchAccount,
 } from "../controllers/auth.controller";
 import { requireAuth } from "../middleware/auth.middleware";
 import { z } from "zod";
@@ -57,6 +58,9 @@ router.post("/login", sellerLogin);
 router.post("/signin/send-otp", validate({ body: phoneSchema }), signinSendOtp);
 
 router.post("/signin/verify-otp", validate({ body: phoneOtpSchema }), signinVerifyOtp);
+
+// Switch Active Organization / Role
+router.post("/switch-account", requireAuth, switchAccount);
 
 // Common Resend OTP endpoint
 router.post("/resend-otp", validate({ body: sellerResendOtpSchema }), resendSellerOtp);

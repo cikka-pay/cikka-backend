@@ -189,9 +189,9 @@ export const signinSendOtp = asyncHandler(async (req: Request, res: Response) =>
   const { phone, countryCode, phoneNumber } = normalizePhone(phoneRaw);
 
   const seller = await prisma.seller.findUnique({ where: { phone } });
-  const teamMember = await prisma.teamMember.findFirst({ where: { phone, status: "ACTIVE" } });
+  const teamMembers = await prisma.teamMember.findMany({ where: { phone, status: "ACTIVE" } });
 
-  if (!seller && !teamMember) {
+  if (!seller && teamMembers.length === 0) {
     res.status(404).json({ success: false, error: AUTH_ERRORS.USER_NOT_FOUND });
     return;
   }
@@ -199,8 +199,8 @@ export const signinSendOtp = asyncHandler(async (req: Request, res: Response) =>
   const otp = generateOtp(6);
   const expiresAt = new Date(Date.now() + 10 * 60 * 1000);
 
-  // If they have an active team member invite/membership and do not have their own verified business, prefer team member
-  if (teamMember && (!seller || seller.onboardingStatus !== "VERIFIED")) {
+  // Set OTP across all matching active team memberships
+  if (teamMembers.length > 0) {
     await prisma.teamMember.updateMany({
       where: { phone, status: "ACTIVE" },
       data: {
@@ -208,7 +208,10 @@ export const signinSendOtp = asyncHandler(async (req: Request, res: Response) =>
         phoneOtpExpiresAt: expiresAt,
       },
     });
-  } else if (seller) {
+  }
+
+  // Set OTP on owned seller record if present
+  if (seller) {
     await prisma.seller.update({
       where: { phone },
       data: {
@@ -228,110 +231,278 @@ export const signinVerifyOtp = asyncHandler(async (req: Request, res: Response) 
   const { phone: phoneRaw, otp } = req.body;
   const { phone } = normalizePhone(phoneRaw);
 
-  const seller = await prisma.seller.findUnique({ where: { phone } });
-  const teamMember = await prisma.teamMember.findFirst({ where: { phone, status: "ACTIVE" } });
+  const seller = await prisma.seller.findUnique({
+    where: { phone },
+    include: { onboarding: true },
+  });
+  const teamMembers = await prisma.teamMember.findMany({
+    where: { phone, status: "ACTIVE" },
+    include: {
+      seller: {
+        include: { onboarding: true },
+      },
+    },
+  });
 
-  if (!seller && !teamMember) {
+  if (!seller && teamMembers.length === 0) {
     res.status(404).json({ success: false, error: AUTH_ERRORS.USER_NOT_FOUND });
     return;
   }
 
-  if (teamMember && (!seller || seller.onboardingStatus !== "VERIFIED")) {
-    if (!isOtpValid(teamMember.phoneOtpCode || null, otp, teamMember.phoneOtpExpiresAt || null)) {
-      res.status(401).json({ success: false, error: AUTH_ERRORS.INVALID_OTP });
+  // Check if OTP matches either owned seller or team member OTP state
+  const isSellerOtpValid = seller && isOtpValid(seller.phoneOtpCode || null, otp, seller.phoneOtpExpiresAt || null);
+  const firstMatchingTm = teamMembers.find((tm) =>
+    isOtpValid(tm.phoneOtpCode || null, otp, tm.phoneOtpExpiresAt || null)
+  );
+
+  if (!isSellerOtpValid && !firstMatchingTm) {
+    res.status(401).json({ success: false, error: AUTH_ERRORS.INVALID_OTP });
+    return;
+  }
+
+  // Clear OTP codes
+  if (seller) {
+    await prisma.seller.update({
+      where: { phone },
+      data: { phoneOtpCode: null, phoneOtpExpiresAt: null },
+    }).catch(() => {});
+  }
+  if (teamMembers.length > 0) {
+    await prisma.teamMember.updateMany({
+      where: { phone },
+      data: { phoneOtpCode: null, phoneOtpExpiresAt: null },
+    }).catch(() => {});
+  }
+
+  // Build aggregated list of associated accounts
+  const accounts: Array<{
+    accountId: string;
+    sellerId: string;
+    teamMemberId?: string;
+    companyName: string;
+    logoUrl: string | null;
+    role: string;
+    isOwner: boolean;
+    canViewFinancials: boolean;
+    memberName: string;
+    onboardingStatus: string;
+    kycVerified: boolean;
+  }> = [];
+
+  if (seller) {
+    accounts.push({
+      accountId: `seller_${seller.id}`,
+      sellerId: seller.id,
+      companyName: seller.businessName || seller.onboarding?.businessName || "My Store",
+      logoUrl: seller.onboarding?.logoUrl || null,
+      role: "OWNER",
+      isOwner: true,
+      canViewFinancials: true,
+      memberName: seller.onboarding?.signatoryName || seller.businessName || "Store Owner",
+      onboardingStatus: seller.onboardingStatus,
+      kycVerified: Boolean(seller.kycVerified || seller.onboardingStatus === "VERIFIED"),
+    });
+  }
+
+  for (const tm of teamMembers) {
+    if (tm.seller) {
+      accounts.push({
+        accountId: `tm_${tm.id}`,
+        sellerId: tm.sellerId,
+        teamMemberId: tm.id,
+        companyName: tm.seller.businessName || tm.seller.onboarding?.businessName || "Company",
+        logoUrl: tm.seller.onboarding?.logoUrl || null,
+        role: tm.role,
+        isOwner: false,
+        canViewFinancials: Boolean(tm.canViewFinancials),
+        memberName: tm.name,
+        onboardingStatus: tm.seller.onboardingStatus || "VERIFIED",
+        kycVerified: true,
+      });
+    }
+  }
+
+  // Select initial active account:
+  // Prefer verified seller or first team member
+  const primaryAccount =
+    accounts.find((a) => a.isOwner && a.onboardingStatus === "VERIFIED") ||
+    accounts[0];
+
+  const token = signToken(primaryAccount.sellerId, undefined, primaryAccount.teamMemberId);
+
+  // Build seller response format
+  let activeSellerPayload: any = null;
+  if (primaryAccount.isOwner && seller) {
+    const isDoneAgreement = Boolean(
+      seller.onboarding?.merchantAgreementAccepted && seller.onboarding?.digitalSignature
+    );
+    activeSellerPayload = {
+      id: seller.id,
+      phone: seller.phone,
+      countryCode: seller.countryCode,
+      phoneNumber: seller.phoneNumber,
+      email: seller.email,
+      businessName: seller.businessName || seller.onboarding?.businessName || "",
+      logoUrl: seller.onboarding?.logoUrl || null,
+      kycVerified: seller.kycVerified,
+      onboardingStatus: seller.onboardingStatus,
+      merchantAgreementAccepted: isDoneAgreement,
+      agreementAccepted: isDoneAgreement,
+      role: "ADMIN",
+      isTeamMember: false,
+      memberName: seller.onboarding?.signatoryName || seller.businessName || "Store Owner",
+      memberPhone: seller.phone,
+      memberEmail: seller.email || "",
+      canViewFinancials: true,
+    };
+  } else {
+    const tmRecord = teamMembers.find((t) => t.id === primaryAccount.teamMemberId);
+    const parent = tmRecord?.seller;
+    activeSellerPayload = {
+      id: parent?.id || primaryAccount.sellerId,
+      phone: tmRecord?.phone || phone,
+      countryCode: parent?.countryCode || "91",
+      phoneNumber: (tmRecord?.phone || phone).replace(/^\+91/, ""),
+      email: tmRecord?.email || parent?.email || "",
+      businessName: parent?.businessName || parent?.onboarding?.businessName || primaryAccount.companyName,
+      logoUrl: parent?.onboarding?.logoUrl || null,
+      kycVerified: true,
+      onboardingStatus: "VERIFIED",
+      merchantAgreementAccepted: true,
+      agreementAccepted: true,
+      isTeamMember: true,
+      role: tmRecord?.role || primaryAccount.role,
+      canViewFinancials: Boolean(tmRecord?.canViewFinancials),
+      teamMemberId: tmRecord?.id,
+      memberName: tmRecord?.name,
+      memberPhone: tmRecord?.phone,
+      memberEmail: tmRecord?.email || "",
+    };
+  }
+
+  res.json({
+    success: true,
+    token,
+    seller: activeSellerPayload,
+    accounts,
+    hasMultipleAccounts: accounts.length > 1,
+  });
+});
+
+export const switchAccount = asyncHandler(async (req: Request, res: Response) => {
+  const { accountId, sellerId, teamMemberId } = req.body;
+  const currentSellerId = req.seller?.id;
+  const currentTmId = req.seller?.teamMemberId;
+
+  if (!currentSellerId) {
+    res.status(401).json({ success: false, error: AUTH_ERRORS.UNAUTHORIZED });
+    return;
+  }
+
+  // Get current user's phone to verify authorization
+  let userPhone: string | null = null;
+  if (currentTmId) {
+    const tm = await prisma.teamMember.findUnique({ where: { id: currentTmId } });
+    userPhone = tm?.phone || null;
+  } else {
+    const s = await prisma.seller.findUnique({ where: { id: currentSellerId } });
+    userPhone = s?.phone || null;
+  }
+
+  if (!userPhone) {
+    res.status(401).json({ success: false, error: AUTH_ERRORS.UNAUTHORIZED });
+    return;
+  }
+
+  // Verify target account ownership / membership
+  let targetSellerId = sellerId;
+  let targetTmId = teamMemberId;
+
+  if (accountId) {
+    if (accountId.startsWith("seller_")) {
+      targetSellerId = accountId.replace("seller_", "");
+      targetTmId = undefined;
+    } else if (accountId.startsWith("tm_")) {
+      targetTmId = accountId.replace("tm_", "");
+    }
+  }
+
+  if (targetTmId) {
+    const tm = await prisma.teamMember.findUnique({
+      where: { id: targetTmId },
+      include: { seller: { include: { onboarding: true } } },
+    });
+
+    if (!tm || tm.phone !== userPhone || tm.status !== "ACTIVE" || !tm.seller) {
+      res.status(403).json({ success: false, error: "Access denied to requested organization" });
       return;
     }
 
-    await prisma.teamMember.updateMany({
-      where: { phone },
-      data: {
-        phoneOtpCode: null,
-        phoneOtpExpiresAt: null,
-      },
-    });
+    const token = signToken(tm.sellerId, undefined, tm.id);
+    const sellerPayload = {
+      id: tm.seller.id,
+      phone: tm.phone,
+      countryCode: tm.seller.countryCode,
+      phoneNumber: tm.phone.replace(/^\+91/, ""),
+      email: tm.email || tm.seller.email || "",
+      businessName: tm.seller.businessName || tm.seller.onboarding?.businessName || "",
+      logoUrl: tm.seller.onboarding?.logoUrl || null,
+      kycVerified: true,
+      onboardingStatus: "VERIFIED",
+      merchantAgreementAccepted: true,
+      agreementAccepted: true,
+      isTeamMember: true,
+      role: tm.role,
+      canViewFinancials: Boolean(tm.canViewFinancials),
+      teamMemberId: tm.id,
+      memberName: tm.name,
+      memberPhone: tm.phone,
+      memberEmail: tm.email || "",
+    };
 
-    // Fetch the parent seller
-    const parentSeller = await prisma.seller.findUnique({
-      where: { id: teamMember.sellerId },
+    res.json({ success: true, token, seller: sellerPayload });
+    return;
+  } else if (targetSellerId) {
+    const s = await prisma.seller.findUnique({
+      where: { id: targetSellerId },
       include: { onboarding: true },
     });
 
-    if (!parentSeller) {
-      res.status(404).json({ success: false, error: "Associated business not found" });
+    if (!s || s.phone !== userPhone) {
+      res.status(403).json({ success: false, error: "Access denied to requested organization" });
       return;
     }
-
-    const token = signToken(teamMember.sellerId, undefined, teamMember.id);
-    res.json({
-      success: true,
-      token,
-      seller: {
-        id: parentSeller.id,
-        phone: teamMember.phone,
-        countryCode: parentSeller.countryCode,
-        phoneNumber: teamMember.phone.replace(/^\+91/, ""),
-        email: teamMember.email || parentSeller.email,
-        businessName: parentSeller.businessName || parentSeller.onboarding?.businessName || "",
-        logoUrl: parentSeller.onboarding?.logoUrl || null,
-        kycVerified: true,
-        onboardingStatus: "VERIFIED",
-        merchantAgreementAccepted: true,
-        agreementAccepted: true,
-        isTeamMember: true,
-        role: teamMember.role,
-        canViewFinancials: Boolean(teamMember.canViewFinancials),
-        teamMemberId: teamMember.id,
-        memberName: teamMember.name,
-        memberPhone: teamMember.phone,
-        memberEmail: teamMember.email || "",
-      },
-    });
-    return;
-  } else if (seller) {
-    if (!isOtpValid(seller.phoneOtpCode || null, otp, seller.phoneOtpExpiresAt || null)) {
-      res.status(401).json({ success: false, error: AUTH_ERRORS.INVALID_OTP });
-      return;
-    }
-
-    const updatedSeller = await prisma.seller.update({
-      where: { phone },
-      data: {
-        phoneOtpCode: null,
-        phoneOtpExpiresAt: null,
-      },
-      include: {
-        onboarding: true,
-      },
-    });
 
     const isDoneAgreement = Boolean(
-      updatedSeller.onboarding?.merchantAgreementAccepted && updatedSeller.onboarding?.digitalSignature
+      s.onboarding?.merchantAgreementAccepted && s.onboarding?.digitalSignature
     );
 
-    const token = signToken(updatedSeller.id);
-    res.json({
-      success: true,
-      token,
-      seller: {
-        id: updatedSeller.id,
-        phone: updatedSeller.phone,
-        countryCode: updatedSeller.countryCode,
-        phoneNumber: updatedSeller.phoneNumber,
-        email: updatedSeller.email,
-        businessName: updatedSeller.businessName || updatedSeller.onboarding?.businessName || "",
-        logoUrl: updatedSeller.onboarding?.logoUrl || null,
-        kycVerified: updatedSeller.kycVerified,
-        onboardingStatus: updatedSeller.onboardingStatus,
-        merchantAgreementAccepted: isDoneAgreement,
-        agreementAccepted: isDoneAgreement,
-        role: "ADMIN",
-        isTeamMember: false,
-        memberName: updatedSeller.onboarding?.signatoryName || updatedSeller.businessName || "Store Owner",
-        memberPhone: updatedSeller.phone,
-      },
-    });
+    const token = signToken(s.id);
+    const sellerPayload = {
+      id: s.id,
+      phone: s.phone,
+      countryCode: s.countryCode,
+      phoneNumber: s.phoneNumber,
+      email: s.email,
+      businessName: s.businessName || s.onboarding?.businessName || "",
+      logoUrl: s.onboarding?.logoUrl || null,
+      kycVerified: s.kycVerified,
+      onboardingStatus: s.onboardingStatus,
+      merchantAgreementAccepted: isDoneAgreement,
+      agreementAccepted: isDoneAgreement,
+      role: "ADMIN",
+      isTeamMember: false,
+      memberName: s.onboarding?.signatoryName || s.businessName || "Store Owner",
+      memberPhone: s.phone,
+      memberEmail: s.email || "",
+      canViewFinancials: true,
+    };
+
+    res.json({ success: true, token, seller: sellerPayload });
     return;
   }
+
+  res.status(400).json({ success: false, error: "Target organization identifier required" });
 });
 
 
@@ -582,6 +753,68 @@ export const getMe = asyncHandler(async (req: Request, res: Response) => {
     seller.onboarding?.merchantAgreementAccepted && seller.onboarding?.digitalSignature
   );
 
+  // Fetch all associated accounts for this user's phone
+  const associatedAccounts: Array<{
+    accountId: string;
+    sellerId: string;
+    teamMemberId?: string;
+    companyName: string;
+    logoUrl: string | null;
+    role: string;
+    isOwner: boolean;
+    canViewFinancials: boolean;
+    memberName: string;
+    onboardingStatus: string;
+    kycVerified: boolean;
+  }> = [];
+
+  const { phone: callerPhone } = normalizePhone(memberPhone);
+
+  const ownedSeller = await prisma.seller.findUnique({
+    where: { phone: callerPhone },
+    include: { onboarding: true },
+  });
+  if (ownedSeller) {
+    associatedAccounts.push({
+      accountId: `seller_${ownedSeller.id}`,
+      sellerId: ownedSeller.id,
+      companyName: ownedSeller.businessName || ownedSeller.onboarding?.businessName || "My Store",
+      logoUrl: ownedSeller.onboarding?.logoUrl || null,
+      role: "OWNER",
+      isOwner: true,
+      canViewFinancials: true,
+      memberName: ownedSeller.onboarding?.signatoryName || ownedSeller.businessName || "Store Owner",
+      onboardingStatus: ownedSeller.onboardingStatus,
+      kycVerified: ownedSeller.kycVerified,
+    });
+  }
+
+  const activeMemberships = await prisma.teamMember.findMany({
+    where: { phone: callerPhone, status: "ACTIVE" },
+    include: {
+      seller: {
+        include: { onboarding: true },
+      },
+    },
+  });
+
+  for (const tm of activeMemberships) {
+    if (ownedSeller && tm.sellerId === ownedSeller.id) continue;
+    associatedAccounts.push({
+      accountId: `tm_${tm.id}`,
+      sellerId: tm.sellerId,
+      teamMemberId: tm.id,
+      companyName: tm.seller.businessName || tm.seller.onboarding?.businessName || "Partner Store",
+      logoUrl: tm.seller.onboarding?.logoUrl || null,
+      role: tm.role,
+      isOwner: false,
+      canViewFinancials: Boolean(tm.canViewFinancials),
+      memberName: tm.name,
+      onboardingStatus: tm.seller.onboardingStatus,
+      kycVerified: true,
+    });
+  }
+
   res.json({
     success: true,
     seller: {
@@ -604,5 +837,7 @@ export const getMe = asyncHandler(async (req: Request, res: Response) => {
       memberPhone,
       memberEmail,
     },
+    accounts: associatedAccounts,
+    hasMultipleAccounts: associatedAccounts.length > 1,
   });
 });

@@ -7,17 +7,21 @@ import { instantpayStub } from "./instantpay.stub";
  * AES-256-CBC Aadhaar Number Encryption Helper
  * InstantPay API requires 12-digit Aadhaar numbers to be encrypted using AES-256-CBC.
  */
-export function encryptAadhaarAes(aadhaarNumber: string, clientSecret: string): string {
+export function encryptAadhaarAes(aadhaarNumber: string, secretKey: string): string {
   try {
     // 1. Generate random 16-byte IV (openssl_random_pseudo_bytes(16))
     const iv = crypto.randomBytes(16);
 
-    // 2. OpenSSL key derivation: support 64-character hex (32-byte binary key) or 32-char string
+    // 2. OpenSSL key derivation: AES-256-CBC requires a 32-byte (256-bit) key.
+    // InstantPay developer portal provides a 32-character encryption key (INSTANTPAY_ENCRYPTION_KEY).
+    // In PHP (which InstantPay uses), openssl_encrypt passes strings directly as raw bytes (UTF-8).
     let key: Buffer;
-    if (/^[0-9a-fA-F]{64}$/.test(clientSecret)) {
-      key = Buffer.from(clientSecret, "hex");
+    if (secretKey.length === 32) {
+      key = Buffer.from(secretKey, "utf8");
+    } else if (/^[0-9a-fA-F]{64}$/.test(secretKey)) {
+      key = Buffer.from(secretKey.slice(0, 32), "utf8");
     } else {
-      key = Buffer.from(clientSecret.padEnd(32, "\0").slice(0, 32), "utf8");
+      key = Buffer.from(secretKey.padEnd(32, "\0").slice(0, 32), "utf8");
     }
 
     // 3. Encrypt via AES-256-CBC
@@ -475,7 +479,10 @@ export const instantpayReal: InstantPayClient = {
       typeof aadhaarOrOptions === "string" ? { aadhaarNumber: aadhaarOrOptions } : aadhaarOrOptions;
 
     const aadhaarNumber = options.aadhaarNumber.trim();
-    const secretToUse = config.instantpayClientSecret || config.instantpayEncryptionKey || "";
+    const secretToUse = config.instantpayEncryptionKey || config.instantpayClientSecret || "";
+    if (!config.instantpayEncryptionKey) {
+      console.warn("[InstantPay Real Warning] INSTANTPAY_ENCRYPTION_KEY is not defined in environment. Falling back to clientSecret, which may cause Aadhaar verification to fail.");
+    }
     const payloadAadhaar =
       options.encryptedAadhaar ||
       (/^\d{12}$/.test(aadhaarNumber)
