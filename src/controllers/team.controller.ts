@@ -1,5 +1,6 @@
 import { Request, Response } from "express";
 import { prisma } from "../config/prisma";
+import { config } from "../config/env";
 import { asyncHandler } from "../utils/asyncHandler";
 import { otpService } from "../external";
 import { generateOtp, isOtpValid } from "../services/auth.service";
@@ -81,7 +82,7 @@ export const inviteTeamMember = asyncHandler(async (req: Request, res: Response)
       businessName: seller?.businessName || "Cikka Partner Store",
       role,
       otpCode: otp,
-      loginUrl: "http://localhost:5173/login",
+      loginUrl: `${config.sellerPortalUrl}/login`,
     }).catch((err) => console.error("Failed to send team invite email via Resend:", err));
   }
 

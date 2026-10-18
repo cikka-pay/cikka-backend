@@ -1,6 +1,7 @@
 import { Request, Response } from "express";
 import { asyncHandler } from "../utils/asyncHandler";
 import { prisma } from "../config/prisma";
+import { config } from "../config/env";
 import { sendSellerWelcomeEmail, sendSellerRejectionEmail, sendMissingDocumentEmail } from "../utils/resend";
 import { generateApplicationId } from "../services/auth.service";
 import { razorpayRouteService } from "../services/razorpayRoute.service";
@@ -283,7 +284,7 @@ export const notifyMissingDocument = asyncHandler(async (req: Request, res: Resp
       sellerName: seller?.businessName || onboarding.signatoryName || "Partner",
       documentTitle,
       reason,
-      uploadLink: "http://localhost:5173/onboarding",
+      uploadLink: `${config.sellerPortalUrl}/onboarding`,
     }).catch((err) => console.error("Failed to send missing document email via Resend:", err));
   }
 

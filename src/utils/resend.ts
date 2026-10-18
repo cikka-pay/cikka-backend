@@ -68,6 +68,11 @@ export function getRecentEmailLogs(): EmailLogEntry[] {
 }
 
 const DEFAULT_FROM_EMAIL = "noreply@cikka.club";
+const DEFAULT_PORTAL_URL = (
+  process.env.SELLER_PORTAL_URL ||
+  process.env.FRONTEND_URL ||
+  "https://seller.cikka.club"
+).replace(/\/+$/, "");
 
 /**
  * Core function to send emails via Resend REST API (https://api.resend.com/emails)
@@ -196,7 +201,7 @@ export async function sendSellerWaitlistEmail(payload: SendEmailPayload) {
     <div class="footer">
       Cheers,<br>
       <span class="brand">Team Cikka</span><br>
-      <a href="mailto:support@business.club" class="support-link">support@business.club</a>
+      <a href="mailto:support@cikka.club" class="support-link">support@cikka.club</a>
     </div>
   </div>
 </body>
@@ -256,16 +261,16 @@ export async function sendSellerWelcomeEmail(payload: SendEmailPayload) {
     </ol>
 
     <div style="text-align: center; margin: 24px 0;">
-      <a href="http://localhost:5173/dashboard" class="btn">Launch Seller Dashboard &rarr;</a>
+      <a href="${DEFAULT_PORTAL_URL}/dashboard" class="btn">Launch Seller Dashboard &rarr;</a>
     </div>
 
-    <p>If you get stuck anywhere, our team is one email away at <a href="mailto:support@business.club" style="color: #7c3aed; text-decoration: none;">support@business.club</a>.</p>
+    <p>If you get stuck anywhere, our team is one email away at <a href="mailto:support@cikka.club" style="color: #7c3aed; text-decoration: none;">support@cikka.club</a>.</p>
     <p>Excited to have you with us,</p>
 
     <div class="footer">
       Cheers,<br>
       <span class="brand">Team Cikka</span><br>
-      <a href="mailto:support@cikka.club" class="support-link">support@business.club</a>
+      <a href="mailto:support@cikka.club" class="support-link">support@cikka.club</a>
     </div>
   </div>
 </body>
@@ -287,7 +292,7 @@ export async function sendSellerWelcomeEmail(payload: SendEmailPayload) {
 export async function sendSellerRejectionEmail(payload: SendRejectionEmailPayload) {
   const sellerName = payload.sellerName?.trim() || "Partner";
   const reason = payload.reason?.trim() || "Document verification details required updating";
-  const uploadLink = payload.uploadLink || "http://localhost:5173/onboarding";
+  const uploadLink = payload.uploadLink || `${DEFAULT_PORTAL_URL}/onboarding`;
   const subject = "Action Required: Update your Cikka seller verification details";
 
   const html = `
@@ -327,12 +332,12 @@ export async function sendSellerRejectionEmail(payload: SendRejectionEmailPayloa
       <a href="${uploadLink}" class="btn">Update Documents &rarr;</a>
     </div>
 
-    <p>Once updated, our team will immediately pick your application back up. If something isn't clear, simply reply to this email or contact us at <a href="mailto:support@business.club" style="color: #7c3aed; text-decoration: none;">support@business.club</a>.</p>
+    <p>Once updated, our team will immediately pick your application back up. If something isn't clear, simply reply to this email or contact us at <a href="mailto:support@cikka.club" style="color: #7c3aed; text-decoration: none;">support@cikka.club</a>.</p>
 
     <div class="footer">
       Cheers,<br>
       <span class="brand">Team Cikka</span><br>
-      <a href="mailto:support@business.club" class="support-link">support@business.club</a>
+      <a href="mailto:support@cikka.club" class="support-link">support@cikka.club</a>
     </div>
   </div>
 </body>
@@ -353,7 +358,7 @@ export async function sendSellerRejectionEmail(payload: SendRejectionEmailPayloa
  */
 export async function sendMissingDocumentEmail(payload: SendMissingDocPayload) {
   const sellerName = payload.sellerName?.trim() || "Partner";
-  const uploadLink = payload.uploadLink || "http://localhost:5173/onboarding";
+  const uploadLink = payload.uploadLink || `${DEFAULT_PORTAL_URL}/onboarding`;
   const subject = `Action Required: Document Issue (${payload.documentTitle})`;
 
   const html = `
@@ -397,7 +402,7 @@ export async function sendMissingDocumentEmail(payload: SendMissingDocPayload) {
     <div class="footer">
       Cheers,<br>
       <span class="brand">Team Cikka</span><br>
-      <a href="mailto:support@business.club" class="support-link">support@business.club</a>
+      <a href="mailto:support@cikka.club" class="support-link">support@cikka.club</a>
     </div>
   </div>
 </body>
@@ -455,7 +460,7 @@ export async function sendOtpEmail(payload: SendOtpPayload) {
     <div class="footer">
       Cheers,<br>
       <span class="brand">Team Cikka</span><br>
-      <a href="mailto:support@business.club" class="support-link">support@business.club</a>
+      <a href="mailto:support@cikka.club" class="support-link">support@cikka.club</a>
     </div>
   </div>
 </body>
@@ -475,7 +480,7 @@ export async function sendOtpEmail(payload: SendOtpPayload) {
  * Trigger: Seller invites team member with role
  */
 export async function sendTeamInviteEmail(payload: SendTeamInvitePayload) {
-  const loginUrl = payload.loginUrl || "http://localhost:5173/login";
+  const loginUrl = payload.loginUrl || `${DEFAULT_PORTAL_URL}/login`;
   const subject = `You've been invited to join ${payload.businessName} on Cikka`;
 
   const html = `
@@ -520,7 +525,7 @@ export async function sendTeamInviteEmail(payload: SendTeamInvitePayload) {
     <div class="footer">
       Cheers,<br>
       <span class="brand">Team Cikka</span><br>
-      <a href="mailto:support@business.club" class="support-link">support@business.club</a>
+      <a href="mailto:support@cikka.club" class="support-link">support@cikka.club</a>
     </div>
   </div>
 </body>
@@ -555,7 +560,7 @@ export function getTemplatePreview(templateKey: string): { subject: string; html
   <div style="margin-top: 24px; padding-top: 16px; border-top: 1px solid #f1f5f9; font-size: 12px; color: #475569; line-height: 1.6;">
     Cheers,<br>
     <strong style="color: #0f172a;">Team Cikka</strong><br>
-    <span style="color: #7c3aed;">support@business.club</span>
+    <span style="color: #7c3aed;">support@cikka.club</span>
   </div>
 </div>
         `.trim(),
@@ -575,7 +580,7 @@ export function getTemplatePreview(templateKey: string): { subject: string; html
   <div style="margin-top: 24px; padding-top: 16px; border-top: 1px solid #f1f5f9; font-size: 12px; color: #475569; line-height: 1.6;">
     Cheers,<br>
     <strong style="color: #0f172a;">Team Cikka</strong><br>
-    <span style="color: #7c3aed;">support@business.club</span>
+    <span style="color: #7c3aed;">support@cikka.club</span>
   </div>
 </div>
         `.trim(),
@@ -595,7 +600,7 @@ export function getTemplatePreview(templateKey: string): { subject: string; html
   <div style="margin-top: 24px; padding-top: 16px; border-top: 1px solid #f1f5f9; font-size: 12px; color: #475569; line-height: 1.6;">
     Cheers,<br>
     <strong style="color: #0f172a;">Team Cikka</strong><br>
-    <span style="color: #7c3aed;">support@business.club</span>
+    <span style="color: #7c3aed;">support@cikka.club</span>
   </div>
 </div>
         `.trim(),
@@ -616,7 +621,7 @@ export function getTemplatePreview(templateKey: string): { subject: string; html
   <div style="margin-top: 24px; padding-top: 16px; border-top: 1px solid #f1f5f9; font-size: 12px; color: #475569; line-height: 1.6;">
     Cheers,<br>
     <strong style="color: #0f172a;">Team Cikka</strong><br>
-    <span style="color: #7c3aed;">support@business.club</span>
+    <span style="color: #7c3aed;">support@cikka.club</span>
   </div>
 </div>
         `.trim(),
@@ -633,7 +638,7 @@ export function getTemplatePreview(templateKey: string): { subject: string; html
   <div style="margin-top: 24px; padding-top: 16px; border-top: 1px solid #f1f5f9; font-size: 12px; color: #475569; line-height: 1.6;">
     Cheers,<br>
     <strong style="color: #0f172a;">Team Cikka</strong><br>
-    <span style="color: #7c3aed;">support@business.club</span>
+    <span style="color: #7c3aed;">support@cikka.club</span>
   </div>
 </div>
         `.trim(),
