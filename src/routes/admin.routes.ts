@@ -2,12 +2,17 @@ import { Router } from "express";
 import * as adminAuth from "../controllers/admin-auth.controller";
 import * as adminOnboarding from "../controllers/admin-onboarding.controller";
 import * as adminCommissionAgreement from "../controllers/admin-commission-agreement.controller";
+import { requireAdminAuth } from "../middleware/auth.middleware";
 
 const router = Router();
 
 // Auth Routes
 router.post("/auth/login", adminAuth.adminLogin);
 router.post("/auth/verify-access-code", adminAuth.verifyAccessCode);
+
+// Everything below requires an admin token from one of the routes above.
+router.use(requireAdminAuth);
+
 router.get("/auth/me", adminAuth.getAdminProfile);
 
 // Seller Verification & Onboarding Feed Routes
