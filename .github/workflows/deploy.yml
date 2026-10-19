@@ -1,0 +1,27 @@
+name: Deploy to Railway
+
+# Deploys from CI with a Railway project token, so any push to main deploys
+# regardless of who authored it. Disconnect the GitHub repo from this service
+# in Railway, or every push deploys twice.
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: railway-production
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Railway CLI
+        run: npm i -g @railway/cli
+
+      - name: Deploy cikka-backend
+        run: railway up --service cikka-backend --ci
+        env:
+          RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN }}
