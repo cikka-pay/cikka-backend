@@ -16,7 +16,7 @@ import { asyncHandler } from "../utils/asyncHandler";
  * Perform PAN authentication and identity verification via InstantPay.
  */
 export const verifyPan = asyncHandler(async (req: Request, res: Response) => {
-  const { pan, phone } = req.body;
+  const { pan, phone, isPersonal } = req.body;
   const sellerId = req.seller?.id;
   const userId = req.user?.id || sellerId;
 
@@ -61,20 +61,35 @@ export const verifyPan = asyncHandler(async (req: Request, res: Response) => {
 
   // Sync verified PAN to SellerOnboarding if seller is authenticated
   if (sellerId) {
-    await prisma.sellerOnboarding.upsert({
-      where: { sellerId },
-      update: {
-        panNumber: result.pan,
-        panVerified: true,
-        panData: result as any,
-      },
-      create: {
-        sellerId,
-        panNumber: result.pan,
-        panVerified: true,
-        panData: result as any,
-      },
-    }).catch((err) => console.warn(`[InstantPay Onboarding Sync] PAN sync skipped: ${err.message}`));
+    if (isPersonal) {
+      await prisma.sellerOnboarding.upsert({
+        where: { sellerId },
+        update: {
+          signatoryPersonalPan: result.pan,
+          signatoryName: (result.registeredName && !isEntityOrCompanyName(result.registeredName)) ? result.registeredName : undefined,
+        },
+        create: {
+          sellerId,
+          signatoryPersonalPan: result.pan,
+          signatoryName: (result.registeredName && !isEntityOrCompanyName(result.registeredName)) ? result.registeredName : undefined,
+        },
+      }).catch((err) => console.warn(`[InstantPay Onboarding Sync] Personal PAN sync skipped: ${err.message}`));
+    } else {
+      await prisma.sellerOnboarding.upsert({
+        where: { sellerId },
+        update: {
+          panNumber: result.pan,
+          panVerified: true,
+          panData: result as any,
+        },
+        create: {
+          sellerId,
+          panNumber: result.pan,
+          panVerified: true,
+          panData: result as any,
+        },
+      }).catch((err) => console.warn(`[InstantPay Onboarding Sync] PAN sync skipped: ${err.message}`));
+    }
   }
 
   res.status(200).json({
@@ -185,16 +200,85 @@ export const verifyCin = asyncHandler(async (req: Request, res: Response) => {
  * POST /api/instantpay/verify-aadhaar
  * Perform Aadhaar Demographic verification via InstantPay API.
  */
+function isEntityOrCompanyName(name?: string | null): boolean {
+  if (!name) return false;
+  const upper = name.toUpperCase().trim();
+  return (
+    upper.includes("PRIVATE LIMITED") ||
+    upper.includes("PVT LTD") ||
+    upper.includes("PVT. LTD") ||
+    upper.includes("LIMITED") ||
+    upper.includes("LTD") ||
+    upper.includes("LLP") ||
+    upper.includes("ENTERPRISE") ||
+    upper.includes("ENTERPRISES") ||
+    upper.includes("SOLUTIONS") ||
+    upper.includes("CORPORATION") ||
+    upper.includes("CORP") ||
+    upper.includes("COMPANY") ||
+    upper.includes("CO.")
+  );
+}
+
 export const verifyAadhaar = asyncHandler(async (req: Request, res: Response) => {
-  const { aadhaarNumber, name, externalRef, latitude, longitude } = req.body;
+  const { aadhaarNumber, externalRef, latitude, longitude } = req.body;
+  let name = (req.body.name || "").trim();
   const sellerId = req.seller?.id;
   const userId = req.user?.id;
+
+  // Never use a corporate / entity name for an individual Aadhaar signatory
+  if (isEntityOrCompanyName(name)) {
+    name = "";
+  }
+
+  // If human signatory name was not provided, resolve from existing verified signatory records
+  if (!name && sellerId) {
+    try {
+      const ob = await prisma.sellerOnboarding.findUnique({
+        where: { sellerId },
+        select: { signatoryName: true },
+      });
+      if (
+        ob?.signatoryName &&
+        !isEntityOrCompanyName(ob.signatoryName) &&
+        ob.signatoryName !== "Aadhaar Verified" &&
+        ob.signatoryName !== "Authorized Signatory"
+      ) {
+        name = ob.signatoryName.trim();
+      } else {
+        const sellerRec = await prisma.seller.findUnique({
+          where: { id: sellerId },
+          select: { phone: true, email: true },
+        });
+        const match = await prisma.sellerOnboarding.findFirst({
+          where: {
+            OR: [
+              ...(aadhaarNumber ? [{ signatoryAadhaar: aadhaarNumber }] : []),
+              ...(sellerRec?.phone ? [{ seller: { phone: sellerRec.phone } }] : []),
+              ...(sellerRec?.email ? [{ seller: { email: sellerRec.email } }] : []),
+            ],
+            AND: [
+              { signatoryName: { not: null } },
+              { signatoryName: { notIn: ["Aadhaar Verified", "Authorized Signatory", ""] } },
+            ],
+          },
+          select: { signatoryName: true },
+          orderBy: { updatedAt: "desc" },
+        });
+        if (match?.signatoryName && !isEntityOrCompanyName(match.signatoryName)) {
+          name = match.signatoryName.trim();
+        }
+      }
+    } catch (e: any) {
+      console.warn(`[Aadhaar Name Resolution Warning] ${e.message}`);
+    }
+  }
 
   const result = await verifyAadhaarService({
     sellerId,
     userId,
     aadhaarNumber,
-    name,
+    name: name || undefined,
     externalRef,
     latitude,
     longitude,
@@ -204,9 +288,22 @@ export const verifyAadhaar = asyncHandler(async (req: Request, res: Response) =>
     result.error ||
     (result.status && result.status !== "VALID" ? `Aadhaar verification failed: ${result.status}` : "Aadhaar verification failed");
 
+  let resolvedHolderName =
+    result.aadhaarHolderName && !isEntityOrCompanyName(result.aadhaarHolderName)
+      ? result.aadhaarHolderName
+      : (name && !isEntityOrCompanyName(name) ? name : undefined);
+
   // Sync verified Aadhaar to SellerOnboarding if seller is authenticated
   if (result.valid && sellerId) {
-    const verifiedName = result.aadhaarHolderName || name || undefined;
+    const rawHolder = (resolvedHolderName || result.aadhaarHolderName || name || "").trim();
+    const verifiedName =
+      rawHolder &&
+      !isEntityOrCompanyName(rawHolder) &&
+      rawHolder !== "Aadhaar Verified" &&
+      rawHolder !== "Authorized Signatory"
+        ? rawHolder
+        : undefined;
+
     await prisma.sellerOnboarding.upsert({
       where: { sellerId },
       update: {
@@ -218,16 +315,19 @@ export const verifyAadhaar = asyncHandler(async (req: Request, res: Response) =>
         sellerId,
         signatoryAadhaar: result.aadhaarNumber || aadhaarNumber,
         signatoryAadhaarVerified: true,
-        signatoryName: verifiedName,
+        ...(verifiedName ? { signatoryName: verifiedName } : {}),
       },
     }).catch((err) => console.warn(`[InstantPay Onboarding Sync] Aadhaar sync skipped: ${err.message}`));
   }
 
   res.status(200).json({
-    success: result.valid,
-    message: result.valid ? "Aadhaar verified successfully" : failureMessage,
+    success: true,
+    data: {
+      ...result,
+      aadhaarHolderName: resolvedHolderName,
+    },
+    message: result.valid ? "Aadhaar verification successful" : failureMessage,
     error: result.valid ? undefined : failureMessage,
-    data: result,
   });
 });
 

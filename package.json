@@ -11,6 +11,7 @@
     "seed": "tsx prisma/seed.ts",
     "test": "vitest run",
     "create-seller": "tsx scripts/create-seller.ts",
+    "delete-seller": "tsx scripts/delete-seller.ts",
     "migrate:images": "tsx src/scripts/migrate-base64-images.ts",
     "prisma:studio": "prisma studio",
     "prisma:migrate": "prisma migrate dev",

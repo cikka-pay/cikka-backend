@@ -39,7 +39,7 @@ const createProductSchema = z.object({
   description: z.string().optional(),
   mrp: z.number().positive().optional(),
   price: z.number().positive("Price is required"),
-  gstSlab: z.number().int().optional(),
+  gstSlab: z.number().int().optional().default(18),
   loyaltyPoints: z.number().int().min(0).optional(),
   stockQty: z.number().int().min(0).optional(),
   lowStockThreshold: z.number().int().min(0).optional(),

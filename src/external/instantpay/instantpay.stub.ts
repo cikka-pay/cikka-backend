@@ -19,7 +19,7 @@ export const instantpayStub: InstantPayClient = {
       };
     }
 
-    const registeredName = typeof panOrOptions !== "string" && panOrOptions.nameOnCard ? panOrOptions.nameOnCard.toUpperCase() : "VEDANT VYAS";
+    const registeredName = typeof panOrOptions !== "string" && panOrOptions.nameOnCard ? panOrOptions.nameOnCard.toUpperCase() : undefined;
 
     return {
       valid: true,
@@ -167,10 +167,12 @@ export const instantpayStub: InstantPayClient = {
       };
     }
 
+    const resolvedName = options.name || undefined;
+
     return {
       valid: true,
       aadhaarNumber,
-      aadhaarHolderName: options.name || "Sample Aadhaar Holder",
+      aadhaarHolderName: resolvedName,
       state: "Uttar Pradesh",
       ageBand: "20-30",
       gender: "M",
@@ -219,7 +221,7 @@ export const instantpayStub: InstantPayClient = {
     return {
       valid: true,
       vpa,
-      accountHolderName: options.name || "Instantpay India Ltd",
+      accountHolderName: options.name || undefined,
       ifsc: options.bankIfsc || "ICIC0000104",
       accountType: "SAVINGS",
       nameMatchPercent: 96,
@@ -232,7 +234,7 @@ export const instantpayStub: InstantPayClient = {
           externalRef: options.externalRef || `ref_${Date.now()}`,
           poolReferenceId: `pool_${Date.now()}`,
           payee: {
-            name: options.name || "Instantpay India Ltd",
+            name: options.name || undefined,
             account: vpa,
             ifsc: options.bankIfsc || "ICIC0000104",
             accountType: "SAVINGS",
@@ -270,7 +272,7 @@ export const instantpayStub: InstantPayClient = {
       valid: true,
       accountNumber: acc,
       bankIfsc: ifsc,
-      accountHolderName: options.name || "SHAHBAZ STORE",
+      accountHolderName: options.name || undefined,
       txnReferenceId: `tx_pd_${Date.now()}`,
       accountType: "SAVINGS",
       nameMatchPercent: 98,
@@ -286,7 +288,7 @@ export const instantpayStub: InstantPayClient = {
           txnValue: "1.00",
           txnReferenceId: `tx_pd_${Date.now()}`,
           payee: {
-            name: options.name || "SHAHBAZ STORE",
+            name: options.name || undefined,
             account: acc,
             ifsc,
             accountType: "SAVINGS",

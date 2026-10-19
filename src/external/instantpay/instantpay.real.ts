@@ -600,17 +600,44 @@ export const instantpayReal: InstantPayClient = {
       if (data.statuscode === "TXN" || data.statuscode === "00" || data.status === "Aadhaar Verification Successful" || data.statuscode === "IAB") {
         const payloadData = data.data || {};
 
-        console.log(`[InstantPay Real Success] Aadhaar verified: ${maskedAadhaar}`);
+        console.log(`[InstantPay Real Success] Aadhaar verified: ${maskedAadhaar}`, JSON.stringify(payloadData));
 
-        const resolvedHolderName =
+        const directName =
           payloadData.name ||
           payloadData.holder_name ||
+          payloadData.holderName ||
           payloadData.full_name ||
+          payloadData.fullName ||
+          payloadData.legal_name ||
+          payloadData.legalName ||
           payloadData.beneficiary_name ||
           payloadData.aadhaarHolderName ||
           data.name ||
+          data.holder_name ||
+          data.full_name ||
+          null;
+
+        const first = payloadData.first_name || payloadData.firstName || data.first_name || data.firstName;
+        const last = payloadData.last_name || payloadData.lastName || data.last_name || data.lastName;
+        const middle = payloadData.middle_name || payloadData.middleName || data.middle_name || data.middleName;
+        const combinedName = (first || last) ? [first, middle, last].filter(Boolean).join(" ").trim() : null;
+
+        // Check optional labels for any label containing 'name'
+        let optionalName = null;
+        for (let i = 1; i <= 8; i++) {
+          const lbl = String(payloadData[`optional${i}Label`] || "").toLowerCase();
+          if (lbl.includes("name") || lbl.includes("holder")) {
+            optionalName = payloadData[`optional${i}`] || null;
+            break;
+          }
+        }
+
+        const resolvedHolderName =
+          directName ||
+          combinedName ||
+          optionalName ||
           options.name ||
-          "Aadhaar Verified";
+          null;
 
         return {
           valid: data.statuscode === "TXN" || data.statuscode === "00",

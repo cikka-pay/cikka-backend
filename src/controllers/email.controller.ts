@@ -2,6 +2,7 @@ import { Request, Response } from "express";
 import { prisma } from "../config/prisma";
 import { asyncHandler } from "../utils/asyncHandler";
 import { sendSellerWaitlistEmail, sendSellerWelcomeEmail } from "../utils/resend";
+import { signSellerToken } from "../utils/jwt";
 
 export const sendWaitlistEmailHandler = asyncHandler(async (req: Request, res: Response) => {
   let { email, sellerName, businessName } = req.body;
@@ -57,9 +58,32 @@ export const sendWelcomeEmailHandler = asyncHandler(async (req: Request, res: Re
     return;
   }
 
+  let magicToken: string | undefined;
+  if (sellerId) {
+    magicToken = signSellerToken(sellerId, "30d");
+  } else {
+    const matchingSeller = await prisma.seller.findFirst({
+      where: {
+        OR: [{ email: recipientEmail }, { onboarding: { signatoryEmail: recipientEmail } }],
+      },
+    });
+    if (matchingSeller) {
+      magicToken = signSellerToken(matchingSeller.id, "30d");
+    }
+  }
+
+  const portalUrl = (
+    process.env.SELLER_PORTAL_URL ||
+    process.env.FRONTEND_URL ||
+    "https://seller.cikka.club"
+  ).replace(/\/+$/, "");
+  const actionUrl = magicToken ? `${portalUrl}/merchant-agreement?token=${magicToken}` : `${portalUrl}/merchant-agreement`;
+
   const result = await sendSellerWelcomeEmail({
     to: recipientEmail,
     sellerName: sellerName || businessName || "Partner",
+    token: magicToken,
+    actionUrl,
   });
 
   if (!result.success) {
