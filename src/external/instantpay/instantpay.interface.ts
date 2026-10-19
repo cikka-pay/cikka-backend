@@ -16,6 +16,7 @@ export interface InstantPayPanResult {
   userGender?: string;
   userDob?: string;
   status: string;
+  error?: string;
   rawResponse?: any;
 }
 

@@ -1,6 +1,6 @@
 import crypto from "crypto";
 import { config } from "../../config/env";
-import { InstantPayClient, InstantPayPanResult, InstantPayPanRequestOptions, InstantPayGstinResult, InstantPayGstinRequestOptions, InstantPayCinResult, InstantPayCinRequestOptions, InstantPayAadhaarRequestOptions, InstantPayAadhaarResult, InstantPayVpaRequestOptions, InstantPayVpaResult, InstantPayBankAccountRequestOptions, InstantPayBankAccountResult } from "./instantpay.interface";
+import { InstantPayAadhaarRequestOptions, InstantPayAadhaarResult, InstantPayBankAccountRequestOptions, InstantPayBankAccountResult, InstantPayCinRequestOptions, InstantPayCinResult, InstantPayClient, InstantPayGstinRequestOptions, InstantPayGstinResult, InstantPayPanRequestOptions, InstantPayPanResult, InstantPayVpaRequestOptions, InstantPayVpaResult } from "./instantpay.interface";
 import { instantpayStub } from "./instantpay.stub";
 
 /**
@@ -207,7 +207,13 @@ export const instantpayReal: InstantPayClient = {
       };
     } catch (err: any) {
       console.error(`[InstantPay Real Error] verifyPan failed: ${err.message}`);
-      return instantpayStub.verifyPan(panOrOptions);
+      return {
+        valid: false,
+        pan,
+        status: "FAILED",
+        error: `InstantPay PAN Verification Error: ${err.message}`,
+        rawResponse: { error: err.message },
+      };
     }
   },
 
