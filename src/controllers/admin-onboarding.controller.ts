@@ -5,6 +5,7 @@ import { config } from "../config/env";
 import { sendSellerWelcomeEmail, sendSellerRejectionEmail, sendMissingDocumentEmail } from "../utils/resend";
 import { generateApplicationId } from "../services/auth.service";
 import { razorpayRouteService } from "../services/razorpayRoute.service";
+import { signSellerToken } from "../utils/jwt";
 
 export const getApplications = asyncHandler(async (req: Request, res: Response) => {
   const { status, search } = req.query;
@@ -193,9 +194,19 @@ export const updateApplicationStatus = asyncHandler(async (req: Request, res: Re
   if (isApproved && previousSeller?.onboardingStatus !== "VERIFIED") {
     const sellerEmail = (updatedSeller.email || updatedSeller.onboarding?.signatoryEmail)?.trim();
     if (sellerEmail && sellerEmail.includes("@")) {
+      const magicToken = signSellerToken(updatedSeller.id, "30d");
+      const portalUrl = (
+        process.env.SELLER_PORTAL_URL ||
+        process.env.FRONTEND_URL ||
+        "https://seller.cikka.club"
+      ).replace(/\/+$/, "");
+      const agreementUrl = `${portalUrl}/merchant-agreement?token=${magicToken}`;
+
       sendSellerWelcomeEmail({
         to: sellerEmail,
         sellerName: updatedSeller.businessName || updatedSeller.onboarding?.signatoryName || "Partner",
+        token: magicToken,
+        actionUrl: agreementUrl,
       }).catch((err) => console.error("Failed to send welcome email via Resend:", err));
     }
   }

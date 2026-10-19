@@ -1,5 +1,7 @@
 import { Request, Response } from "express";
 import { asyncHandler } from "../utils/asyncHandler";
+import { prisma } from "../config/prisma";
+import { signSellerToken } from "../utils/jwt";
 import {
   getRecentEmailLogs,
   getTemplatePreview,
@@ -89,9 +91,28 @@ export const sendTestEmail = asyncHandler(async (req: Request, res: Response) =>
   let dispatchResult: { success: boolean; id?: string; error?: string };
 
   switch (template) {
-    case "seller_welcome":
-      dispatchResult = await sendSellerWelcomeEmail({ to, sellerName: targetName });
+    case "seller_welcome": {
+      const matchingSeller = await prisma.seller.findFirst({
+        where: {
+          OR: [{ email: to }, { onboarding: { signatoryEmail: to } }],
+        },
+      });
+      const magicToken = matchingSeller ? signSellerToken(matchingSeller.id, "30d") : undefined;
+      const portalUrl = (
+        process.env.SELLER_PORTAL_URL ||
+        process.env.FRONTEND_URL ||
+        "https://seller.cikka.club"
+      ).replace(/\/+$/, "");
+      const actionUrl = magicToken ? `${portalUrl}/merchant-agreement?token=${magicToken}` : `${portalUrl}/merchant-agreement`;
+
+      dispatchResult = await sendSellerWelcomeEmail({
+        to,
+        sellerName: targetName,
+        token: magicToken,
+        actionUrl,
+      });
       break;
+    }
 
     case "seller_rejection":
       dispatchResult = await sendSellerRejectionEmail({

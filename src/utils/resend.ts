@@ -4,6 +4,8 @@ dotenv.config();
 export interface SendEmailPayload {
   to: string;
   sellerName?: string;
+  token?: string;
+  actionUrl?: string;
 }
 
 export interface SendRejectionEmailPayload {
@@ -427,22 +429,23 @@ export function buildWaitlistReviewHtml(sellerName: string): string {
   });
 }
 
-export function buildSellerWelcomeHtml(sellerName: string): string {
-  const subject = `Welcome to Cikka, ${sellerName} — you're officially live`;
+export function buildSellerWelcomeHtml(sellerName: string, actionUrl?: string): string {
+  const targetUrl = actionUrl || `${DEFAULT_PORTAL_URL}/merchant-agreement`;
+  const subject = `Welcome to Cikka, ${sellerName} — Review & Sign Merchant Agreement`;
   const bodyHtml = `
     <p>Hi <strong style="color: #0f172a;">${sellerName}</strong>,</p>
-    <p>Congratulations! Your <strong>Cikka</strong> merchant store is fully verified and officially live.</p>
+    <p>Congratulations! Your <strong>Cikka</strong> merchant store application has been approved by our verification team.</p>
     
-    <p>Here is what we recommend doing next to start generating sales:</p>
+    <p>Please review and e-sign your <strong>Merchant Agreement &amp; Commercial Terms</strong> to complete activation and launch your live dashboard:</p>
     <ol style="font-size: 14px; line-height: 1.8; color: #334155; padding-left: 20px; margin: 16px 0;">
+      <li style="margin-bottom: 8px;"><strong>Review &amp; Sign Agreement:</strong> Confirm your approved commission structure &amp; settlement cycle to activate your dashboard.</li>
       <li style="margin-bottom: 8px;"><strong>Add Your Products:</strong> Create your product catalog or sync your existing inventory.</li>
-      <li style="margin-bottom: 8px;"><strong>Confirm Logistics:</strong> Review pickup address &amp; courier SLAs for automatic label generation.</li>
       <li style="margin-bottom: 8px;"><strong>Track Orders &amp; Settlements:</strong> Monitor live orders and automatic bank settlements.</li>
     </ol>
 
     <div style="text-align: center; margin: 28px 0 14px 0;">
-      <a href="${DEFAULT_PORTAL_URL}/dashboard" style="display: inline-block; background: #7c3aed; color: #ffffff !important; font-weight: 700; font-size: 13px; letter-spacing: 0.5px; text-transform: uppercase; text-decoration: none; padding: 14px 32px; border-radius: 999px; box-shadow: 0 4px 14px rgba(124, 58, 237, 0.3);">
-        Launch Seller Dashboard &rarr;
+      <a href="${targetUrl}" style="display: inline-block; background: #7c3aed; color: #ffffff !important; font-weight: 700; font-size: 13px; letter-spacing: 0.5px; text-transform: uppercase; text-decoration: none; padding: 14px 32px; border-radius: 999px; box-shadow: 0 4px 14px rgba(124, 58, 237, 0.3);">
+        Review &amp; Sign Merchant Agreement &rarr;
       </a>
     </div>
 
@@ -452,8 +455,8 @@ export function buildSellerWelcomeHtml(sellerName: string): string {
 
   return renderCikkaMailLayout({
     subject,
-    badge: { text: "SELLER • ACCOUNT ACTIVATED • LIVE", type: "green" },
-    headline: `Welcome to Cikka, ${sellerName} — you're officially live`,
+    badge: { text: "SELLER • APPLICATION APPROVED • ACTION REQUIRED", type: "green" },
+    headline: `Welcome to Cikka, ${sellerName}`,
     bodyHtml,
   });
 }
@@ -592,8 +595,9 @@ export async function sendSellerWaitlistEmail(payload: SendEmailPayload) {
  */
 export async function sendSellerWelcomeEmail(payload: SendEmailPayload) {
   const sellerName = payload.sellerName?.trim() || "Partner";
-  const subject = `Welcome to Cikka, ${sellerName} — you're officially live`;
-  const html = buildSellerWelcomeHtml(sellerName);
+  const actionUrl = payload.actionUrl || (payload.token ? `${DEFAULT_PORTAL_URL}/merchant-agreement?token=${payload.token}` : `${DEFAULT_PORTAL_URL}/merchant-agreement`);
+  const subject = `Welcome to Cikka, ${sellerName} — Review & Sign Merchant Agreement`;
+  const html = buildSellerWelcomeHtml(sellerName, actionUrl);
 
   return sendResendMail({
     to: payload.to,
@@ -688,7 +692,7 @@ export function getTemplatePreview(templateKey: string): { subject: string; html
 
     case "seller_welcome":
       return {
-        subject: "Welcome to Cikka, Vintvate — you're officially live",
+        subject: "Welcome to Cikka, Vintvate — Review & Sign Merchant Agreement",
         html: buildSellerWelcomeHtml("Vintvate"),
       };
 
