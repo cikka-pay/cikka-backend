@@ -88,6 +88,11 @@ export const createProduct = asyncHandler(async (req: Request, res: Response) =>
   // variants are optional
   const { variants, ...productData } = data;
 
+  if (productData.mrp !== undefined && productData.price !== undefined && productData.price > productData.mrp) {
+    res.status(400).json({ error: "Selling price cannot exceed MRP" });
+    return;
+  }
+
   const seller = await prisma.seller.findUnique({
     where: { id: sellerId },
     include: { onboarding: true },
@@ -127,6 +132,13 @@ export const updateProduct = asyncHandler(async (req: Request, res: Response) =>
   }
 
   const { variants, ...updateData } = data;
+
+  const effectiveMrp = updateData.mrp !== undefined ? updateData.mrp : (existing.mrp !== null ? Number(existing.mrp) : undefined);
+  const effectivePrice = updateData.price !== undefined ? updateData.price : Number(existing.price);
+  if (effectiveMrp !== undefined && effectivePrice > effectiveMrp) {
+    res.status(400).json({ error: "Selling price cannot exceed MRP" });
+    return;
+  }
 
   // Ensure brand name cannot be altered away from seller onboarded brand
   const seller = await prisma.seller.findUnique({
