@@ -6,6 +6,7 @@ import { instantpayClient } from "../external";
 
 export interface VerifyPanDTO {
   userId?: string;
+  sellerId?: string;
   pan: string;
 }
 
@@ -28,7 +29,7 @@ export interface VerifyCinDTO {
 }
 
 export async function verifyPanService(dto: VerifyPanDTO) {
-  const { userId, pan } = dto;
+  const { userId, sellerId, pan } = dto;
 
   if (!pan) {
     throw new Error(INSTANTPAY_ERRORS.PAN_REQUIRED);
@@ -66,6 +67,66 @@ export async function verifyPanService(dto: VerifyPanDTO) {
 
   if (!panRegex.test(formattedPan)) {
     throw new Error(INSTANTPAY_ERRORS.INVALID_PAN_FORMAT);
+  }
+
+  // Check cached PAN verification in DB to avoid redundant InstantPay API calls
+  // 1. Check if the seller already verified this PAN in SellerOnboarding
+  if (sellerId && prisma.sellerOnboarding) {
+    try {
+      const ob = await prisma.sellerOnboarding.findUnique({ where: { sellerId } });
+      const obPan = ob?.panNumber ? ob.panNumber.toUpperCase().trim() : "";
+      const obSignatoryPan = ob?.signatoryPersonalPan ? ob.signatoryPersonalPan.toUpperCase().trim() : "";
+      if (
+        (obPan === formattedPan && ob?.panVerified && ob?.panData) ||
+        (obSignatoryPan === formattedPan && (ob as any)?.signatoryPersonalPanVerified && (ob as any)?.personalPanData)
+      ) {
+        const cached: any = (obPan === formattedPan && ob?.panData) ? ob.panData : (ob as any)?.personalPanData;
+        console.log(`⚡ [PAN Cache Hit] Reusing verified PAN from SellerOnboarding for seller ${sellerId}: ${formattedPan}`);
+        return {
+          verificationId: cached?.verificationId || `v_pan_cached_${Date.now()}`,
+          valid: true,
+          pan: formattedPan,
+          registeredName: cached?.registeredName || cached?.name || null,
+          category: cached?.category || "INDIVIDUAL",
+          userGender: cached?.userGender || null,
+          userDob: cached?.userDob || null,
+          address: cached?.address || null,
+          status: cached?.status || "VALID",
+          cached: true,
+        };
+      }
+    } catch (obErr: any) {
+      console.warn(`[PAN Seller Cache Check Notice] ${obErr.message}`);
+    }
+  }
+
+  // 2. Check general PanVerificationRecord cache in DB
+  if (prisma.panVerificationRecord) {
+    try {
+      const cached = await prisma.panVerificationRecord.findFirst({
+        where: { pan: formattedPan, status: { in: ["VALID", "Active", "RECORD_FOUND"] } },
+        orderBy: { createdAt: "desc" },
+      });
+
+      if (cached) {
+        console.log(`⚡ [PAN Cache Hit] Returning cached verification from PanVerificationRecord for ${formattedPan}`);
+        const raw: any = cached.rawResponse;
+        return {
+          verificationId: cached.id,
+          valid: true,
+          pan: cached.pan,
+          registeredName: cached.registeredName || raw?.registeredName || raw?.data?.panDetails?.userFullName || raw?.data?.name || null,
+          category: cached.category || "INDIVIDUAL",
+          userGender: raw?.userGender || raw?.data?.panDetails?.userGender || null,
+          userDob: raw?.userDob || raw?.data?.panDetails?.userDob || null,
+          address: raw?.address || null,
+          status: cached.status || "VALID",
+          cached: true,
+        };
+      }
+    } catch (dbErr: any) {
+      console.warn(`[PAN Cache Check Warning] ${dbErr.message}`);
+    }
   }
 
   // Call InstantPay external service

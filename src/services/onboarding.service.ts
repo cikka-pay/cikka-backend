@@ -6,10 +6,35 @@ import { generateApplicationId, getNextApplicationSequence } from "./auth.servic
 const aadhaarOtpStore = new Map<string, { code: string; aadhaar: string; mobile: string; expiresAt: number }>();
 
 /**
+ * Ensures the seller record exists in the database.
+ */
+export async function ensureSeller(sellerId: string) {
+  try {
+    let seller = await prisma.seller.findUnique({ where: { id: sellerId } });
+    if (!seller) {
+      seller = await prisma.seller.create({
+        data: {
+          id: sellerId,
+          phone: `+9199${Date.now().toString().slice(-8)}`,
+          businessName: "Merchant Partner",
+          onboardingStatus: "INCOMPLETE",
+        },
+      });
+      console.log(`[Auto-Heal] Created missing Seller record for ${sellerId}`);
+    }
+    return seller;
+  } catch (err: any) {
+    console.warn(`[Auto-Heal] ensureSeller skipped: ${err.message}`);
+    return null;
+  }
+}
+
+/**
  * Ensures the onboarding record exists for a seller.
  */
 export async function getOrCreateOnboarding(sellerId: string) {
   try {
+    await ensureSeller(sellerId);
     let record = await prisma.sellerOnboarding.findUnique({
       where: { sellerId },
     });
@@ -29,12 +54,33 @@ export async function getOrCreateOnboarding(sellerId: string) {
  * Verifies GST and saves the result to the onboarding record.
  */
 export async function verifyGst(sellerId: string, gstNumber: string) {
-  const result = await kybService.verifyGst(gstNumber);
+  const formattedGst = gstNumber ? String(gstNumber).trim().replace(/\s+/g, "").toUpperCase() : "";
+  if (formattedGst) {
+    try {
+      const duplicate = await prisma.sellerOnboarding.findFirst({
+        where: {
+          gstNumber: { equals: formattedGst, mode: "insensitive" },
+          sellerId: { not: sellerId },
+        },
+      });
+
+      if (duplicate) {
+        throw new Error("This GST number is not available for the registration.");
+      }
+    } catch (err: any) {
+      if (err.message === "This GST number is not available for the registration.") {
+        throw err;
+      }
+      console.warn(`[DB Warning] verifyGst duplicate check skipped: ${err.message}`);
+    }
+  }
+
+  const result = await kybService.verifyGst(formattedGst || gstNumber);
   try {
     await prisma.sellerOnboarding.update({
       where: { sellerId },
       data: {
-        gstNumber,
+        gstNumber: formattedGst || gstNumber,
         gstVerified: result.valid,
         gstData: result as any,
       },

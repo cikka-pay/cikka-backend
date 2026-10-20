@@ -21,6 +21,7 @@ import {
 } from "../controllers/onboarding.controller";
 import { requireAuth } from "../middleware/auth.middleware";
 import { uploadLogo as uploadLogoMiddleware, handleMulterError } from "../middleware/upload.middleware";
+import { checkPennyDropRateLimit } from "../services/pennydrop-limiter.service";
 
 const router = Router();
 
@@ -51,7 +52,7 @@ router.post("/kyb/verify-aadhaar-otp", verifyAadhaarOtp);
 
 // Step 4: Bank Account
 router.patch("/step/4", updateStep4);
-router.post("/kyb/verify-bank", verifyBank);
+router.post("/kyb/verify-bank", checkPennyDropRateLimit, verifyBank);
 
 // Step 5: Brand & Logistics
 router.patch("/step/5", updateStep5);

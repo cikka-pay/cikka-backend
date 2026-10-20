@@ -9,6 +9,13 @@ import {
   verifyVpaService,
 } from "../services/instantpay.service";
 import { asyncHandler } from "../utils/asyncHandler";
+import { ensureSeller } from "../services/onboarding.service";
+import {
+  getPennyDropCountInLast24Hours,
+  recordPennyDropCall,
+  PENNY_DROP_LIMIT,
+  PENNY_DROP_EXHAUSTED_MESSAGE,
+} from "../services/pennydrop-limiter.service";
 
 /**
  * POST /api/kyc/verify-pan
@@ -20,7 +27,7 @@ export const verifyPan = asyncHandler(async (req: Request, res: Response) => {
   const sellerId = req.seller?.id;
   const userId = req.user?.id || sellerId;
 
-  const result = await verifyPanService({ userId, pan });
+  const result = await verifyPanService({ userId, sellerId, pan });
 
   if (!result.valid) {
     const errorMsg =
@@ -61,6 +68,7 @@ export const verifyPan = asyncHandler(async (req: Request, res: Response) => {
 
   // Sync verified PAN to SellerOnboarding if seller is authenticated
   if (sellerId) {
+    await ensureSeller(sellerId);
     if (isPersonal) {
       await prisma.sellerOnboarding.upsert({
         where: { sellerId },
@@ -112,6 +120,31 @@ export const verifyGstin = asyncHandler(async (req: Request, res: Response) => {
   const sellerId = req.seller?.id;
   const userId = req.user?.id;
 
+  const formattedGstin = gstNumber ? String(gstNumber).trim().replace(/\s+/g, "").toUpperCase() : "";
+
+  // Check for duplicate GST registration across sellers/users
+  if (formattedGstin) {
+    try {
+      const duplicate = await prisma.sellerOnboarding.findFirst({
+        where: {
+          gstNumber: { equals: formattedGstin, mode: "insensitive" },
+          ...(sellerId ? { sellerId: { not: sellerId } } : {}),
+        },
+      });
+
+      if (duplicate) {
+        res.status(400).json({
+          success: false,
+          error: "This GST number is not available for the registration.",
+          message: "This GST number is not available for the registration.",
+        });
+        return;
+      }
+    } catch (err: any) {
+      console.warn(`[Duplicate GST Check Notice] ${err.message}`);
+    }
+  }
+
   const result = await verifyGstinService({
     sellerId,
     userId,
@@ -127,6 +160,7 @@ export const verifyGstin = asyncHandler(async (req: Request, res: Response) => {
 
   // Sync verified GSTIN to SellerOnboarding if seller is authenticated
   if (result.valid && sellerId) {
+    await ensureSeller(sellerId);
     await prisma.sellerOnboarding.upsert({
       where: { sellerId },
       update: {
@@ -139,6 +173,7 @@ export const verifyGstin = asyncHandler(async (req: Request, res: Response) => {
         gstNumber: result.gstin,
         gstVerified: true,
         gstData: result as any,
+        businessName: result.legalName || result.tradeName || undefined,
       },
     }).catch((err) => console.warn(`[InstantPay Onboarding Sync] GSTIN sync skipped: ${err.message}`));
   }
@@ -172,6 +207,7 @@ export const verifyCin = asyncHandler(async (req: Request, res: Response) => {
 
   // Sync verified CIN to SellerOnboarding if seller is authenticated
   if (result.valid && sellerId) {
+    await ensureSeller(sellerId);
     await prisma.sellerOnboarding.upsert({
       where: { sellerId },
       update: {
@@ -304,6 +340,7 @@ export const verifyAadhaar = asyncHandler(async (req: Request, res: Response) =>
         ? rawHolder
         : undefined;
 
+    await ensureSeller(sellerId);
     await prisma.sellerOnboarding.upsert({
       where: { sellerId },
       update: {
@@ -365,6 +402,19 @@ export const verifyVpa = asyncHandler(async (req: Request, res: Response) => {
  * Perform Bank Account Penny Drop verification via InstantPay verifyBankAccount API.
  */
 export const verifyBankAccount = asyncHandler(async (req: Request, res: Response) => {
+  const count = await getPennyDropCountInLast24Hours(req);
+  if (count >= PENNY_DROP_LIMIT) {
+    res.status(429).json({
+      success: false,
+      message: PENNY_DROP_EXHAUSTED_MESSAGE,
+      error: PENNY_DROP_EXHAUSTED_MESSAGE,
+    });
+    return;
+  }
+
+  // Record this penny drop API trigger
+  recordPennyDropCall(req);
+
   const { accountNumber, bankIfsc, name, bankName, externalRef, latitude, longitude } = req.body;
   const sellerId = req.seller?.id;
   const userId = req.user?.id;
@@ -383,6 +433,7 @@ export const verifyBankAccount = asyncHandler(async (req: Request, res: Response
   // Sync verified Bank details to SellerOnboarding if seller is authenticated
   if (result.valid && sellerId) {
     const verifiedHolder = result.accountHolderName || name || undefined;
+    await ensureSeller(sellerId);
     await prisma.sellerOnboarding.upsert({
       where: { sellerId },
       update: {

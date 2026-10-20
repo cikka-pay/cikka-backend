@@ -8,10 +8,17 @@ import { BUSINESS_TYPE_MAP, FULFILLMENT_TYPE_MAP, SETTLEMENT_CYCLE_MAP } from ".
 import { sendSellerWaitlistEmail } from "../utils/resend";
 import { generateApplicationId } from "../services/auth.service";
 import { razorpayRouteService } from "../services/razorpayRoute.service";
+import {
+  getPennyDropCountInLast24Hours,
+  recordPennyDropCall,
+  PENNY_DROP_LIMIT,
+  PENNY_DROP_EXHAUSTED_MESSAGE,
+} from "../services/pennydrop-limiter.service";
 
 
 export const getOnboardingState = asyncHandler(async (req: Request, res: Response) => {
   const sellerId = req.seller!.id;
+  await onboardingService.getOrCreateOnboarding(sellerId);
   const seller = await prisma.seller.findUnique({
     where: { id: sellerId },
     include: {
@@ -128,10 +135,43 @@ export const updateStep2 = asyncHandler(async (req: Request, res: Response) => {
   const sellerId = req.seller!.id;
   const data = req.body;
 
-  const onboarding = await prisma.sellerOnboarding.update({
+  await onboardingService.getOrCreateOnboarding(sellerId);
+
+  if (data.gstNumber) {
+    const formattedGst = String(data.gstNumber).trim().replace(/\s+/g, "").toUpperCase();
+    try {
+      const duplicate = await prisma.sellerOnboarding.findFirst({
+        where: {
+          gstNumber: { equals: formattedGst, mode: "insensitive" },
+          sellerId: { not: sellerId },
+        },
+      });
+
+      if (duplicate) {
+        res.status(400).json({
+          success: false,
+          error: "This GST number is not available for the registration.",
+          message: "This GST number is not available for the registration.",
+        });
+        return;
+      }
+    } catch (err: any) {
+      console.warn(`[DB Warning] updateStep2 duplicate check skipped: ${err.message}`);
+    }
+  }
+
+  const onboarding = await prisma.sellerOnboarding.upsert({
     where: { sellerId },
-    data: {
-      gstNumber: data.gstNumber,
+    update: {
+      gstNumber: data.gstNumber ? String(data.gstNumber).trim().replace(/\s+/g, "").toUpperCase() : undefined,
+      panNumber: data.panNumber,
+      cinNumber: data.cinNumber,
+      msmeNumber: data.msmeNumber,
+      completedSteps: 2,
+    },
+    create: {
+      sellerId,
+      gstNumber: data.gstNumber ? String(data.gstNumber).trim().replace(/\s+/g, "").toUpperCase() : undefined,
       panNumber: data.panNumber,
       cinNumber: data.cinNumber,
       msmeNumber: data.msmeNumber,
@@ -167,14 +207,26 @@ export const updateStep3 = asyncHandler(async (req: Request, res: Response) => {
   const sellerId = req.seller!.id;
   const data = req.body;
 
+  await onboardingService.getOrCreateOnboarding(sellerId);
+
   const currentSeller = await prisma.seller.findUnique({ where: { id: sellerId } });
 
   // Prioritize provided signatoryEmail, fallback to verified email from signup
   const resolvedEmail = (data.signatoryEmail && data.signatoryEmail.trim()) || currentSeller?.email || undefined;
 
-  const onboarding = await prisma.sellerOnboarding.update({
+  const onboarding = await prisma.sellerOnboarding.upsert({
     where: { sellerId },
-    data: {
+    update: {
+      signatoryName: data.signatoryName,
+      signatoryTitle: data.signatoryTitle,
+      signatoryPersonalPan: data.signatoryPersonalPan,
+      signatoryAadhaar: data.signatoryAadhaar,
+      signatoryMobile: data.signatoryMobile,
+      signatoryEmail: resolvedEmail,
+      completedSteps: 3,
+    },
+    create: {
+      sellerId,
       signatoryName: data.signatoryName,
       signatoryTitle: data.signatoryTitle,
       signatoryPersonalPan: data.signatoryPersonalPan,
@@ -217,9 +269,20 @@ export const updateStep4 = asyncHandler(async (req: Request, res: Response) => {
   const sellerId = req.seller!.id;
   const data = req.body;
 
-  const onboarding = await prisma.sellerOnboarding.update({
+  await onboardingService.getOrCreateOnboarding(sellerId);
+
+  const onboarding = await prisma.sellerOnboarding.upsert({
     where: { sellerId },
-    data: {
+    update: {
+      bankAccountHolder: data.bankAccountHolder,
+      bankName: data.bankName,
+      bankAccountNumber: data.bankAccountNumber,
+      bankIfsc: data.bankIfsc,
+      bankVerified: data.bankVerified !== undefined ? Boolean(data.bankVerified) : true,
+      completedSteps: 4,
+    },
+    create: {
+      sellerId,
       bankAccountHolder: data.bankAccountHolder,
       bankName: data.bankName,
       bankAccountNumber: data.bankAccountNumber,
@@ -256,6 +319,19 @@ export const updateStep4 = asyncHandler(async (req: Request, res: Response) => {
 });
 
 export const verifyBank = asyncHandler(async (req: Request, res: Response) => {
+  const count = await getPennyDropCountInLast24Hours(req);
+  if (count >= PENNY_DROP_LIMIT) {
+    res.status(429).json({
+      success: false,
+      message: PENNY_DROP_EXHAUSTED_MESSAGE,
+      error: PENNY_DROP_EXHAUSTED_MESSAGE,
+    });
+    return;
+  }
+
+  // Record this penny drop API trigger
+  recordPennyDropCall(req);
+
   const sellerId = req.seller!.id;
   const { ifsc, accountNumber } = req.body;
   const result = await onboardingService.verifyBank(sellerId, ifsc, accountNumber);
@@ -265,6 +341,8 @@ export const verifyBank = asyncHandler(async (req: Request, res: Response) => {
 export const updateStep5 = asyncHandler(async (req: Request, res: Response) => {
   const sellerId = req.seller!.id;
   const data = req.body;
+
+  await onboardingService.getOrCreateOnboarding(sellerId);
 
   const existingSeller = await prisma.seller.findUnique({
     where: { id: sellerId },
@@ -276,9 +354,9 @@ export const updateStep5 = asyncHandler(async (req: Request, res: Response) => {
     ? existingId
     : generateApplicationId();
 
-  const onboarding = await prisma.sellerOnboarding.update({
+  const onboarding = await prisma.sellerOnboarding.upsert({
     where: { sellerId },
-    data: {
+    update: {
       logoUrl: data.logoUrl,
       productCategories: data.productCategories,
       returnPolicy: data.returnPolicy,
@@ -296,6 +374,24 @@ export const updateStep5 = asyncHandler(async (req: Request, res: Response) => {
       applicationId: appId,
       submittedAt: existingSeller?.onboarding?.submittedAt || new Date(),
     },
+    create: {
+      sellerId,
+      logoUrl: data.logoUrl,
+      productCategories: data.productCategories,
+      returnPolicy: data.returnPolicy,
+      avgOrderValue: data.avgOrderValue ? Number(data.avgOrderValue) : undefined,
+      monthlySalesTarget: data.monthlySalesTarget ? Number(data.monthlySalesTarget) : undefined,
+      settlementCycle: data.settlementCycle
+        ? (SETTLEMENT_CYCLE_MAP[data.settlementCycle] || "T_PLUS_7")
+        : undefined,
+      fulfillmentType: data.fulfillmentType
+        ? FULFILLMENT_TYPE_MAP[data.fulfillmentType] ?? data.fulfillmentType
+        : undefined,
+      pickupAddress: data.pickupAddress,
+      completedSteps: 5,
+      applicationId: appId,
+      submittedAt: new Date(),
+    },
   });
 
   // Automatically transition onboardingStatus to SUBMITTED when Brand Step 5 is saved
@@ -304,7 +400,7 @@ export const updateStep5 = asyncHandler(async (req: Request, res: Response) => {
     data: {
       onboardingStatus: "SUBMITTED",
     },
-  });
+  }).catch(() => {});
 
   // Dispatch Resend "Application Under Review" Email to Seller ONCE on initial submission
   const isFirstSubmission = !existingSeller?.onboardingStatus || existingSeller.onboardingStatus === "INCOMPLETE";
@@ -361,9 +457,21 @@ export const updateStep6 = asyncHandler(async (req: Request, res: Response) => {
   const sellerId = req.seller!.id;
   const data = req.body;
 
-  const onboarding = await prisma.sellerOnboarding.update({
+  await onboardingService.getOrCreateOnboarding(sellerId);
+
+  const onboarding = await prisma.sellerOnboarding.upsert({
     where: { sellerId },
-    data: {
+    update: {
+      merchantAgreementAccepted: data.merchantAgreementAccepted,
+      commissionAcknowledged: data.commissionAcknowledged,
+      returnPolicyAcknowledged: data.returnPolicyAcknowledged,
+      authenticityAcknowledged: data.authenticityAcknowledged,
+      digitalSignature: data.digitalSignature,
+      agreementAcceptedAt: new Date(),
+      completedSteps: 6,
+    },
+    create: {
+      sellerId,
       merchantAgreementAccepted: data.merchantAgreementAccepted,
       commissionAcknowledged: data.commissionAcknowledged,
       returnPolicyAcknowledged: data.returnPolicyAcknowledged,
