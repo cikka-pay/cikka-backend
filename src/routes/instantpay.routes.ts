@@ -9,6 +9,8 @@ import { verifyGstinSchema } from "../validations/gstin.validation";
 import { verifyPanSchema } from "../validations/instantpay.validation";
 import { vpaValidation } from "../validations/vpa.validation";
 
+import { checkPennyDropRateLimit } from "../services/pennydrop-limiter.service";
+
 const router = Router();
 
 /**
@@ -50,6 +52,11 @@ router.post("/verify-vpa", validate({ body: vpaValidation }), verifyVpa);
  * POST /verify-bank-account
  * Perform instant Bank Account Penny Drop verification via InstantPay API.
  */
-router.post("/verify-bank-account", validate({ body: bankAccountValidation }), verifyBankAccount);
+router.post(
+  "/verify-bank-account",
+  checkPennyDropRateLimit,
+  validate({ body: bankAccountValidation }),
+  verifyBankAccount
+);
 
 export default router;

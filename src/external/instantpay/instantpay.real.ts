@@ -127,12 +127,20 @@ export const instantpayReal: InstantPayClient = {
           "X-Ipay-Endpoint-Ip": config.instantpayEndpointIp || "2409:40c4:1161:bcab:ce9:f7f4:42e1:f933",
         },
         body: JSON.stringify(payload),
+        signal: AbortSignal.timeout(20000),
       });
 
-      let data: any = await response.json();
+      const rawText = await response.text();
+      let data: any;
+      try {
+        data = JSON.parse(rawText);
+      } catch {
+        data = { statuscode: "ERR", status: rawText, message: rawText };
+      }
 
-      if (data.status && data.status.includes("invalid ip address")) {
-        const match = data.status.match(/invalid ip address\s*-\s*([^\s]+)/i);
+      const combinedStatus = `${data.status || ""} ${data.message || ""} ${rawText}`.toLowerCase();
+      if (combinedStatus.includes("invalid ip address")) {
+        const match = combinedStatus.match(/invalid ip address\s*-\s*([^\s,;]+)/i);
         if (match && match[1]) {
           const detectedIp = match[1];
           console.warn(`[InstantPay Real Notice] Auto-detected IP address mismatch. Retrying verifyPan with detected IP: ${detectedIp}`);
@@ -146,8 +154,14 @@ export const instantpayReal: InstantPayClient = {
               "X-Ipay-Endpoint-Ip": detectedIp,
             },
             body: JSON.stringify(payload),
+            signal: AbortSignal.timeout(20000),
           });
-          data = await retryRes.json();
+          const retryText = await retryRes.text();
+          try {
+            data = JSON.parse(retryText);
+          } catch {
+            data = { statuscode: "ERR", status: retryText, message: retryText };
+          }
         }
       }
 
@@ -190,6 +204,8 @@ export const instantpayReal: InstantPayClient = {
           valid: data.statuscode === "TXN" || data.statuscode === "00",
           pan,
           registeredName: fullName || options.nameOnCard,
+          legalName: fullName || options.nameOnCard,
+          name: fullName || options.nameOnCard,
           category: category.toUpperCase(),
           userGender,
           userDob,

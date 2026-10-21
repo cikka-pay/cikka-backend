@@ -59,6 +59,7 @@ export const INSTANTPAY_ERRORS = {
   IFSC_REQUIRED: "Bank IFSC code is required",
   INVALID_IFSC_FORMAT: "Invalid Bank IFSC format. Example: HDFC0001234",
   VERIFICATION_FAILED_BANK: "InstantPay Penny Drop bank verification failed",
+  PENNY_DROP_RATE_LIMIT_EXCEEDED: "we have scouted limited brands for today please try again tomorrow at earliest",
   API_ERROR: (msg: string) => `InstantPay API error: ${msg}`,
 } as const;
 

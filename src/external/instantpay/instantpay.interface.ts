@@ -11,6 +11,8 @@ export interface InstantPayPanResult {
   valid: boolean;
   pan: string;
   registeredName?: string;
+  legalName?: string;
+  name?: string;
   category?: string;
   address?: string;
   userGender?: string;

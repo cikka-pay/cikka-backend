@@ -6,6 +6,7 @@ import { instantpayClient } from "../external";
 
 export interface VerifyPanDTO {
   userId?: string;
+  sellerId?: string;
   pan: string;
 }
 
@@ -28,7 +29,7 @@ export interface VerifyCinDTO {
 }
 
 export async function verifyPanService(dto: VerifyPanDTO) {
-  const { userId, pan } = dto;
+  const { userId, sellerId, pan } = dto;
 
   if (!pan) {
     throw new Error(INSTANTPAY_ERRORS.PAN_REQUIRED);
@@ -36,39 +37,7 @@ export async function verifyPanService(dto: VerifyPanDTO) {
 
   const formattedPan = pan.toUpperCase().trim();
 
-  // DEV BYPASS RULE for AAAAA1111A — only enabled in stub/offline development mode
-  if (!config.isRealExternalServices && formattedPan === "AAAAA1111A") {
-    console.log("==================================================");
-    console.log("⚡ [DEV BYPASS] InstantPay PAN Verification Bypassed!");
-    console.log(`PAN: ${formattedPan}`);
-    console.log("Registered Name: DEV BYPASS USER");
-    console.log("Category: INDIVIDUAL");
-    console.log("User Gender: M");
-    console.log("User DOB: XX7");
-    console.log("Status: VALID (Dev Bypass)");
-    console.log("==================================================");
-
-    return {
-      verificationId: `v_pan_bypass_${Date.now()}`,
-      valid: true,
-      pan: "AAAAA1111A",
-      registeredName: "DEV BYPASS USER",
-      category: "INDIVIDUAL",
-      userGender: "M",
-      userDob: "XX7",
-      address: "Dev Bypass Address, India",
-      status: "VALID",
-      isDevBypass: true,
-    };
-  }
-
-  const panRegex = /^[A-Z]{5}[0-9]{4}[A-Z]{1}$/;
-
-  if (!panRegex.test(formattedPan)) {
-    throw new Error(INSTANTPAY_ERRORS.INVALID_PAN_FORMAT);
-  }
-
-  // Call InstantPay external service
+  // Call InstantPay external service directly (no mock bypass, no stale cache)
   const result = await instantpayClient.verifyPan(formattedPan);
 
   console.log("==================================================");
@@ -107,11 +76,14 @@ export async function verifyPanService(dto: VerifyPanDTO) {
     valid: result.valid,
     pan: result.pan,
     registeredName: result.registeredName || null,
+    legalName: result.registeredName || null,
+    name: result.registeredName || null,
     category: result.category || "INDIVIDUAL",
     userGender: result.userGender || null,
     userDob: result.userDob || null,
     address: result.address || null,
     status: result.status,
+    rawResponse: result.rawResponse || null,
   };
 }
 
