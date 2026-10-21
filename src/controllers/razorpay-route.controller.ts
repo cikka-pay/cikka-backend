@@ -214,3 +214,81 @@ export const createLinkedAccountHandler = asyncHandler(async (req: Request, res:
     });
   }
 });
+
+/**
+ * POST /api/razorpay-route/process-eligible-holds
+ * POST /api/razorpay-route/process-eligible
+ * Releases holds on Razorpay Route for all settlements whose T+7 return window has elapsed.
+ */
+export const processEligibleSettlementsHandler = asyncHandler(async (req: Request, res: Response) => {
+  const now = new Date();
+  const eligibleSettlements = await prisma.settlement.findMany({
+    where: {
+      transferStatus: "ON_HOLD",
+      holdUntil: { lte: now },
+      razorpayTransferId: { not: null },
+    },
+    include: { seller: true },
+  });
+
+  const results: any[] = [];
+  for (const s of eligibleSettlements) {
+    if (!s.razorpayTransferId) continue;
+    try {
+      const releaseRes = await razorpayRouteService.releaseTransferHold(s.razorpayTransferId);
+      if (releaseRes.success) {
+        const updated = await prisma.settlement.update({
+          where: { id: s.id },
+          data: {
+            status: "PAID",
+            transferStatus: "SETTLED",
+            disbursedAt: new Date(),
+          } as any,
+        });
+
+        await prisma.notification.create({
+          data: {
+            sellerId: s.sellerId,
+            type: "SETTLEMENT",
+            title: `Settlement Paid: ₹${Number(s.netPayable).toFixed(2)}`,
+            body: `T+7 return window completed. Funds have been released and settled to your linked bank account.`,
+            metadata: {
+              settlementId: s.id,
+              transferId: s.razorpayTransferId,
+              amount: Number(s.netPayable),
+            },
+          },
+        }).catch(() => {});
+
+        results.push({
+          settlementId: s.id,
+          transferId: s.razorpayTransferId,
+          status: "SETTLED",
+          netPayable: Number(s.netPayable),
+        });
+      } else {
+        results.push({
+          settlementId: s.id,
+          transferId: s.razorpayTransferId,
+          status: "FAILED",
+          error: releaseRes.error,
+        });
+      }
+    } catch (e: any) {
+      results.push({
+        settlementId: s.id,
+        transferId: s.razorpayTransferId,
+        status: "ERROR",
+        error: e.message,
+      });
+    }
+  }
+
+  res.status(200).json({
+    success: true,
+    message: `Processed ${eligibleSettlements.length} eligible settlements`,
+    disbursedCount: results.filter((r) => r.status === "SETTLED").length,
+    results,
+  });
+});
+

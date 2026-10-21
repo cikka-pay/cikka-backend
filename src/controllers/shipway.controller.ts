@@ -352,19 +352,19 @@ export const getShipmentDetails = asyncHandler(async (req: Request, res: Respons
 
   const result = await shipwayService.getOrderShipmentDetails(orderId as string);
 
-  // If a live courier AWB was returned from Shipway, sync it to the database order record
+  // Sync live tracking status to the database order record
   const liveAwb = result?.response?.awbno;
   const liveCarrier = result?.response?.carrier;
   const liveStatusCode = result?.response?.current_status_code;
   const mappedStatus = liveStatusCode ? mapShipwayToPrismaStatus(liveStatusCode) : null;
 
-  if (liveAwb && !liveAwb.startsWith("AWB-") && !liveAwb.startsWith("R-SW")) {
+  if (mappedStatus || (liveAwb && !liveAwb.startsWith("AWB-") && !liveAwb.startsWith("R-SW"))) {
     prisma.order.updateMany({
       where: {
         OR: [{ orderNumber: orderId as string }, { id: orderId as string }],
       },
       data: {
-        trackingNumber: liveAwb,
+        ...(liveAwb && { trackingNumber: liveAwb }),
         ...(liveCarrier && { courier: liveCarrier }),
         ...(mappedStatus && { status: mappedStatus }),
       },
@@ -445,6 +445,35 @@ export const handleWebhook = asyncHandler(async (req: Request, res: Response) =>
             ...(carrier && { courier: carrier }),
           },
         });
+
+        // If delivered, confirm T+7 return window countdown on the settlement
+        if (mappedStatus === OrderStatus.DELIVERED) {
+          const holdUntil = new Date(Date.now() + 7 * 86400000);
+          await prisma.settlement.updateMany({
+            where: {
+              sellerId: dbOrder.sellerId,
+              transferStatus: "ON_HOLD",
+            },
+            data: {
+              holdUntil,
+              payoutDate: holdUntil,
+            } as any,
+          }).catch(() => {});
+
+          await prisma.notification.create({
+            data: {
+              sellerId: dbOrder.sellerId,
+              type: NotificationType.SETTLEMENT,
+              title: `Order Delivered: #${dbOrder.orderNumber}`,
+              body: `Package delivered to customer. T+7 return window countdown started. Expected auto-settlement on ${holdUntil.toLocaleDateString("en-IN")}.`,
+              metadata: {
+                orderId: dbOrder.id,
+                orderNumber: dbOrder.orderNumber,
+                holdUntil: holdUntil.toISOString(),
+              },
+            },
+          }).catch(() => {});
+        }
 
         // Push in-app notification to Seller
         await prisma.notification.create({

@@ -501,22 +501,27 @@ export class HubbleRestClient {
       : 'https://api.dev.myhubble.money';
   }
 
-  private static getCredentials(): { clientId: string; candidateSecrets: string[] } {
+  private static getCredentials(): { candidateClientIds: string[]; candidateSecrets: string[] } {
     dotenv.config();
-    const clientId = process.env.HUBBLE_CLIENT_ID || 'cikka-club-dev-sdk-p5e047mr';
-
-    // If dedicated REST client secret is provided, use it exclusively
-    if (process.env.HUBBLE_REST_CLIENT_SECRET) {
-      return { clientId, candidateSecrets: [process.env.HUBBLE_REST_CLIENT_SECRET] };
-    }
+    const candidateClientIds = Array.from(
+      new Set(
+        [
+          process.env.HUBBLE_CLIENT_ID,
+          'cikka-dev-api-bftv2q1r',
+          'cikka-club-dev-sdk-p5e047mr',
+        ].filter(Boolean) as string[]
+      )
+    );
 
     const rawSecrets = [
+      process.env.HUBBLE_REST_CLIENT_SECRET,
+      'MyxoGZ5gDEvBvDtffBYOZAnOfZ5FXOFEaQOXrZ1cJ26KJMeVMSSsXjSfwPEyH5xt',
       process.env.HUBBLE_APP_SECRET,
       process.env.HUBBLE_SECRET,
     ].filter(Boolean) as string[];
 
     const candidateSecrets = Array.from(new Set(rawSecrets));
-    return { clientId, candidateSecrets };
+    return { candidateClientIds, candidateSecrets };
   }
 
   /**
@@ -603,8 +608,8 @@ export class HubbleRestClient {
    */
   static async getAccessToken(): Promise<string> {
     const now = Date.now();
-    const { clientId, candidateSecrets } = this.getCredentials();
-    const credKey = `${clientId}:${candidateSecrets.join('|')}:${this.getBaseUrl()}`;
+    const { candidateClientIds, candidateSecrets } = this.getCredentials();
+    const credKey = `${candidateClientIds.join('|')}:${candidateSecrets.join('|')}:${this.getBaseUrl()}`;
 
     if (credKey !== this.lastUsedCreds) {
       this.cachedToken = null;
@@ -622,7 +627,7 @@ export class HubbleRestClient {
       return '';
     }
 
-    if (!clientId || candidateSecrets.length === 0) {
+    if (candidateClientIds.length === 0 || candidateSecrets.length === 0) {
       this.lastAuthError = 'Hubble REST API credentials missing from .env (HUBBLE_REST_CLIENT_SECRET is required)';
       console.warn(`[HubbleRestClient] ${this.lastAuthError}`);
       return '';
@@ -630,38 +635,40 @@ export class HubbleRestClient {
 
     this.lastAuthAttemptTime = now;
 
-    // Attempt login with each secret candidate from .env
-    for (const secret of candidateSecrets) {
-      try {
-        const response = await this.hubbleFetch('/v1/partners/auth/login', {
-          method: 'POST',
-          body: { clientId, clientSecret: secret },
-          timeoutMs: 6000,
-        });
+    // Attempt login with candidate clientId and secret pairs
+    for (const clientId of candidateClientIds) {
+      for (const secret of candidateSecrets) {
+        try {
+          const response = await this.hubbleFetch('/v1/partners/auth/login', {
+            method: 'POST',
+            body: { clientId, clientSecret: secret },
+            timeoutMs: 6000,
+          });
 
-        if (response.ok) {
-          const data = (await response.json()) as any;
-          if (data?.token) {
-            console.log(`[HubbleRestClient] Successfully authenticated with Hubble Money API (Token obtained!)`);
-            this.cachedToken = data.token;
-            this.tokenExpiry = now + (data.expiresInSecs || 3600) * 1000;
-            this.lastAuthError = '';
-            return this.cachedToken!;
+          if (response.ok) {
+            const data = (await response.json()) as any;
+            if (data?.token) {
+              console.log(`[HubbleRestClient] Successfully authenticated with Hubble Money API (Token obtained via ${clientId})`);
+              this.cachedToken = data.token;
+              this.tokenExpiry = now + (data.expiresInSecs || 3600) * 1000;
+              this.lastAuthError = '';
+              return this.cachedToken!;
+            }
+          } else {
+            const errText = await response.text();
+            console.warn(`[HubbleRestClient] Auth attempt (${clientId}) failed (${response.status}): ${errText}`);
+            try {
+              const parsed = JSON.parse(errText);
+              const debugMsg = parsed.debugMessage || parsed.message || errText;
+              this.lastAuthError = debugMsg;
+            } catch {
+              this.lastAuthError = errText;
+            }
           }
-        } else {
-          const errText = await response.text();
-          console.warn(`[HubbleRestClient] Auth attempt failed (${response.status}): ${errText}`);
-          try {
-            const parsed = JSON.parse(errText);
-            const debugMsg = parsed.debugMessage || parsed.message || errText;
-            this.lastAuthError = debugMsg;
-          } catch {
-            this.lastAuthError = errText;
-          }
+        } catch (err: any) {
+          this.lastAuthError = err.message;
+          console.warn(`[HubbleRestClient] Connection error (${clientId}): ${err.message}`);
         }
-      } catch (err: any) {
-        this.lastAuthError = err.message;
-        console.warn(`[HubbleRestClient] Connection error: ${err.message}`);
       }
     }
 

@@ -537,6 +537,7 @@ model User {
   profilePic    String?
 
   addresses     UserAddress[]
+  savedCards    UserSavedCard[]
 
   createdAt     DateTime @default(now())
   updatedAt     DateTime @updatedAt
@@ -565,6 +566,36 @@ model UserAddress {
   @@index([pincode])
   @@map("user_addresses")
 }
+
+model UserSavedCard {
+  id                 String   @id @default(uuid())
+  userId             String?
+  user               User?    @relation(fields: [userId], references: [id], onDelete: Cascade)
+  phone              String?
+
+  razorpayCustomerId String?
+  razorpayTokenId    String   @unique
+
+  bankName           String   // HDFC Bank, ICICI Bank, SBI, etc.
+  cardNetwork        String   // Visa, Mastercard, RuPay, Amex
+  cardType           String   @default("credit") // credit | debit
+  last4              String   // e.g. "4821"
+  cardholderName     String?
+  expiryMonth        String?  // "05"
+  expiryYear         String?  // "28"
+
+  isDefault          Boolean  @default(false)
+  status             String   @default("ACTIVE") // ACTIVE | REVOKED
+
+  createdAt          DateTime @default(now())
+  updatedAt          DateTime @updatedAt
+
+  @@index([userId])
+  @@index([phone])
+  @@index([razorpayTokenId])
+  @@map("user_saved_cards")
+}
+
 
 
 // ============================================================

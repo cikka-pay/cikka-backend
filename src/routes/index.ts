@@ -19,14 +19,17 @@ import settingsRoutes from "./settings.routes";
 import teamRoutes from "./team.routes";
 
 import paymentRoutes from "./payment.routes";
+import rewardsRoutes from "./rewards.routes";
 import shipwayRoutes from "./shipway.routes";
 import userAddressRoutes from "./user-address.routes";
+import cardsRoutes from "./cards.routes";
 
 import hubbleRoutes from "./hubble.routes";
 import razorpayRouteRoutes from "./razorpay-route.routes";
 
 import emailRoutes from "./email.routes";
 import { filesRouter, uploadsRouter } from "./files.routes";
+
 
 const router = Router();
 
@@ -46,7 +49,10 @@ router.use("/auth", authRoutes);
 router.use("/user-auth", userAuthRoutes);
 router.use("/customer-auth", userAuthRoutes); // Backward compatibility alias
 router.use("/user/address", userAddressRoutes);
+router.use("/user/addresses", userAddressRoutes);
 router.use("/user-address", userAddressRoutes);
+router.use("/cards", cardsRoutes);
+router.use("/user/cards", cardsRoutes);
 router.use("/setu/v1", setuRoutes);
 router.use("/bbps", bbpsRoutes);
 router.use("/kyc", instantpayRoutes);
@@ -62,8 +68,12 @@ router.use("/webhooks/razorpay", razorpayRouteRoutes);
 // Razorpay Payment Endpoints (/api/payment/create-order & /api/payment/verify-payment)
 router.use("/payment", paymentRoutes);
 
+// Rewards Store Redemption Endpoints (/api/rewards/initiate-redemption & /api/rewards/confirm-redemption)
+router.use("/rewards", rewardsRoutes);
+
 // Shipway Experience Endpoints (/api/shipway/...)
 router.use("/shipway", shipwayRoutes);
+
 
 // Public Return Request Endpoint (Customer App / Postman)
 import { createReturn } from "../controllers/returns.controller";
