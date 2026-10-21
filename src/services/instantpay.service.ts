@@ -37,99 +37,7 @@ export async function verifyPanService(dto: VerifyPanDTO) {
 
   const formattedPan = pan.toUpperCase().trim();
 
-  // DEV BYPASS RULE for AAAAA1111A — only enabled in stub/offline development mode
-  if (!config.isRealExternalServices && formattedPan === "AAAAA1111A") {
-    console.log("==================================================");
-    console.log("⚡ [DEV BYPASS] InstantPay PAN Verification Bypassed!");
-    console.log(`PAN: ${formattedPan}`);
-    console.log("Registered Name: DEV BYPASS USER");
-    console.log("Category: INDIVIDUAL");
-    console.log("User Gender: M");
-    console.log("User DOB: XX7");
-    console.log("Status: VALID (Dev Bypass)");
-    console.log("==================================================");
-
-    return {
-      verificationId: `v_pan_bypass_${Date.now()}`,
-      valid: true,
-      pan: "AAAAA1111A",
-      registeredName: "DEV BYPASS USER",
-      category: "INDIVIDUAL",
-      userGender: "M",
-      userDob: "XX7",
-      address: "Dev Bypass Address, India",
-      status: "VALID",
-      isDevBypass: true,
-    };
-  }
-
-  const panRegex = /^[A-Z]{5}[0-9]{4}[A-Z]{1}$/;
-
-  if (!panRegex.test(formattedPan)) {
-    throw new Error(INSTANTPAY_ERRORS.INVALID_PAN_FORMAT);
-  }
-
-  // Check cached PAN verification in DB to avoid redundant InstantPay API calls
-  // 1. Check if the seller already verified this PAN in SellerOnboarding
-  if (sellerId && prisma.sellerOnboarding) {
-    try {
-      const ob = await prisma.sellerOnboarding.findUnique({ where: { sellerId } });
-      const obPan = ob?.panNumber ? ob.panNumber.toUpperCase().trim() : "";
-      const obSignatoryPan = ob?.signatoryPersonalPan ? ob.signatoryPersonalPan.toUpperCase().trim() : "";
-      if (
-        (obPan === formattedPan && ob?.panVerified && ob?.panData) ||
-        (obSignatoryPan === formattedPan && (ob as any)?.signatoryPersonalPanVerified && (ob as any)?.personalPanData)
-      ) {
-        const cached: any = (obPan === formattedPan && ob?.panData) ? ob.panData : (ob as any)?.personalPanData;
-        console.log(`⚡ [PAN Cache Hit] Reusing verified PAN from SellerOnboarding for seller ${sellerId}: ${formattedPan}`);
-        return {
-          verificationId: cached?.verificationId || `v_pan_cached_${Date.now()}`,
-          valid: true,
-          pan: formattedPan,
-          registeredName: cached?.registeredName || cached?.name || null,
-          category: cached?.category || "INDIVIDUAL",
-          userGender: cached?.userGender || null,
-          userDob: cached?.userDob || null,
-          address: cached?.address || null,
-          status: cached?.status || "VALID",
-          cached: true,
-        };
-      }
-    } catch (obErr: any) {
-      console.warn(`[PAN Seller Cache Check Notice] ${obErr.message}`);
-    }
-  }
-
-  // 2. Check general PanVerificationRecord cache in DB
-  if (prisma.panVerificationRecord) {
-    try {
-      const cached = await prisma.panVerificationRecord.findFirst({
-        where: { pan: formattedPan, status: { in: ["VALID", "Active", "RECORD_FOUND"] } },
-        orderBy: { createdAt: "desc" },
-      });
-
-      if (cached) {
-        console.log(`⚡ [PAN Cache Hit] Returning cached verification from PanVerificationRecord for ${formattedPan}`);
-        const raw: any = cached.rawResponse;
-        return {
-          verificationId: cached.id,
-          valid: true,
-          pan: cached.pan,
-          registeredName: cached.registeredName || raw?.registeredName || raw?.data?.panDetails?.userFullName || raw?.data?.name || null,
-          category: cached.category || "INDIVIDUAL",
-          userGender: raw?.userGender || raw?.data?.panDetails?.userGender || null,
-          userDob: raw?.userDob || raw?.data?.panDetails?.userDob || null,
-          address: raw?.address || null,
-          status: cached.status || "VALID",
-          cached: true,
-        };
-      }
-    } catch (dbErr: any) {
-      console.warn(`[PAN Cache Check Warning] ${dbErr.message}`);
-    }
-  }
-
-  // Call InstantPay external service
+  // Call InstantPay external service directly (no mock bypass, no stale cache)
   const result = await instantpayClient.verifyPan(formattedPan);
 
   console.log("==================================================");
@@ -168,11 +76,14 @@ export async function verifyPanService(dto: VerifyPanDTO) {
     valid: result.valid,
     pan: result.pan,
     registeredName: result.registeredName || null,
+    legalName: result.registeredName || null,
+    name: result.registeredName || null,
     category: result.category || "INDIVIDUAL",
     userGender: result.userGender || null,
     userDob: result.userDob || null,
     address: result.address || null,
     status: result.status,
+    rawResponse: result.rawResponse || null,
   };
 }
 

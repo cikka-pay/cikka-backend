@@ -58,6 +58,7 @@ async function main() {
     await prisma.product.deleteMany({ where: { sellerId: seller.id } });
     await prisma.settlement.deleteMany({ where: { sellerId: seller.id } });
     await prisma.sellerOnboarding.deleteMany({ where: { sellerId: seller.id } });
+    await prisma.panVerificationRecord.deleteMany({ where: { userId: seller.id } });
 
     // Finally delete seller
     await prisma.seller.delete({ where: { id: seller.id } });

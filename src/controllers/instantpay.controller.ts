@@ -102,7 +102,7 @@ export const verifyPan = asyncHandler(async (req: Request, res: Response) => {
 
   res.status(200).json({
     success: true,
-    message: result.isDevBypass ? "⚡ PAN verified via Dev Bypass" : "PAN verified successfully",
+    message: "PAN verified successfully",
     data: {
       ...result,
       panVerified: true,
