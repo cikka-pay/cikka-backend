@@ -730,7 +730,7 @@ export const processCustomPayment = asyncHandler(async (req: Request, res: Respo
   }
 
   let finalOrderId = incomingOrderId;
-  let keyId = process.env.RAZORPAY_KEY_ID || "rzp_test_TXf15TcVB0VM09";
+  let keyId = (process.env.RAZORPAY_KEY_ID || config.razorpayKeyId || "").trim();
 
   // Create order via Razorpay service if not passed
   if (!finalOrderId) {

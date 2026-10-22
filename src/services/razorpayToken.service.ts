@@ -3,8 +3,13 @@ import { config } from "../config/env";
 import { prisma } from "../config/prisma";
 
 function getRazorpayAuthHeaders() {
-  const keyId = (process.env.RAZORPAY_KEY_ID || config.razorpayKeyId || "rzp_live_TnUIGU32emEtIr").trim();
-  const keySecret = (process.env.RAZORPAY_KEY_SECRET || config.razorpayKeySecret || "5M0KaI6j2rnFlZ1JzGwkyxNb").trim();
+  const keyId = (process.env.RAZORPAY_KEY_ID || config.razorpayKeyId || "").trim();
+  const keySecret = (process.env.RAZORPAY_KEY_SECRET || config.razorpayKeySecret || "").trim();
+
+  if (!keyId || !keySecret) {
+    throw new Error("Razorpay credentials (RAZORPAY_KEY_ID and RAZORPAY_KEY_SECRET) are not configured.");
+  }
+
   const base64Auth = Buffer.from(`${keyId}:${keySecret}`).toString("base64");
 
   return {
