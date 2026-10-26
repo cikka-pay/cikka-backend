@@ -2,6 +2,7 @@ import { Request, Response } from "express";
 import { asyncHandler } from "../utils/asyncHandler";
 import { prisma } from "../config/prisma";
 import { SETTLEMENT_CYCLE_MAP } from "../utils/enumMaps";
+import { calculateSettlementBreakdown } from "../services/settlementCalculator.service";
 
 export const getSellerCommissionConfig = asyncHandler(async (req: Request, res: Response) => {
   const { sellerId } = req.params;
@@ -138,6 +139,65 @@ export const updateSellerCommissionConfig = asyncHandler(async (req: Request, re
     } catch (e) {
       console.warn("Failed to sync settlementCycle across tables:", e);
     }
+  }
+
+  // Recalculate any pending untransferred settlements with new commission structure
+  try {
+    const untransferredSettlements = await prisma.settlement.findMany({
+      where: {
+        sellerId,
+        status: "PENDING",
+        razorpayTransferId: null,
+      },
+    });
+
+    for (const st of untransferredSettlements) {
+      if (Number(st.grossSales) > 0) {
+        const cat = st.category || undefined;
+        let commRate = 22.0;
+        if (categoryCommissions && typeof categoryCommissions === "object") {
+          if (cat && categoryCommissions[cat] !== undefined) {
+            commRate = Number(categoryCommissions[cat]);
+          } else {
+            const firstVal = Object.values(categoryCommissions)[0];
+            if (firstVal !== undefined) commRate = Number(firstVal);
+          }
+        }
+        const updatedBreakdown = calculateSettlementBreakdown(
+          Number(st.grossSales),
+          {
+            commissionRate: commRate,
+            sellerPlatformFee: flatOrderFee !== undefined ? Number(flatOrderFee) : undefined,
+          }
+        );
+
+        let holdDays = 7;
+        if (cycleEnum === "T_PLUS_1") holdDays = 1;
+        else if (cycleEnum === "T_PLUS_3") holdDays = 3;
+        else if (cycleEnum === "T_PLUS_7") holdDays = 7;
+        else if (cycleEnum === "T_PLUS_14") holdDays = 14;
+
+        const newHoldUntil = new Date(Date.now() + holdDays * 86400000);
+
+        await prisma.settlement.update({
+          where: { id: st.id },
+          data: {
+            commissionRate: updatedBreakdown.commissionRate,
+            commissionAmount: updatedBreakdown.commission,
+            commissionTotal: updatedBreakdown.commissionTotal,
+            sellerPlatformFee: updatedBreakdown.sellerPlatformFee,
+            sellerPlatformTotal: updatedBreakdown.sellerPlatformTotal,
+            totalDeductions: updatedBreakdown.totalSellerDeductions,
+            netPayable: updatedBreakdown.sellerNetSettlement,
+            holdUntil: newHoldUntil,
+            payoutDate: newHoldUntil,
+            ledgerBreakdown: updatedBreakdown as any,
+          } as any,
+        });
+      }
+    }
+  } catch (recalcErr) {
+    console.warn("Notice: Failed to recalculate pending settlements:", recalcErr);
   }
 
   // Notify seller of commission structure change

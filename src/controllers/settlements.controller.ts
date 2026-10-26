@@ -59,7 +59,7 @@ export const listSettlements = asyncHandler(async (req: Request, res: Response) 
   });
 });
 
-import { disburseSettlement } from "../services/settlement.service";
+import { disburseSettlement, getSellerSettlementProfile } from "../services/settlement.service";
 
 export const createWithdrawal = asyncHandler(async (req: Request, res: Response) => {
   const sellerId = req.seller!.id;
@@ -71,9 +71,10 @@ export const createWithdrawal = asyncHandler(async (req: Request, res: Response)
     return;
   }
 
-  const breakdown = calculateSettlementBreakdown(numAmount);
+  const profile = await getSellerSettlementProfile(sellerId, "Withdrawal");
+  const breakdown = calculateSettlementBreakdown(numAmount, profile.customConfig);
   const now = new Date();
-  const holdUntil = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000);
+  const holdUntil = new Date(Date.now() + profile.holdDays * 24 * 60 * 60 * 1000);
 
   const settlement = await prisma.settlement.create({
     data: {
