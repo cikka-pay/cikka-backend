@@ -85,10 +85,12 @@ router.post("/returns/create", createReturn);
 // Onboarding Routes (has internal requireAuth for protected routes, plus open /validate-domain utility)
 router.use("/onboarding", onboardingRoutes);
 
+// Public Products Catalog Endpoint (Mobile App & Public Browse; protected mutations handled internally)
+router.use("/products", productsRoutes);
+
 // Protected Seller Routes — require valid Seller JWT
 router.use(requireSellerAuth);
 router.use("/dashboard", dashboardRoutes);
-router.use("/products", productsRoutes);
 router.use("/orders", ordersRoutes);
 router.use("/inventory", inventoryRoutes);
 router.use("/settlements", settlementsRoutes);
