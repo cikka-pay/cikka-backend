@@ -3,8 +3,12 @@ import Razorpay from "razorpay";
 import { config } from "../config/env";
 
 function getRazorpayClient() {
-  const key_id = (process.env.RAZORPAY_KEY_ID || config.razorpayKeyId || "rzp_test_TXf15TcVB0VM09").trim();
-  const key_secret = (process.env.RAZORPAY_KEY_SECRET || config.razorpayKeySecret || "k9HbahlhYk1frXYxKm20Snf5").trim();
+  const key_id = (process.env.RAZORPAY_KEY_ID || config.razorpayKeyId || "").trim();
+  const key_secret = (process.env.RAZORPAY_KEY_SECRET || config.razorpayKeySecret || "").trim();
+
+  if (!key_id || !key_secret) {
+    throw new Error("Razorpay credentials (RAZORPAY_KEY_ID and RAZORPAY_KEY_SECRET) are not configured.");
+  }
 
   return {
     client: new Razorpay({ key_id, key_secret }),

@@ -6,6 +6,86 @@ import {
   SettlementLedgerBreakdown,
 } from "./settlementCalculator.service";
 
+export interface SellerSettlementProfile {
+  customConfig: Partial<SettlementFeeConfig>;
+  holdDays: number;
+  commissionRate: number;
+  flatOrderFee: number;
+  settlementCycle: string;
+}
+
+/**
+ * Resolves the dynamic fee configuration and settlement cycle for a seller
+ * based on admin-defined SellerCommissionConfig and Onboarding data.
+ */
+export async function getSellerSettlementProfile(
+  sellerId: string,
+  categoryHint?: string
+): Promise<SellerSettlementProfile> {
+  const [commissionConfig, seller, onboarding] = await Promise.all([
+    prisma.sellerCommissionConfig.findUnique({ where: { sellerId } }),
+    prisma.seller.findUnique({ where: { id: sellerId } }),
+    prisma.sellerOnboarding.findUnique({ where: { sellerId } }),
+  ]);
+
+  let activeCategory = categoryHint || onboarding?.businessCategory;
+  if (!activeCategory && onboarding?.productCategories) {
+    if (Array.isArray(onboarding.productCategories) && onboarding.productCategories.length > 0) {
+      activeCategory = onboarding.productCategories[0] as string;
+    } else if (typeof onboarding.productCategories === "string") {
+      try {
+        const parsed = JSON.parse(onboarding.productCategories);
+        if (Array.isArray(parsed) && parsed.length > 0) activeCategory = parsed[0];
+      } catch {}
+    }
+  }
+
+  // 1. Resolve Commission Rate:
+  let commissionRate = 22.0;
+  if (commissionConfig?.categoryCommissions && typeof commissionConfig.categoryCommissions === "object") {
+    const ratesMap = commissionConfig.categoryCommissions as Record<string, number>;
+    if (activeCategory && ratesMap[activeCategory] !== undefined) {
+      commissionRate = Number(ratesMap[activeCategory]);
+    } else {
+      const matchedKey = Object.keys(ratesMap).find(
+        (k) => activeCategory && k.toLowerCase() === activeCategory.toLowerCase()
+      );
+      if (matchedKey && ratesMap[matchedKey] !== undefined) {
+        commissionRate = Number(ratesMap[matchedKey]);
+      } else {
+        const firstVal = Object.values(ratesMap)[0];
+        if (firstVal !== undefined) commissionRate = Number(firstVal);
+      }
+    }
+  }
+
+  // 2. Resolve Flat Order Fee:
+  const flatOrderFee = commissionConfig?.flatOrderFee !== undefined
+    ? Number(commissionConfig.flatOrderFee)
+    : 15.0;
+
+  // 3. Resolve Settlement Cycle & Hold Days:
+  const cycle = commissionConfig?.settlementCycle || onboarding?.settlementCycle || "T_PLUS_7";
+  let holdDays = 7;
+  if (cycle === "T_PLUS_1") holdDays = 1;
+  else if (cycle === "T_PLUS_3") holdDays = 3;
+  else if (cycle === "T_PLUS_7") holdDays = 7;
+  else if (cycle === "T_PLUS_14") holdDays = 14;
+
+  const customConfig: Partial<SettlementFeeConfig> = {
+    commissionRate,
+    sellerPlatformFee: flatOrderFee,
+  };
+
+  return {
+    customConfig,
+    holdDays,
+    commissionRate,
+    flatOrderFee,
+    settlementCycle: cycle,
+  };
+}
+
 /**
  * Computes and writes a Settlement row for a seller for a given period, based on
  * delivered orders in that window using the deterministic Cikka Marketplace Split Logic.
@@ -16,6 +96,9 @@ export async function computeSettlementForPeriod(
   periodEnd: Date,
   customConfig?: Partial<SettlementFeeConfig>
 ) {
+  const profile = await getSellerSettlementProfile(sellerId);
+  const effectiveConfig = customConfig || profile.customConfig;
+
   const orders = await prisma.order.findMany({
     where: {
       sellerId,
@@ -29,11 +112,11 @@ export async function computeSettlementForPeriod(
   // Compute exact deterministic breakdown according to Cikka Marketplace rules
   const breakdown: SettlementLedgerBreakdown = calculateSettlementBreakdown(
     grossSales,
-    customConfig
+    effectiveConfig
   );
 
-  // Strict T+7 calculation (7 days from period end or current time)
-  const holdUntil = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000);
+  // Dynamic hold calculation matching seller's settlement cycle (e.g. T+1, T+3, T+7, T+14)
+  const holdUntil = new Date(Date.now() + profile.holdDays * 24 * 60 * 60 * 1000);
 
   return prisma.settlement.create({
     data: {
@@ -213,11 +296,13 @@ export async function disburseSettlement(
     razorpayAccountId = accountRes.accountId;
   }
 
+  const profile = await getSellerSettlementProfile(seller.id, settlement.category);
+
   let netPayable = Number(settlement.netPayable);
   if (netPayable <= 0) {
-    // If netPayable was 0 (e.g. sample test without prior orders), compute for ₹1,000 standard reference
-    const sampleBreakdown = calculateSettlementBreakdown(1000);
-    netPayable = sampleBreakdown.sellerNetSettlement; // ₹516.02
+    // If netPayable was 0 (e.g. sample test without prior orders), compute for ₹1,000 standard reference using seller profile
+    const sampleBreakdown = calculateSettlementBreakdown(1000, profile.customConfig);
+    netPayable = sampleBreakdown.sellerNetSettlement;
     
     await prisma.settlement.update({
       where: { id: settlement.id },
@@ -225,6 +310,7 @@ export async function disburseSettlement(
         grossSales: 1000,
         basePrice: sampleBreakdown.baseProductValue,
         gstOnSale: sampleBreakdown.productGst,
+        commissionRate: sampleBreakdown.commissionRate,
         commissionAmount: sampleBreakdown.commission,
         commissionTotal: sampleBreakdown.commissionTotal,
         shippingFee: sampleBreakdown.shipping,
@@ -274,15 +360,17 @@ export async function disburseSettlement(
     }
   }
 
-  // Execute Razorpay Route Split Transfer with strict T+7 hold
+  // Execute Razorpay Route Split Transfer with dynamic hold (T+1, T+3, T+7, T+14)
   const transferResult = await razorpayRouteService.transferPaymentWithT7Hold({
     paymentId,
     sellerAccountId: razorpayAccountId,
     amountInPaise,
-    holdDays: 7, // Strict T+7
+    holdDays: profile.holdDays,
     notes: {
       settlementId: settlement.id,
       sellerId: seller.id,
+      commissionRate: `${profile.commissionRate}%`,
+      settlementCycle: profile.settlementCycle,
       netPayable: netPayable.toFixed(2),
     },
   });
@@ -303,13 +391,13 @@ export async function disburseSettlement(
       } as any,
     });
 
-    // Notify seller of T+7 settlement schedule
+    // Notify seller of dynamic settlement schedule
     await prisma.notification.create({
       data: {
         sellerId: settlement.sellerId,
         type: "SETTLEMENT",
-        title: "Settlement Scheduled (T+7 Auto-Payout)",
-        body: `Your net payout of ₹${netPayable.toFixed(2)} has been transferred to your Razorpay Linked Account on T+7 hold. Funds will auto-settle to your bank on ${transferResult.holdUntil ? transferResult.holdUntil.toLocaleDateString() : "7 days"}.`,
+        title: `Settlement Scheduled (T+${profile.holdDays} Auto-Payout)`,
+        body: `Your net payout of ₹${netPayable.toFixed(2)} has been transferred to your Razorpay Linked Account on T+${profile.holdDays} hold. Funds will auto-settle to your bank on ${transferResult.holdUntil ? transferResult.holdUntil.toLocaleDateString() : `${profile.holdDays} days`}.`,
         metadata: {
           settlementId: settlement.id,
           amount: netPayable,

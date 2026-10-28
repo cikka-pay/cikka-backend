@@ -3,6 +3,7 @@ import { Request, Response } from "express";
 import { razorpayService } from "../services/razorpay.service";
 import { razorpayRouteService } from "../services/razorpayRoute.service";
 import { calculateSettlementBreakdown } from "../services/settlementCalculator.service";
+import { getSellerSettlementProfile } from "../services/settlement.service";
 import { shipwayService } from "../services/shipway.service";
 import { asyncHandler } from "../utils/asyncHandler";
 import { prisma } from "../config/prisma";
@@ -45,7 +46,7 @@ export const createOrder = asyncHandler(async (req: Request, res: Response) => {
 async function findOrCreateSeller(pickupPincode: string, categoryHint?: string): Promise<any> {
   try {
     const allSellers = await prisma.seller.findMany({
-      include: { onboarding: true },
+      include: { onboarding: true, commissionConfig: true },
     });
 
     if (allSellers.length > 0) {
@@ -333,8 +334,9 @@ export async function executeOrderFulfillmentPipeline(params: OrderFulfillmentPa
         `[Prisma DB Order Created] #${itemOrderId} (${name}, Origin: ${itemPickupPincode}) assigned to Seller #${seller.id} -> In Transit (${generatedAwb})`
       );
 
-      // 4. Calculate deterministic settlement split
-      const breakdown = calculateSettlementBreakdown(itemPrice);
+      // 4. Resolve Seller Settlement Profile (Admin Commission & Settlement Cycle)
+      const profile = await getSellerSettlementProfile(seller.id, category);
+      const breakdown = calculateSettlementBreakdown(itemPrice, profile.customConfig);
 
       // 5. Ensure Seller Razorpay Route Linked Account exists
       let rzpAccountId =
@@ -361,7 +363,7 @@ export async function executeOrderFulfillmentPipeline(params: OrderFulfillmentPa
         }
       }
 
-      // 6. Split Payment via Razorpay Route with strict T+7 hold
+      // 6. Split Payment via Razorpay Route with dynamic hold matching seller's settlement cycle
       const netSellerPayout = breakdown.sellerNetSettlement;
       const netPaise = Math.round(netSellerPayout * 100);
       let transferResult: any = null;
@@ -372,10 +374,14 @@ export async function executeOrderFulfillmentPipeline(params: OrderFulfillmentPa
             paymentId: razorpay_payment_id,
             sellerAccountId: rzpAccountId,
             amountInPaise: netPaise,
-            holdDays: 7,
+            holdDays: profile.holdDays,
             notes: {
               orderNumber: itemOrderId,
               sellerId: seller.id,
+              category,
+              commissionRate: `${profile.commissionRate}%`,
+              flatOrderFee: `₹${profile.flatOrderFee}`,
+              settlementCycle: profile.settlementCycle,
               grossSales: String(itemPrice),
               netPayable: String(netSellerPayout),
             },
@@ -387,14 +393,14 @@ export async function executeOrderFulfillmentPipeline(params: OrderFulfillmentPa
 
       // 7. Write complete deterministic Settlement record
       const holdUntil =
-        transferResult?.holdUntil || new Date(Date.now() + 7 * 86400000);
+        transferResult?.holdUntil || new Date(Date.now() + profile.holdDays * 86400000);
 
       const settlement = await prisma.settlement.create({
         data: {
           sellerId: seller.id,
           periodStart: new Date(),
           periodEnd: new Date(),
-          category: "Cikka Mall Marketplace",
+          category: category || "Cikka Mall Marketplace",
           grossSales: breakdown.grossProductValue,
           basePrice: breakdown.baseProductValue,
           gstOnSale: breakdown.productGst,
@@ -446,8 +452,8 @@ export async function executeOrderFulfillmentPipeline(params: OrderFulfillmentPa
         data: {
           sellerId: seller.id,
           type: NotificationType.SETTLEMENT,
-          title: `T+7 Payout Scheduled: ₹${netSellerPayout.toFixed(2)}`,
-          body: `Net settlement transferred to your Razorpay Linked Account on T+7 hold. Auto-release scheduled for ${holdUntil.toLocaleDateString("en-IN")}.`,
+          title: `T+${profile.holdDays} Payout Scheduled: ₹${netSellerPayout.toFixed(2)}`,
+          body: `Net settlement transferred to your Razorpay Linked Account on T+${profile.holdDays} hold. Auto-release scheduled for ${holdUntil.toLocaleDateString("en-IN")}.`,
           metadata: {
             orderNumber: itemOrderId,
             transferId: transferResult?.transferId,
@@ -730,7 +736,7 @@ export const processCustomPayment = asyncHandler(async (req: Request, res: Respo
   }
 
   let finalOrderId = incomingOrderId;
-  let keyId = process.env.RAZORPAY_KEY_ID || "rzp_test_TXf15TcVB0VM09";
+  let keyId = (process.env.RAZORPAY_KEY_ID || config.razorpayKeyId || "").trim();
 
   // Create order via Razorpay service if not passed
   if (!finalOrderId) {

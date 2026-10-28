@@ -3,6 +3,7 @@ import { Request, Response } from "express";
 import { razorpayService } from "../services/razorpay.service";
 import { razorpayRouteService } from "../services/razorpayRoute.service";
 import { calculateSettlementBreakdown } from "../services/settlementCalculator.service";
+import { getSellerSettlementProfile } from "../services/settlement.service";
 import { shipwayService } from "../services/shipway.service";
 import { asyncHandler } from "../utils/asyncHandler";
 import { prisma } from "../config/prisma";
@@ -14,7 +15,7 @@ import { OrderStatus, NotificationType } from "../generated/prisma/client";
 async function findOrCreateSeller(pickupPincode: string, categoryHint?: string): Promise<any> {
   try {
     const allSellers = await prisma.seller.findMany({
-      include: { onboarding: true },
+      include: { onboarding: true, commissionConfig: true },
     });
 
     if (allSellers.length > 0) {
@@ -174,7 +175,9 @@ export const confirmRedemption = asyncHandler(async (req: Request, res: Response
     city = "Mumbai",
     pickup_pincode = "122008",
     carrier_name = "Delhivery 3PL Express (0.5kg)",
+    category = "Rewards",
   } = req.body;
+  const product_category = (req.body.product_category || req.body.category || category || "Rewards").trim();
 
   if (!razorpay_order_id || !razorpay_payment_id || !razorpay_signature) {
     res.status(400).json({
@@ -246,8 +249,9 @@ export const confirmRedemption = asyncHandler(async (req: Request, res: Response
   console.log(`[Rewards Store Order Created] #${orderId} (${product_name}) linked to Redemption #${redemptionId} -> Seller #${seller.id}`);
 
   // 5. Calculate Deterministic Settlement Breakdown (Commission, Shipping, Platform, Success Fee, TDS, TCS)
-  const breakdown = calculateSettlementBreakdown(numProductValue);
-  const netSellerPayout = breakdown.sellerNetSettlement; // e.g. ₹516.02 for ₹1,000 product
+  const profile = await getSellerSettlementProfile(seller.id, product_category);
+  const breakdown = calculateSettlementBreakdown(numProductValue, profile.customConfig);
+  const netSellerPayout = breakdown.sellerNetSettlement;
   const netPaise = Math.round(netSellerPayout * 100);
 
   // 6. Resolve Seller Razorpay Linked Account
@@ -273,7 +277,7 @@ export const confirmRedemption = asyncHandler(async (req: Request, res: Response
     }
   }
 
-  // 7. Cikka Corporate Funding Transfer via Razorpay Route with strict T+7 hold
+  // 7. Cikka Corporate Funding Transfer via Razorpay Route with dynamic hold
   let transferResult: any = null;
   if (rzpAccountId && netPaise > 0) {
     try {
@@ -281,11 +285,15 @@ export const confirmRedemption = asyncHandler(async (req: Request, res: Response
         paymentId: razorpay_payment_id, // Links settlement hold to payment event
         sellerAccountId: rzpAccountId,
         amountInPaise: netPaise,
-        holdDays: 7,
+        holdDays: profile.holdDays,
         notes: {
           orderNumber: orderId,
           redemptionNumber: redemptionId,
           fundingSource: "CIKKA_REWARDS_TREASURY",
+          category: product_category,
+          commissionRate: `${profile.commissionRate}%`,
+          flatOrderFee: `₹${profile.flatOrderFee}`,
+          settlementCycle: profile.settlementCycle,
           productValue: String(numProductValue),
           pointsBurned: String(numPointsBurned),
           netPayable: String(netSellerPayout),
@@ -297,7 +305,7 @@ export const confirmRedemption = asyncHandler(async (req: Request, res: Response
   }
 
   // 8. Record Deterministic Settlement in Prisma
-  const holdUntil = transferResult?.holdUntil || new Date(Date.now() + 7 * 86400000);
+  const holdUntil = transferResult?.holdUntil || new Date(Date.now() + profile.holdDays * 86400000);
 
   const settlement = await prisma.settlement.create({
     data: {
@@ -365,8 +373,8 @@ export const confirmRedemption = asyncHandler(async (req: Request, res: Response
     data: {
       sellerId: seller.id,
       type: NotificationType.SETTLEMENT,
-      title: `Rewards Payout Scheduled: ₹${netSellerPayout.toFixed(2)}`,
-      body: `Net settlement transferred to your Linked Account on T+7 hold. Auto-release scheduled for ${holdUntil.toLocaleDateString("en-IN")}.`,
+      title: `Rewards Payout Scheduled (T+${profile.holdDays}): ₹${netSellerPayout.toFixed(2)}`,
+      body: `Net settlement transferred to your Linked Account on T+${profile.holdDays} hold. Auto-release scheduled for ${holdUntil.toLocaleDateString("en-IN")}.`,
       metadata: {
         orderNumber: orderId,
         redemptionNumber: redemptionId,
