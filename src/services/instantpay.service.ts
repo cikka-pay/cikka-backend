@@ -37,6 +37,27 @@ export async function verifyPanService(dto: VerifyPanDTO) {
 
   const formattedPan = pan.toUpperCase().trim();
 
+  // Dev Bypass PAN: AAAAA1111A
+  if (formattedPan === "AAAAA1111A") {
+    console.log("==================================================");
+    console.log(`🔍 [InstantPay PAN Dev Bypass] Validating bypass PAN: ${formattedPan}`);
+    console.log("==================================================");
+    return {
+      verificationId: `v_pan_dev_${Date.now()}`,
+      valid: true,
+      pan: formattedPan,
+      registeredName: "DEV BYPASS USER",
+      legalName: "DEV BYPASS USER",
+      name: "DEV BYPASS USER",
+      category: "INDIVIDUAL",
+      userGender: "M",
+      userDob: "01/01/1990",
+      address: "Prestige Towers, BKC, Mumbai",
+      status: "VALID",
+      rawResponse: { bypass: true },
+    };
+  }
+
   // Call InstantPay external service directly (no mock bypass, no stale cache)
   const result = await instantpayClient.verifyPan(formattedPan);
 
