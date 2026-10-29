@@ -166,8 +166,7 @@ export const createOrder = asyncHandler(async (req: Request, res: Response) => {
         customerName: customerName || "Cikka Customer",
         customerCity: customerCity || "Mumbai",
         totalAmount: finalAmount,
-        status: OrderStatus.SHIPPED,
-        trackingNumber: generatedAwb,
+        status: OrderStatus.PENDING,
         courier: "Bluedart Express (0.5kg)",
         ...(targetProduct && {
           items: {
@@ -229,6 +228,7 @@ export const updateOrderStatus = asyncHandler(async (req: Request, res: Response
 
   const order = await prisma.order.findFirst({
     where: { id, sellerId },
+    include: { items: { include: { product: true } } },
   });
 
   if (!order) {
@@ -236,13 +236,42 @@ export const updateOrderStatus = asyncHandler(async (req: Request, res: Response
     return;
   }
 
+  // If packing order and no AWB exists yet, generate official AWB and register with Shipway
+  let assignedAwb = trackingNumber || order.trackingNumber;
+  let assignedCourier = courier || order.courier || "Delhivery Air Express";
+
+  if (status === "PACKED" && !assignedAwb) {
+    assignedAwb = `AWB-${Math.floor(10000000 + Math.random() * 90000000)}`;
+    assignedCourier = assignedCourier || "Delhivery Air Express";
+
+    // Push manifested shipment to Shipway
+    shipwayService.pushOrderData({
+      order_id: order.orderNumber,
+      customer_name: order.customerName,
+      customer_email: "customer@cikka.club",
+      customer_phone: "9876543210",
+      delivery_address: `${order.customerCity || "Mumbai"}, India`,
+      city: order.customerCity || "Mumbai",
+      total_amount: Number(order.totalAmount),
+      carrier_name: assignedCourier,
+      awb_number: assignedAwb,
+      products: order.items?.map((it) => ({
+        product: it.product?.name || "Catalog Product",
+        price: Number(it.unitPrice),
+        product_code: it.product?.sku || "SKU",
+        product_quantity: it.quantity,
+      })),
+    }).catch((err) => {
+      console.warn(`[Shipway Manifest Notice] Order #${order.orderNumber} manifest: ${err.message}`);
+    });
+  }
+
   const updatedOrder = await prisma.order.update({
     where: { id },
     data: {
       status,
-      // Only update tracking fields when they're explicitly provided
-      ...(trackingNumber !== undefined && { trackingNumber }),
-      ...(courier !== undefined && { courier }),
+      trackingNumber: assignedAwb,
+      courier: assignedCourier,
     },
   });
 

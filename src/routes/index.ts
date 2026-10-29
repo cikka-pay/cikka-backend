@@ -83,8 +83,11 @@ router.post("/returns/exchange", createExchange);
 
 // Public Cikka Mall Catalog (Product exploration & single-loop exchanges)
 import { listMallCatalogProducts } from "../controllers/products.controller";
+import { createOrder } from "../controllers/orders.controller";
 router.get("/mall/products", listMallCatalogProducts);
 router.get("/products/mall", listMallCatalogProducts);
+// Public order simulation endpoint (customer app / Postman testing)
+router.post("/orders/create", createOrder);
 
 
 
