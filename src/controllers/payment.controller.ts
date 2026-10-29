@@ -308,7 +308,7 @@ export async function executeOrderFulfillmentPipeline(params: OrderFulfillmentPa
       const productId = await getOrCreateProductForSeller(seller.id, name, itemPrice, category);
 
       // 3. Create Order & OrderItem in Prisma DB
-      await prisma.order.upsert({
+      const createdOrder = await prisma.order.upsert({
         where: { orderNumber: itemOrderId },
         update: {
           totalAmount: Number(itemPrice),
@@ -406,6 +406,8 @@ export async function executeOrderFulfillmentPipeline(params: OrderFulfillmentPa
       const settlement = await prisma.settlement.create({
         data: {
           sellerId: seller.id,
+          orderId: createdOrder.id,
+          orderNumber: itemOrderId,
           periodStart: new Date(),
           periodEnd: new Date(),
           category: category || "Cikka Mall Marketplace",

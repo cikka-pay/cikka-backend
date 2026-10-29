@@ -356,13 +356,15 @@ model Order {
   // Shipping / fulfilment tracking — set when status moves to SHIPPED
   trackingNumber  String?
   courier         String?     // Courier partner name e.g. "Delhivery", "Blue Dart"
+  deliveredAt     DateTime?   // Timestamp when package reached the customer (triggers T+7 hold countdown)
 
   createdAt    DateTime    @default(now())
   updatedAt    DateTime    @updatedAt
 
   // Relations
-  items   OrderItem[]
-  returns Return[]
+  items        OrderItem[]
+  returns      Return[]
+  settlements  Settlement[]
 
   @@index([sellerId, createdAt])
   @@index([sellerId, status])
@@ -455,6 +457,9 @@ model Settlement {
   ledgerBreakdown   Json?
 
   // 11. Razorpay Route Marketplace Split & T+7 Settlement Disbursal Tracking
+  orderId            String?
+  order              Order?           @relation(fields: [orderId], references: [id])
+  orderNumber        String?          // Directly matches Order.orderNumber
   razorpayTransferId String?          @unique
   razorpayPaymentId  String?
   decentroTxnId     String?          // Backward compat
@@ -469,6 +474,8 @@ model Settlement {
 
   @@index([sellerId, periodStart])
   @@index([sellerId, status])
+  @@index([orderId])
+  @@index([orderNumber])
   @@index([razorpayTransferId])
   @@map("settlements")
 }

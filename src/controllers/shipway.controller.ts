@@ -1,5 +1,6 @@
 import { Request, Response } from "express";
 import { shipwayService, SHIPWAY_STATUS_MAP } from "../services/shipway.service";
+import { razorpayRouteService } from "../services/razorpayRoute.service";
 import { asyncHandler } from "../utils/asyncHandler";
 import { prisma } from "../config/prisma";
 import { OrderStatus, NotificationType } from "../generated/prisma/client";
@@ -437,38 +438,63 @@ export const handleWebhook = asyncHandler(async (req: Request, res: Response) =>
       });
 
       if (dbOrder) {
+        const isDelivered = mappedStatus === OrderStatus.DELIVERED;
+        const deliveredAt = isDelivered ? (dbOrder.deliveredAt || new Date()) : undefined;
+
         await prisma.order.update({
           where: { id: dbOrder.id },
           data: {
             ...(mappedStatus && { status: mappedStatus }),
             ...(awbno && { trackingNumber: awbno }),
             ...(carrier && { courier: carrier }),
+            ...(deliveredAt && { deliveredAt }),
           },
         });
 
-        // If delivered, confirm T+7 return window countdown on the settlement
-        if (mappedStatus === OrderStatus.DELIVERED) {
-          const holdUntil = new Date(Date.now() + 7 * 86400000);
-          await prisma.settlement.updateMany({
+        // If delivered, calculate strict T+7 hold countdown starting from the actual delivery date
+        if (isDelivered && deliveredAt) {
+          const holdUntil = new Date(deliveredAt.getTime() + 7 * 86400000);
+
+          // Find matching settlements for this order
+          const matchingSettlements = await prisma.settlement.findMany({
             where: {
-              sellerId: dbOrder.sellerId,
-              transferStatus: "ON_HOLD",
+              OR: [
+                { orderNumber: dbOrder.orderNumber },
+                { orderId: dbOrder.id },
+                { sellerId: dbOrder.sellerId, transferStatus: "ON_HOLD" },
+              ],
             },
-            data: {
-              holdUntil,
-              payoutDate: holdUntil,
-            } as any,
-          }).catch(() => {});
+          });
+
+          for (const s of matchingSettlements) {
+            await prisma.settlement.update({
+              where: { id: s.id },
+              data: {
+                holdUntil,
+                payoutDate: holdUntil,
+                orderId: dbOrder.id,
+                orderNumber: dbOrder.orderNumber,
+              },
+            }).catch(() => {});
+
+            // Update live hold timestamp on Razorpay Route if transfer exists
+            if (s.razorpayTransferId) {
+              await razorpayRouteService.updateTransferHoldUntil(s.razorpayTransferId, holdUntil).catch((rzpErr) => {
+                console.warn(`[Shipway Webhook] Could not update Razorpay transfer hold for #${dbOrder.orderNumber}:`, rzpErr.message);
+              });
+            }
+          }
 
           await prisma.notification.create({
             data: {
               sellerId: dbOrder.sellerId,
               type: NotificationType.SETTLEMENT,
               title: `Order Delivered: #${dbOrder.orderNumber}`,
-              body: `Package delivered to customer. T+7 return window countdown started. Expected auto-settlement on ${holdUntil.toLocaleDateString("en-IN")}.`,
+              body: `Package delivered to customer on ${deliveredAt.toLocaleDateString("en-IN")}. Strict T+7 return window countdown started. Expected auto-settlement on ${holdUntil.toLocaleDateString("en-IN")}.`,
               metadata: {
                 orderId: dbOrder.id,
                 orderNumber: dbOrder.orderNumber,
+                deliveredAt: deliveredAt.toISOString(),
                 holdUntil: holdUntil.toISOString(),
               },
             },
