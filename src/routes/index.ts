@@ -76,9 +76,15 @@ router.use("/shipway", shipwayRoutes);
 
 
 // Public Return Request Endpoint (Customer App / Postman)
-import { createReturn } from "../controllers/returns.controller";
+import { createReturn, createExchange } from "../controllers/returns.controller";
 router.post("/returns/request", createReturn);
 router.post("/returns/create", createReturn);
+router.post("/returns/exchange", createExchange);
+
+// Public Cikka Mall Catalog (Product exploration & single-loop exchanges)
+import { listMallCatalogProducts } from "../controllers/products.controller";
+router.get("/mall/products", listMallCatalogProducts);
+router.get("/products/mall", listMallCatalogProducts);
 
 
 

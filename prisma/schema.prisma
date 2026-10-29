@@ -34,6 +34,7 @@ enum OrderStatus {
   DELIVERED
   CANCELLED
   RETURNED
+  EXCHANGE
 }
 
 enum SettlementStatus {
@@ -119,6 +120,12 @@ model Seller {
   // Razorpay Route Sub-merchant Linked Account
   razorpayAccountId     String?           @unique
   razorpayAccountStatus String?           @default("NOT_CREATED")
+
+  // Return SLA Compliance & Strike System (1/3, 2/3, 3/3 final)
+  warningCount          Int               @default(0) // 1/3 warning, 2/3 warning, 3/3 final suspension
+  isSuspended           Boolean           @default(false)
+  suspendedAt           DateTime?
+  suspensionReason      String?
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -450,6 +457,7 @@ model Settlement {
   // 11. Razorpay Route Marketplace Split & T+7 Settlement Disbursal Tracking
   razorpayTransferId String?          @unique
   razorpayPaymentId  String?
+  decentroTxnId     String?          // Backward compat
   holdUntil          DateTime?        // Exact T+7 auto-release timestamp
   transferStatus     String?          @default("PENDING") // PENDING | ON_HOLD | SETTLED | REVERSED | FAILED
   utr               String?

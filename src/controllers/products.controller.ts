@@ -274,3 +274,67 @@ export const updateVariant = asyncHandler(async (req: Request, res: Response) =>
 
   res.json(updated);
 });
+
+/**
+ * GET /api/mall/products
+ * Public Cikka Mall Catalog for Product Exploration & Single-Loop Exchanges
+ */
+export const listMallCatalogProducts = asyncHandler(async (req: Request, res: Response) => {
+  const { page = "1", limit = "60", category, q } = req.query as any;
+  const pageNum = parseInt(page, 10) || 1;
+  const limitNum = parseInt(limit, 10) || 60;
+  const skip = (pageNum - 1) * limitNum;
+
+  const where: Prisma.ProductWhereInput = {
+    status: { in: ["ACTIVE", "DRAFT"] }, // Available in mall
+  };
+
+  if (category && category !== "ALL") {
+    where.category = { contains: category, mode: "insensitive" };
+  }
+
+  if (q) {
+    where.OR = [
+      { name: { contains: q, mode: "insensitive" } },
+      { category: { contains: q, mode: "insensitive" } },
+      { sku: { contains: q, mode: "insensitive" } },
+    ];
+  }
+
+  const [data, total] = await Promise.all([
+    prisma.product.findMany({
+      where,
+      skip,
+      take: limitNum,
+      orderBy: { createdAt: "desc" },
+      include: {
+        variants: true,
+        seller: {
+          select: {
+            id: true,
+            businessName: true,
+            email: true,
+            onboarding: {
+              select: {
+                businessName: true,
+                pickupAddress: true,
+              },
+            },
+          },
+        },
+      },
+    }),
+    prisma.product.count({ where }),
+  ]);
+
+  res.json({
+    data,
+    meta: {
+      total,
+      page: pageNum,
+      limit: limitNum,
+      totalPages: Math.ceil(total / limitNum),
+    },
+  });
+});
+

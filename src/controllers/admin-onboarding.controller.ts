@@ -396,7 +396,7 @@ export const getSellerProducts = asyncHandler(async (req: Request, res: Response
 
 export const updateProductApproval = asyncHandler(async (req: Request, res: Response) => {
   const { id } = req.params;
-  const { status } = req.body; // ACTIVE or REJECTED
+  const { status, rejectionReason } = req.body; // ACTIVE or REJECTED
 
   if (!["ACTIVE", "REJECTED"].includes(status)) {
     res.status(400).json({ error: "Invalid status" });
@@ -407,5 +407,30 @@ export const updateProductApproval = asyncHandler(async (req: Request, res: Resp
     where: { id },
     data: { status },
   });
+
+  // Notify seller of catalog approval or rejection with notes
+  const title = status === "ACTIVE"
+    ? `Product Approved: ${product.name}`
+    : `Product Moderation Rejected: ${product.name}`;
+  const body = status === "ACTIVE"
+    ? `Your product "${product.name}" (SKU: ${product.sku}) has been approved and is now live on Cikka Mall.`
+    : `Your product "${product.name}" was rejected by moderation.${rejectionReason ? ` Notes: ${rejectionReason}` : ""}`;
+
+  await prisma.notification.create({
+    data: {
+      sellerId: product.sellerId,
+      type: "PRODUCT" as any,
+      title,
+      body,
+      metadata: {
+        productId: product.id,
+        sku: product.sku,
+        status,
+        rejectionReason: rejectionReason || null,
+      },
+    },
+  }).catch(() => {});
+
   res.json(product);
 });
+

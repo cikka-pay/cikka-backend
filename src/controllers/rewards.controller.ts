@@ -414,7 +414,7 @@ export const confirmRedemption = asyncHandler(async (req: Request, res: Response
       console.warn(`[Shipway Rewards Push Notice]: ${err.message}`);
     });
 
-  // 11. Send Verified Response
+  // 11. Send Verified Response (Strict Rule: Zero Cashback & Zero Points Earned on Rewards Redemptions)
   res.status(200).json({
     success: true,
     verified: true,
@@ -425,6 +425,8 @@ export const confirmRedemption = asyncHandler(async (req: Request, res: Response
     customer_fee_paid: 11.79,
     points_burned: numPointsBurned,
     product_value: numProductValue,
+    cashback_earned: 0, // Strict rule: No cashback on Rewards Store redemptions
+    points_earned: 0,   // Strict rule: No new CI points generated on redemption
     net_seller_payout: netSellerPayout,
     cikka_retained_earnings: breakdown.cikkaFeeRevenue,
     transfer_id: transferResult?.transferId,

@@ -9,6 +9,7 @@ import { asyncHandler } from "../utils/asyncHandler";
 import { prisma } from "../config/prisma";
 import { config } from "../config/env";
 import { OrderStatus, NotificationType } from "../generated/prisma/client";
+import { RewardsCalcService } from "../services/rewardsCalc.service";
 
 /**
  * POST /api/payment/create-order
@@ -194,12 +195,19 @@ export const verifyPayment = asyncHandler(async (req: Request, res: Response) =>
     originPincode: req.body.originPincode,
   });
 
+  // Calculate earned Rewards for Cikka Mall Purchase (Cashback & CI Points)
+  const totalRupees = Number(amount) ? Number(amount) / 100 : 0;
+  const mallRewards = RewardsCalcService.calculateMallPurchaseRewards(totalRupees);
+
   res.status(200).json({
     success: true,
     verified: true,
     message: "Payment verified successfully, orders created, and settlements scheduled on T+7 hold.",
     payment_id: razorpay_payment_id,
     order_id: razorpay_order_id,
+    cashback_earned: mallRewards.cashbackEarned,
+    ci_points_earned: mallRewards.ciPointsEarned,
+    rewards_status: mallRewards.status,
     processed_orders: processedOrders,
   });
 });

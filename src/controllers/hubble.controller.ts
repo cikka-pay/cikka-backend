@@ -329,6 +329,8 @@ export class HubbleController {
         success: true,
         message: 'Gift card vouchers created successfully',
         data: orderResult,
+        cashback_earned: 0, // Strict rule: No cashback on coupon/voucher redemption
+        points_earned: 0,   // Strict rule: No rewards or CI points earned on coupon redemption
         source: orderResult.source,
         isLiveApi: orderResult.isLiveApi,
       });
