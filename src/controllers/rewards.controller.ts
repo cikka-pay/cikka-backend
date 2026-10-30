@@ -5,9 +5,10 @@ import { razorpayRouteService } from "../services/razorpayRoute.service";
 import { calculateSettlementBreakdown } from "../services/settlementCalculator.service";
 import { getSellerSettlementProfile } from "../services/settlement.service";
 import { shipwayService } from "../services/shipway.service";
+import { walletService } from "../services/wallet.service";
 import { asyncHandler } from "../utils/asyncHandler";
 import { prisma } from "../config/prisma";
-import { OrderStatus, NotificationType } from "../generated/prisma/client";
+import { OrderStatus, NotificationType, WalletTxType } from "../generated/prisma/client";
 
 /**
  * Helper to match or create a seller for a given pickup pincode
@@ -204,11 +205,29 @@ export const confirmRedemption = asyncHandler(async (req: Request, res: Response
     return;
   }
 
+  // 1b. Enforce server-side CI Points balance (replaces AsyncStorage trust)
+  //     Only check when the caller is an authenticated user.
+  const authenticatedUserId = req.user?.id ?? null;
+  const numPointsBurnedRequested = Number(points_burned) || 0;
+
+  if (authenticatedUserId && numPointsBurnedRequested > 0) {
+    const balance = await walletService.getBalance(authenticatedUserId);
+    if (balance.ciPoints < numPointsBurnedRequested) {
+      res.status(422).json({
+        success: false,
+        verified: false,
+        error: `Insufficient CI Points. You have ${balance.ciPoints} but the redemption requires ${numPointsBurnedRequested}.`,
+        current_balance: balance.ciPoints,
+        required: numPointsBurnedRequested,
+      });
+      return;
+    }
+  }
+
   // 2. Generate Dual Primary Identifiers
   const randSuffix = Math.floor(100000 + Math.random() * 900000);
   const orderId = `ORD-RW-${randSuffix}`;
   const redemptionId = `RDM-${randSuffix}`;
-  const generatedAwb = `AWB-${Math.floor(10000000 + Math.random() * 90000000)}`;
 
   const numProductValue = Number(product_value) || 1000;
   const numPointsBurned = Number(points_burned) || 1000;
@@ -222,7 +241,7 @@ export const confirmRedemption = asyncHandler(async (req: Request, res: Response
 
   const productId = await getOrCreateProductForSeller(seller.id, product_name, numProductValue, "Rewards");
 
-  // 4. Create Order & OrderItem in Prisma DB (Marked as Rewards Store, Prepaid by Cikka)
+  // 4. Create Order & OrderItem in Prisma DB (Marked as Rewards Store, Prepaid by Cikka, PENDING packing)
   const dbOrder = await prisma.order.create({
     data: {
       sellerId: seller.id,
@@ -230,9 +249,9 @@ export const confirmRedemption = asyncHandler(async (req: Request, res: Response
       customerName: `${customer_name} (${redemptionId})`,
       customerCity: `${city} (${pincode})`,
       totalAmount: numProductValue,
-      status: OrderStatus.SHIPPED,
-      trackingNumber: generatedAwb,
-      courier: carrier_name,
+      status: OrderStatus.PENDING,
+      trackingNumber: null,
+      courier: carrier_name || null,
       items: {
         create: [
           {
@@ -353,17 +372,40 @@ export const confirmRedemption = asyncHandler(async (req: Request, res: Response
     } as any,
   });
 
+  // 8b. Atomically debit CI Points from server-side ledger (double-entry)
+  //     Tied to redemptionId so this can never be applied twice even if the
+  //     client retries the confirm endpoint.
+  let walletDebitResult: Awaited<ReturnType<typeof walletService.debitPoints>> | null = null;
+  if (authenticatedUserId && numPointsBurned > 0) {
+    try {
+      walletDebitResult = await walletService.debitPoints(
+        authenticatedUserId,
+        numPointsBurned,
+        WalletTxType.REDEEM_REWARD,
+        {
+          redemptionId,
+          razorpayPaymentId: razorpay_payment_id,
+          description: `Rewards Store redemption: ${product_name}`,
+          idempotencyKey: `REDEEM_REWARD:${redemptionId}`,
+        }
+      );
+    } catch (walletErr: any) {
+      // Log but don't fail the response — settlement is already recorded.
+      // The ledger entry will simply be missing; ops can reconcile manually.
+      console.warn(`[Rewards Wallet Debit Warning]: ${walletErr.message}`);
+    }
+  }
+
   // 9. Emit Seller In-App Notifications
   await prisma.notification.create({
     data: {
       sellerId: seller.id,
       type: NotificationType.ORDER,
       title: `Rewards Store Order: #${orderId}`,
-      body: `Prepaid by Cikka via CI Points Redemption (${redemptionId}). Courier: ${carrier_name}. AWB: ${generatedAwb}`,
+      body: `Prepaid by Cikka via CI Points Redemption (${redemptionId}). Courier: ${carrier_name || "Shipway Partner"}. Please pack order to generate shipping label.`,
       metadata: {
         orderNumber: orderId,
         redemptionNumber: redemptionId,
-        awb: generatedAwb,
         courier: carrier_name,
       },
     },
@@ -384,54 +426,34 @@ export const confirmRedemption = asyncHandler(async (req: Request, res: Response
     },
   }).catch(() => {});
 
-  // 10. Push to Shipway Experience API
-  shipwayService
-    .pushOrderData({
-      order_id: orderId,
-      customer_name: customer_name,
-      customer_email: customer_email,
-      customer_phone: customer_phone,
-      delivery_address: delivery_address,
-      pincode: pincode,
-      pickup_pincode: pickup_pincode,
-      carrier_name: carrier_name,
-      awb_number: generatedAwb,
-      total_amount: numProductValue,
-      payment_type: "Prepaid",
-      products: [
-        {
-          product: product_name,
-          price: numProductValue,
-          product_code: productId,
-          product_quantity: 1,
-        },
-      ],
-    })
-    .then((pushRes) => {
-      console.log(`[Shipway Rewards Order Pushed] Order #${orderId} -> Status: ${pushRes.status}`);
-    })
-    .catch((err) => {
-      console.warn(`[Shipway Rewards Push Notice]: ${err.message}`);
-    });
-
-  // 11. Send Verified Response
+  // 11. Send Verified Response (Strict Rule: Zero Cashback & Zero Points Earned on Rewards Redemptions)
   res.status(200).json({
     success: true,
     verified: true,
-    message: "Rewards redemption confirmed, points deducted, corporate funding allocated on T+7 hold, and order pushed to Shipway.",
+    message: "Rewards redemption confirmed, points deducted, corporate funding allocated on T+7 hold. Ready to be packed.",
     order_id: orderId,
     redemption_id: redemptionId,
     customer_payment_id: razorpay_payment_id,
     customer_fee_paid: 11.79,
     points_burned: numPointsBurned,
     product_value: numProductValue,
+    cashback_earned: 0, // Strict rule: No cashback on Rewards Store redemptions
+    points_earned: 0,   // Strict rule: No new CI points generated on redemption
     net_seller_payout: netSellerPayout,
     cikka_retained_earnings: breakdown.cikkaFeeRevenue,
     transfer_id: transferResult?.transferId,
     settlement_id: settlement.id,
     hold_until: holdUntil,
-    awb: generatedAwb,
+    awb: null,
     courier: carrier_name,
     tracking_url: `/api/shipway/tracking/${orderId}`,
+    // Updated server-side wallet balance (undefined if user not authenticated or no points burned)
+    wallet: walletDebitResult
+      ? {
+          balance_after_points: walletDebitResult.balanceAfterPoints,
+          balance_after_cash_rupees: walletDebitResult.balanceAfterPaise / 100,
+          ledger_entry_id: walletDebitResult.ledgerEntryId,
+        }
+      : null,
   });
 });

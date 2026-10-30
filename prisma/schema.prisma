@@ -34,6 +34,7 @@ enum OrderStatus {
   DELIVERED
   CANCELLED
   RETURNED
+  EXCHANGE
 }
 
 enum SettlementStatus {
@@ -63,6 +64,19 @@ enum NotificationType {
   SETTLEMENT
   SYSTEM
   KYB
+}
+
+enum WalletTxType {
+  EARN_ORDER          // CI Points earned on purchase
+  EARN_SIGNUP         // CI Points bonus on first sign-up
+  EARN_REFERRAL       // CI Points for referring a friend
+  EARN_CASHBACK       // ₹5 cashback credited as cash balance
+  EARN_ADMIN          // Manual admin credit (adjustments / promos)
+  REDEEM_REWARD       // CI Points spent at Rewards Store
+  DEBIT_EXPIRY        // CI Points expired (non-cash)
+  DEBIT_REFUND        // CI Points reversed on order return
+  DEBIT_ADMIN         // Manual admin debit (fraud reversal)
+  CASHBACK_REDEEM     // Cash balance applied to an order
 }
 
 enum FulfillmentType {
@@ -119,6 +133,12 @@ model Seller {
   // Razorpay Route Sub-merchant Linked Account
   razorpayAccountId     String?           @unique
   razorpayAccountStatus String?           @default("NOT_CREATED")
+
+  // Return SLA Compliance & Strike System (1/3, 2/3, 3/3 final)
+  warningCount          Int               @default(0) // 1/3 warning, 2/3 warning, 3/3 final suspension
+  isSuspended           Boolean           @default(false)
+  suspendedAt           DateTime?
+  suspensionReason      String?
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -349,13 +369,15 @@ model Order {
   // Shipping / fulfilment tracking — set when status moves to SHIPPED
   trackingNumber  String?
   courier         String?     // Courier partner name e.g. "Delhivery", "Blue Dart"
+  deliveredAt     DateTime?   // Timestamp when package reached the customer (triggers T+7 hold countdown)
 
   createdAt    DateTime    @default(now())
   updatedAt    DateTime    @updatedAt
 
   // Relations
-  items   OrderItem[]
-  returns Return[]
+  items        OrderItem[]
+  returns      Return[]
+  settlements  Settlement[]
 
   @@index([sellerId, createdAt])
   @@index([sellerId, status])
@@ -448,8 +470,12 @@ model Settlement {
   ledgerBreakdown   Json?
 
   // 11. Razorpay Route Marketplace Split & T+7 Settlement Disbursal Tracking
+  orderId            String?
+  order              Order?           @relation(fields: [orderId], references: [id])
+  orderNumber        String?          // Directly matches Order.orderNumber
   razorpayTransferId String?          @unique
   razorpayPaymentId  String?
+  decentroTxnId     String?          // Backward compat
   holdUntil          DateTime?        // Exact T+7 auto-release timestamp
   transferStatus     String?          @default("PENDING") // PENDING | ON_HOLD | SETTLED | REVERSED | FAILED
   utr               String?
@@ -461,6 +487,8 @@ model Settlement {
 
   @@index([sellerId, periodStart])
   @@index([sellerId, status])
+  @@index([orderId])
+  @@index([orderNumber])
   @@index([razorpayTransferId])
   @@map("settlements")
 }
@@ -538,6 +566,8 @@ model User {
 
   addresses     UserAddress[]
   savedCards    UserSavedCard[]
+  wallet        UserWallet?
+  ledgerEntries LoyaltyLedger[]
 
   createdAt     DateTime @default(now())
   updatedAt     DateTime @updatedAt
@@ -963,8 +993,77 @@ model TeamMember {
   @@map("team_members")
 }
 
+// ============================================================
+// USER WALLET — Authoritative server-side balance for each user
+// Single row per user. Only ever mutated inside DB transactions
+// alongside a corresponding LoyaltyLedger entry (double-entry).
+// ============================================================
 
+model UserWallet {
+  id           String   @id @default(uuid())
+  userId       String   @unique
+  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
 
+  // CI Points (integer, 1 point = ₹1 face-value in Rewards Store)
+  ciPoints     Int      @default(0)
 
+  // Cash balance in paise (₹1 = 100 paise) — ₹5 cashback events go here
+  cashPaise    Int      @default(0)
 
+  // Lifetime earned / redeemed totals for analytics (denormalised, read-only)
+  lifetimeEarnedPoints  Int @default(0)
+  lifetimeRedeemedPoints Int @default(0)
+  lifetimeEarnedPaise   Int @default(0)
+  lifetimeRedeemedPaise Int @default(0)
 
+  version      Int      @default(0)   // Optimistic-lock counter
+
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  @@map("user_wallets")
+}
+
+// ============================================================
+// LOYALTY LEDGER — Append-only double-entry journal
+// Every credit or debit creates ONE row here AND atomically
+// updates UserWallet inside the same DB transaction.
+// idempotencyKey prevents the same business event being applied twice.
+// ============================================================
+
+model LoyaltyLedger {
+  id              String        @id @default(uuid())
+  userId          String
+  user            User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  txType          WalletTxType
+
+  // One of these is non-zero per entry (points XOR cash)
+  pointsDelta     Int           @default(0)   // +ve credit / -ve debit
+  cashPaiseDelta  Int           @default(0)   // +ve credit / -ve debit
+
+  // Running balance AFTER this entry was applied (snapshot)
+  balanceAfterPoints  Int
+  balanceAfterPaise   Int
+
+  // Business context — at least one should be set
+  orderId         String?       // Source order (purchase / return)
+  redemptionId    String?       // Rewards store redemption
+  razorpayPaymentId String?     // Payment reference
+  description     String?       // Human-readable note
+
+  // Prevents re-applying the same business event (idempotency)
+  // Format: `<txType>:<sourceId>` e.g. `EARN_ORDER:ORD-12345`
+  idempotencyKey  String?       @unique
+
+  // Optional expiry for points (null = never expires)
+  expiresAt       DateTime?
+
+  createdAt       DateTime      @default(now())
+
+  @@index([userId, createdAt])
+  @@index([userId, txType])
+  @@index([orderId])
+  @@index([redemptionId])
+  @@map("loyalty_ledger")
+}

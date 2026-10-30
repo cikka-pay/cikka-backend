@@ -29,21 +29,41 @@ async function getValidSellerId(req: Request): Promise<string> {
 }
 
 export const listProducts = asyncHandler(async (req: Request, res: Response) => {
-  const sellerId = await getValidSellerId(req);
-  const { page = "1", limit = "10", status, category, q } = req.query as any;
+  const { page = "1", limit = "500", status, category, q, sellerId } = req.query as any;
 
   const pageNum = parseInt(page, 10);
-  const limitNum = parseInt(limit, 10);
+  const limitNum = parseInt(limit, 10) || 500;
   const skip = (pageNum - 1) * limitNum;
 
-  const where: Prisma.ProductWhereInput = { sellerId };
+  const where: Prisma.ProductWhereInput = {};
 
-  if (status) where.status = status;
-  if (category) where.category = category;
+  // Case 1: Admin Panel
+  if (req.admin?.id) {
+    if (status) where.status = status;
+    if (sellerId) where.sellerId = sellerId;
+  }
+  // Case 2: Authenticated Seller (via Seller Dashboard cikka-fe)
+  else if (req.seller?.id) {
+    where.sellerId = req.seller.id;
+    if (status) where.status = status;
+  } 
+  // Case 3: Public Customer / Mobile App Mall (No Seller JWT attached)
+  else {
+    // Condition: ONLY approved active products displayed in Cikka Mall
+    where.status = "ACTIVE";
+    if (sellerId) where.sellerId = sellerId;
+  }
+
+  if (category && category.toLowerCase() !== "all") {
+    where.category = { equals: category, mode: "insensitive" };
+  }
+
   if (q) {
     where.OR = [
       { name: { contains: q, mode: "insensitive" } },
       { sku: { contains: q, mode: "insensitive" } },
+      { brandName: { contains: q, mode: "insensitive" } },
+      { description: { contains: q, mode: "insensitive" } },
     ];
   }
 
@@ -53,7 +73,16 @@ export const listProducts = asyncHandler(async (req: Request, res: Response) => 
       skip,
       take: limitNum,
       orderBy: { createdAt: "desc" },
-      include: { variants: true },
+      include: {
+        variants: true,
+        seller: {
+          select: {
+            id: true,
+            businessName: true,
+            onboardingStatus: true,
+          },
+        },
+      },
     }),
     prisma.product.count({ where }),
   ]);
@@ -72,7 +101,16 @@ export const listProducts = asyncHandler(async (req: Request, res: Response) => 
 export const getProduct = asyncHandler(async (req: Request, res: Response) => {
   const product = await prisma.product.findFirst({
     where: { id: req.params.id },
-    include: { variants: true },
+    include: {
+      variants: true,
+      seller: {
+        select: {
+          id: true,
+          businessName: true,
+          onboardingStatus: true,
+        },
+      },
+    },
   });
   if (!product) {
     res.status(404).json({ error: "Product not found" });
@@ -85,8 +123,15 @@ export const createProduct = asyncHandler(async (req: Request, res: Response) =>
   const sellerId = await getValidSellerId(req);
   const data = req.body;
 
-  // variants are optional
-  const { variants, ...productData } = data;
+  // variants and legacy single imageUrl are handled safely
+  const { variants, imageUrl, ...productData } = data;
+
+  let finalImageUrls = productData.imageUrls;
+  if (!finalImageUrls && imageUrl) {
+    finalImageUrls = [imageUrl];
+  } else if (Array.isArray(finalImageUrls) && imageUrl && !finalImageUrls.includes(imageUrl)) {
+    finalImageUrls = [imageUrl, ...finalImageUrls];
+  }
 
   if (productData.mrp !== undefined && productData.price !== undefined && productData.price > productData.mrp) {
     res.status(400).json({ error: "Selling price cannot exceed MRP" });
@@ -104,6 +149,7 @@ export const createProduct = asyncHandler(async (req: Request, res: Response) =>
     data: {
       sellerId,
       ...productData,
+      imageUrls: finalImageUrls,
       brandName: finalBrandName,
       status: 'PENDING_APPROVAL',
       variants: variants && variants.length > 0 ? {
@@ -131,7 +177,15 @@ export const updateProduct = asyncHandler(async (req: Request, res: Response) =>
     return;
   }
 
-  const { variants, ...updateData } = data;
+  const { variants, imageUrl, ...updateData } = data;
+
+  if (imageUrl) {
+    if (!updateData.imageUrls) {
+      updateData.imageUrls = [imageUrl];
+    } else if (Array.isArray(updateData.imageUrls) && !updateData.imageUrls.includes(imageUrl)) {
+      updateData.imageUrls = [imageUrl, ...updateData.imageUrls];
+    }
+  }
 
   const effectiveMrp = updateData.mrp !== undefined ? updateData.mrp : (existing.mrp !== null ? Number(existing.mrp) : undefined);
   const effectivePrice = updateData.price !== undefined ? updateData.price : Number(existing.price);
@@ -148,6 +202,11 @@ export const updateProduct = asyncHandler(async (req: Request, res: Response) =>
   const onboardedBrand = seller?.businessName || seller?.onboarding?.businessName;
   if (onboardedBrand) {
     updateData.brandName = onboardedBrand;
+  }
+
+  // Do not allow sellers to self-approve a pending product directly
+  if (existing.status === "PENDING_APPROVAL" && updateData.status === "ACTIVE" && !req.admin?.id) {
+    delete updateData.status;
   }
 
   if (variants && Array.isArray(variants)) {
@@ -220,3 +279,67 @@ export const updateVariant = asyncHandler(async (req: Request, res: Response) =>
 
   res.json(updated);
 });
+
+/**
+ * GET /api/mall/products
+ * Public Cikka Mall Catalog for Product Exploration & Single-Loop Exchanges
+ */
+export const listMallCatalogProducts = asyncHandler(async (req: Request, res: Response) => {
+  const { page = "1", limit = "60", category, q } = req.query as any;
+  const pageNum = parseInt(page, 10) || 1;
+  const limitNum = parseInt(limit, 10) || 60;
+  const skip = (pageNum - 1) * limitNum;
+
+  const where: Prisma.ProductWhereInput = {
+    status: { in: ["ACTIVE", "DRAFT"] }, // Available in mall
+  };
+
+  if (category && category !== "ALL") {
+    where.category = { contains: category, mode: "insensitive" };
+  }
+
+  if (q) {
+    where.OR = [
+      { name: { contains: q, mode: "insensitive" } },
+      { category: { contains: q, mode: "insensitive" } },
+      { sku: { contains: q, mode: "insensitive" } },
+    ];
+  }
+
+  const [data, total] = await Promise.all([
+    prisma.product.findMany({
+      where,
+      skip,
+      take: limitNum,
+      orderBy: { createdAt: "desc" },
+      include: {
+        variants: true,
+        seller: {
+          select: {
+            id: true,
+            businessName: true,
+            email: true,
+            onboarding: {
+              select: {
+                businessName: true,
+                pickupAddress: true,
+              },
+            },
+          },
+        },
+      },
+    }),
+    prisma.product.count({ where }),
+  ]);
+
+  res.json({
+    data,
+    meta: {
+      total,
+      page: pageNum,
+      limit: limitNum,
+      totalPages: Math.ceil(total / limitNum),
+    },
+  });
+});
+

@@ -23,6 +23,7 @@ import rewardsRoutes from "./rewards.routes";
 import shipwayRoutes from "./shipway.routes";
 import userAddressRoutes from "./user-address.routes";
 import cardsRoutes from "./cards.routes";
+import walletRoutes from "./wallet.routes";
 
 import hubbleRoutes from "./hubble.routes";
 import razorpayRouteRoutes from "./razorpay-route.routes";
@@ -61,6 +62,9 @@ router.use("/pan", instantpayRoutes);
 router.use("/hubble", hubbleRoutes);
 router.use("/hubble.sso", hubbleRoutes);
 
+// User Wallet — CI Points & cashback double-entry ledger
+router.use("/wallet", walletRoutes);
+
 // Razorpay Route Split & Settlement Routes (/api/razorpay-route/*)
 router.use("/razorpay-route", razorpayRouteRoutes);
 router.use("/webhooks/razorpay", razorpayRouteRoutes);
@@ -76,19 +80,30 @@ router.use("/shipway", shipwayRoutes);
 
 
 // Public Return Request Endpoint (Customer App / Postman)
-import { createReturn } from "../controllers/returns.controller";
+import { createReturn, createExchange } from "../controllers/returns.controller";
 router.post("/returns/request", createReturn);
 router.post("/returns/create", createReturn);
+router.post("/returns/exchange", createExchange);
+
+// Public Cikka Mall Catalog (Product exploration & single-loop exchanges)
+import { listMallCatalogProducts } from "../controllers/products.controller";
+import { createOrder } from "../controllers/orders.controller";
+router.get("/mall/products", listMallCatalogProducts);
+router.get("/products/mall", listMallCatalogProducts);
+// Public order simulation endpoint (customer app / Postman testing)
+router.post("/orders/create", createOrder);
 
 
 
 // Onboarding Routes (has internal requireAuth for protected routes, plus open /validate-domain utility)
 router.use("/onboarding", onboardingRoutes);
 
+// Public Products Catalog Endpoint (Mobile App & Public Browse; protected mutations handled internally)
+router.use("/products", productsRoutes);
+
 // Protected Seller Routes — require valid Seller JWT
 router.use(requireSellerAuth);
 router.use("/dashboard", dashboardRoutes);
-router.use("/products", productsRoutes);
 router.use("/orders", ordersRoutes);
 router.use("/inventory", inventoryRoutes);
 router.use("/settlements", settlementsRoutes);

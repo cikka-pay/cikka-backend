@@ -141,7 +141,6 @@ export const createOrder = asyncHandler(async (req: Request, res: Response) => {
 
   const { customerName, customerCity, totalAmount, customerEmail, customerPhone, deliveryAddress, sku, productId, items } = req.body;
   const orderNumber = `ORD-${Date.now().toString().slice(-6)}`;
-  const generatedAwb = `AWB-${Math.floor(10000000 + Math.random() * 90000000)}`;
 
   // Find product by SKU or productId if provided
   let targetProduct = null;
@@ -166,9 +165,9 @@ export const createOrder = asyncHandler(async (req: Request, res: Response) => {
         customerName: customerName || "Cikka Customer",
         customerCity: customerCity || "Mumbai",
         totalAmount: finalAmount,
-        status: OrderStatus.SHIPPED,
-        trackingNumber: generatedAwb,
-        courier: "Bluedart Express (0.5kg)",
+        status: OrderStatus.PENDING,
+        courier: null,
+        trackingNumber: null,
         ...(targetProduct && {
           items: {
             create: [
@@ -191,33 +190,9 @@ export const createOrder = asyncHandler(async (req: Request, res: Response) => {
     return;
   }
 
-  // Automatically push shipment to Shipway Experience
-  shipwayService.pushOrderData({
-    order_id: order.orderNumber,
-    customer_name: order.customerName,
-    customer_email: customerEmail || "customer@cikka.club",
-    customer_phone: customerPhone || "9876543210",
-    delivery_address: deliveryAddress || "123, Sample Street, Mumbai – 400001",
-    total_amount: Number(order.totalAmount),
-    carrier_name: "Bluedart",
-    awb_number: generatedAwb,
-    products: targetProduct
-      ? [
-          {
-            product: targetProduct.name,
-            price: Number(targetProduct.price),
-            product_code: targetProduct.sku,
-            product_quantity: 1,
-          },
-        ]
-      : undefined,
-  }).catch((err) => {
-    console.warn(`[Shipway Push Notice] Order #${order.orderNumber} push error: ${err.message}`);
-  });
-
   res.status(201).json({
     success: true,
-    message: "Order created and dispatched to In Transit successfully",
+    message: "Order created successfully. Ready to be packed by seller.",
     order,
   });
 });
@@ -229,6 +204,10 @@ export const updateOrderStatus = asyncHandler(async (req: Request, res: Response
 
   const order = await prisma.order.findFirst({
     where: { id, sellerId },
+    include: {
+      items: { include: { product: true } },
+      seller: { include: { onboarding: true } },
+    },
   });
 
   if (!order) {
@@ -236,15 +215,58 @@ export const updateOrderStatus = asyncHandler(async (req: Request, res: Response
     return;
   }
 
+  let assignedAwb = trackingNumber || order.trackingNumber;
+  let assignedCourier = courier || order.courier;
+
+  // When seller packs the order, request REAL carrier allocation from Shipway
+  if (status === "PACKED" && !assignedAwb) {
+    const pickupAddress = order.seller?.onboarding?.pickupAddress as any;
+    const fromPincode = pickupAddress?.pincode || pickupAddress?.pin || "122008";
+    const toPincode = (order as any).pincode || "400001";
+
+    const pushRes = await shipwayService.pushOrderData({
+      order_id: order.orderNumber,
+      customer_name: order.customerName,
+      customer_email: (order as any).customerEmail || "customer@cikka.club",
+      customer_phone: (order as any).customerPhone || "9876543210",
+      delivery_address: `${order.customerCity || "Mumbai"}, India`,
+      city: order.customerCity || "Mumbai",
+      pincode: toPincode,
+      pickup_pincode: fromPincode,
+      total_amount: Number(order.totalAmount),
+      carrier_name: courier || order.courier,
+      products: order.items?.map((it) => ({
+        product: it.product?.name || "Catalog Product",
+        price: Number(it.unitPrice),
+        product_code: it.product?.sku || "SKU",
+        product_quantity: it.quantity,
+      })),
+    });
+
+    if (pushRes.status === "failed" || !pushRes.awb_number) {
+      res.status(400).json({
+        error: `Shipway Allocation Failed: ${pushRes.message || "Shipway could not allocate an official AWB. Please check courier integrations and wallet balance."}`,
+      });
+      return;
+    }
+
+    assignedAwb = pushRes.awb_number;
+    assignedCourier = pushRes.carrier_name || assignedCourier || "Shipway Courier";
+  }
+
   const updatedOrder = await prisma.order.update({
     where: { id },
     data: {
       status,
-      // Only update tracking fields when they're explicitly provided
-      ...(trackingNumber !== undefined && { trackingNumber }),
-      ...(courier !== undefined && { courier }),
+      trackingNumber: assignedAwb,
+      courier: assignedCourier,
     },
   });
 
-  res.json(updatedOrder);
+  const labelUrl = assignedAwb ? `https://app.shipway.com/label/${encodeURIComponent(assignedAwb)}` : null;
+
+  res.json({
+    ...updatedOrder,
+    labelUrl,
+  });
 });

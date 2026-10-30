@@ -229,6 +229,10 @@ export class HubbleController {
         limit: limit ? parseInt(String(limit), 10) : undefined,
       });
 
+      res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
+      res.setHeader('Pragma', 'no-cache');
+      res.setHeader('Expires', '0');
+
       res.status(200).json({
         success: true,
         data: result.data,
@@ -325,6 +329,8 @@ export class HubbleController {
         success: true,
         message: 'Gift card vouchers created successfully',
         data: orderResult,
+        cashback_earned: 0, // Strict rule: No cashback on coupon/voucher redemption
+        points_earned: 0,   // Strict rule: No rewards or CI points earned on coupon redemption
         source: orderResult.source,
         isLiveApi: orderResult.isLiveApi,
       });
@@ -453,6 +459,148 @@ export class HubbleController {
           <path d="M12 12h12v4H16v6h6v4H16v8h-4V12z" fill="#FFEB3B"/>
         </g>
         <text x="135" y="42" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif" font-style="italic" font-size="26" font-weight="900" fill="#FFFFFF">Flipkart</text>
+      </svg>`,
+      zepto: `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 220 70" width="220" height="70">
+        <rect width="220" height="70" rx="12" fill="#5A1E96"/>
+        <text x="110" y="44" text-anchor="middle" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif" font-size="30" font-weight="900" fill="#FF3269" letter-spacing="1">zepto</text>
+      </svg>`,
+      blinkit: `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 220 70" width="220" height="70">
+        <rect width="220" height="70" rx="12" fill="#F8CB46"/>
+        <text x="110" y="44" text-anchor="middle" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif" font-size="28" font-weight="900" fill="#0C831F" letter-spacing="-0.5">blink<tspan fill="#1C1C1C">it</tspan></text>
+      </svg>`,
+      bigbasket: `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 220 70" width="220" height="70">
+        <rect width="220" height="70" rx="12" fill="#E21837"/>
+        <text x="110" y="38" text-anchor="middle" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif" font-size="24" font-weight="900" fill="#FFFFFF">bigbasket</text>
+        <text x="110" y="52" text-anchor="middle" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif" font-size="10" font-weight="700" fill="#84C225" letter-spacing="2">A TATA ENTERPRISE</text>
+      </svg>`,
+      reliancesmart: `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 220 70" width="220" height="70">
+        <rect width="220" height="70" rx="12" fill="#E31837"/>
+        <text x="110" y="34" text-anchor="middle" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif" font-size="14" font-weight="800" fill="#FFFFFF">RELIANCE</text>
+        <text x="110" y="52" text-anchor="middle" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif" font-size="20" font-weight="900" fill="#FFEB3B" letter-spacing="1">SMART</text>
+      </svg>`,
+      jiomart: `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 220 70" width="220" height="70">
+        <rect width="220" height="70" rx="12" fill="#0F3B82"/>
+        <text x="110" y="44" text-anchor="middle" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif" font-size="26" font-weight="900" fill="#FFFFFF">Jio<tspan fill="#00A859">Mart</tspan></text>
+      </svg>`,
+      ikea: `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 220 70" width="220" height="70">
+        <rect width="220" height="70" rx="12" fill="#0058A3"/>
+        <ellipse cx="110" cy="35" rx="80" ry="24" fill="#FFDB00"/>
+        <text x="110" y="44" text-anchor="middle" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif" font-size="28" font-weight="900" fill="#0058A3" letter-spacing="3">IKEA</text>
+      </svg>`,
+      croma: `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 220 70" width="220" height="70">
+        <rect width="220" height="70" rx="12" fill="#121212"/>
+        <text x="110" y="44" text-anchor="middle" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif" font-size="28" font-weight="900" fill="#00E5BE" letter-spacing="2">croma</text>
+      </svg>`,
+      reliancedigital: `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 220 70" width="220" height="70">
+        <rect width="220" height="70" rx="12" fill="#E31837"/>
+        <text x="110" y="34" text-anchor="middle" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif" font-size="13" font-weight="800" fill="#FFFFFF">RELIANCE</text>
+        <text x="110" y="52" text-anchor="middle" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif" font-size="18" font-weight="900" fill="#00B0FF" letter-spacing="1">DIGITAL</text>
+      </svg>`,
+      easemytrip: `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 220 70" width="220" height="70">
+        <rect width="220" height="70" rx="12" fill="#1A2B49"/>
+        <text x="110" y="42" text-anchor="middle" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif" font-size="22" font-weight="900" fill="#2D9CDB">Ease<tspan fill="#FFFFFF">My</tspan><tspan fill="#F2994A">Trip</tspan></text>
+      </svg>`,
+      dominos: `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 220 70" width="220" height="70">
+        <rect width="220" height="70" rx="12" fill="#0078AE"/>
+        <text x="110" y="44" text-anchor="middle" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif" font-size="24" font-weight="900" fill="#FFFFFF">Domino's</text>
+      </svg>`,
+      kfc: `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 220 70" width="220" height="70">
+        <rect width="220" height="70" rx="12" fill="#A3080C"/>
+        <text x="110" y="46" text-anchor="middle" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif" font-size="32" font-weight="900" fill="#FFFFFF" letter-spacing="4">KFC</text>
+      </svg>`,
+      nykaa: `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 220 70" width="220" height="70">
+        <rect width="220" height="70" rx="12" fill="#FC2779"/>
+        <text x="110" y="44" text-anchor="middle" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif" font-size="28" font-weight="900" fill="#FFFFFF" letter-spacing="2">NYKAA</text>
+      </svg>`,
+      ajio: `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 220 70" width="220" height="70">
+        <rect width="220" height="70" rx="12" fill="#2C4152"/>
+        <text x="110" y="46" text-anchor="middle" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif" font-size="30" font-weight="900" fill="#FFFFFF" letter-spacing="4">AJIO</text>
+      </svg>`,
+      kalyan: `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 220 70" width="220" height="70">
+        <rect width="220" height="70" rx="12" fill="#4B0F1E"/>
+        <text x="110" y="38" text-anchor="middle" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif" font-size="18" font-weight="900" fill="#F8D38D" letter-spacing="2">KALYAN</text>
+        <text x="110" y="52" text-anchor="middle" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif" font-size="9" font-weight="700" fill="#FFFFFF" letter-spacing="3">JEWELLERS</text>
+      </svg>`,
+      steam: `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 220 70" width="220" height="70">
+        <rect width="220" height="70" rx="12" fill="#171A21"/>
+        <text x="110" y="44" text-anchor="middle" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif" font-size="28" font-weight="900" fill="#C7D5E0" letter-spacing="3">STEAM</text>
+      </svg>`,
+      mcdonalds: `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 220 70" width="220" height="70">
+        <rect width="220" height="70" rx="12" fill="#DA291C"/>
+        <text x="110" y="48" text-anchor="middle" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif" font-size="38" font-weight="900" fill="#FFC72C" letter-spacing="1">M</text>
+      </svg>`,
+      pizzahut: `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 220 70" width="220" height="70">
+        <rect width="220" height="70" rx="12" fill="#EE3124"/>
+        <text x="110" y="44" text-anchor="middle" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif" font-size="24" font-weight="900" fill="#FFFFFF">Pizza Hut</text>
+      </svg>`,
+      subway: `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 220 70" width="220" height="70">
+        <rect width="220" height="70" rx="12" fill="#005C2B"/>
+        <text x="110" y="45" text-anchor="middle" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif" font-style="italic" font-size="28" font-weight="900" fill="#FFC220">SUB<tspan fill="#FFFFFF">WAY</tspan></text>
+      </svg>`,
+      baskinrobbins: `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 220 70" width="220" height="70">
+        <rect width="220" height="70" rx="12" fill="#001F5B"/>
+        <text x="110" y="44" text-anchor="middle" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif" font-size="24" font-weight="900" fill="#FF69B4">BR <tspan fill="#FFFFFF">31</tspan></text>
+      </svg>`,
+      barbequenation: `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 220 70" width="220" height="70">
+        <rect width="220" height="70" rx="12" fill="#D32F2F"/>
+        <text x="110" y="38" text-anchor="middle" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif" font-size="16" font-weight="900" fill="#FFFFFF">BARBEQUE</text>
+        <text x="110" y="52" text-anchor="middle" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif" font-size="12" font-weight="800" fill="#FFE082" letter-spacing="3">NATION</text>
+      </svg>`,
+      naturesbasket: `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 220 70" width="220" height="70">
+        <rect width="220" height="70" rx="12" fill="#2E7D32"/>
+        <text x="110" y="38" text-anchor="middle" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif" font-size="17" font-weight="900" fill="#FFFFFF">NATURE'S</text>
+        <text x="110" y="52" text-anchor="middle" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif" font-size="13" font-weight="800" fill="#C8E6C9" letter-spacing="2">BASKET</text>
+      </svg>`,
+      spencers: `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 220 70" width="220" height="70">
+        <rect width="220" height="70" rx="12" fill="#FF6F00"/>
+        <text x="110" y="44" text-anchor="middle" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif" font-size="24" font-weight="900" fill="#FFFFFF">spencer's</text>
+      </svg>`,
+      nike: `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 220 70" width="220" height="70">
+        <rect width="220" height="70" rx="12" fill="#111111"/>
+        <text x="110" y="46" text-anchor="middle" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif" font-style="italic" font-size="32" font-weight="900" fill="#FFFFFF" letter-spacing="2">NIKE</text>
+      </svg>`,
+      westside: `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 220 70" width="220" height="70">
+        <rect width="220" height="70" rx="12" fill="#1A1A1A"/>
+        <text x="110" y="44" text-anchor="middle" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif" font-size="22" font-weight="800" fill="#E0A96D" letter-spacing="3">WESTSIDE</text>
+      </svg>`,
+      lifestyle: `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 220 70" width="220" height="70">
+        <rect width="220" height="70" rx="12" fill="#3E2723"/>
+        <text x="110" y="44" text-anchor="middle" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif" font-size="22" font-weight="900" fill="#FFD54F" letter-spacing="2">lifestyle</text>
+      </svg>`,
+      tanishq: `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 220 70" width="220" height="70">
+        <rect width="220" height="70" rx="12" fill="#3E1716"/>
+        <text x="110" y="38" text-anchor="middle" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif" font-size="22" font-weight="900" fill="#F4C430" letter-spacing="3">TANISHQ</text>
+        <text x="110" y="52" text-anchor="middle" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif" font-size="9" font-weight="700" fill="#FFFFFF" letter-spacing="2">A TATA PRODUCT</text>
+      </svg>`,
+      titan: `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 220 70" width="220" height="70">
+        <rect width="220" height="70" rx="12" fill="#0A0A0A"/>
+        <text x="110" y="44" text-anchor="middle" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif" font-size="26" font-weight="900" fill="#D4AF37" letter-spacing="4">TITAN</text>
+      </svg>`,
+      vijaysales: `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 220 70" width="220" height="70">
+        <rect width="220" height="70" rx="12" fill="#C62828"/>
+        <text x="110" y="44" text-anchor="middle" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif" font-size="22" font-weight="900" fill="#FFFFFF" letter-spacing="1">VIJAY SALES</text>
+      </svg>`,
+      bookmyshow: `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 220 70" width="220" height="70">
+        <rect width="220" height="70" rx="12" fill="#DC3558"/>
+        <text x="110" y="38" text-anchor="middle" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif" font-size="18" font-weight="900" fill="#FFFFFF">book<tspan fill="#333333">my</tspan>show</text>
+        <text x="110" y="52" text-anchor="middle" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif" font-size="10" font-weight="700" fill="#FFFFFF" letter-spacing="2">MOVIES &amp; EVENTS</text>
+      </svg>`,
+      pvr: `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 220 70" width="220" height="70">
+        <rect width="220" height="70" rx="12" fill="#F4B400"/>
+        <text x="110" y="44" text-anchor="middle" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif" font-size="28" font-weight="900" fill="#111111" letter-spacing="3">PVR <tspan font-size="20" fill="#DC2626">INOX</tspan></text>
+      </svg>`,
+      googleplay: `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 220 70" width="220" height="70">
+        <rect width="220" height="70" rx="12" fill="#202124"/>
+        <text x="110" y="44" text-anchor="middle" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif" font-size="20" font-weight="800" fill="#34A853">Google <tspan fill="#FFFFFF">Play</tspan></text>
+      </svg>`,
+      yatra: `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 220 70" width="220" height="70">
+        <rect width="220" height="70" rx="12" fill="#EA2330"/>
+        <text x="110" y="44" text-anchor="middle" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif" font-size="26" font-weight="900" fill="#FFFFFF" letter-spacing="2">yatra</text>
+      </svg>`,
+      taj: `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 220 70" width="220" height="70">
+        <rect width="220" height="70" rx="12" fill="#2B2118"/>
+        <text x="110" y="38" text-anchor="middle" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif" font-size="24" font-weight="900" fill="#D4AF37" letter-spacing="4">TAJ</text>
+        <text x="110" y="52" text-anchor="middle" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif" font-size="9" font-weight="700" fill="#FFFFFF" letter-spacing="3">HOTELS &amp; RESORTS</text>
       </svg>`,
     };
 

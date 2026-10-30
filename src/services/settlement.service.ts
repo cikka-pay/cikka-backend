@@ -8,25 +8,45 @@ import {
 
 export interface SellerSettlementProfile {
   customConfig: Partial<SettlementFeeConfig>;
-  holdDays: number;
+  holdDays: 7 | 14;
   commissionRate: number;
   flatOrderFee: number;
-  settlementCycle: string;
+  settlementCycle: "T_PLUS_7" | "T_PLUS_14";
+  isLocked: boolean;
+  applicationId: string;
+  brandName: string;
 }
 
 /**
  * Resolves the dynamic fee configuration and settlement cycle for a seller
  * based on admin-defined SellerCommissionConfig and Onboarding data.
+ * 
+ * CORE RULES:
+ * 1. Default commission is strictly 22.0% for every segment.
+ * 2. When the commission structure is finalized and signed by the seller, it is LOCKED
+ *    to that particular brand model associated with their CKAxxxxxx ID.
+ * 3. Settlement cycles are strictly limited to T+7 and T+14 only.
  */
 export async function getSellerSettlementProfile(
   sellerId: string,
   categoryHint?: string
 ): Promise<SellerSettlementProfile> {
-  const [commissionConfig, seller, onboarding] = await Promise.all([
+  const [commissionConfig, seller, onboarding, agreement] = await Promise.all([
     prisma.sellerCommissionConfig.findUnique({ where: { sellerId } }),
     prisma.seller.findUnique({ where: { id: sellerId } }),
     prisma.sellerOnboarding.findUnique({ where: { sellerId } }),
+    prisma.sellerAgreementConfig.findUnique({ where: { sellerId } }),
   ]);
+
+  const brandName = seller?.businessName || onboarding?.businessName || "Cikka Merchant Partner";
+  const applicationId = onboarding?.applicationId || `CKA-${sellerId.slice(0, 6).toUpperCase()}`;
+
+  // Check if seller has formally signed and acknowledged the commission/agreement structure
+  const isLocked = Boolean(
+    onboarding?.commissionAcknowledged ||
+    onboarding?.merchantAgreementAccepted ||
+    ((agreement?.status === "ACCEPTED" || agreement?.status === "ACTIVE") && agreement?.signedAt)
+  );
 
   let activeCategory = categoryHint || onboarding?.businessCategory;
   if (!activeCategory && onboarding?.productCategories) {
@@ -40,7 +60,7 @@ export async function getSellerSettlementProfile(
     }
   }
 
-  // 1. Resolve Commission Rate:
+  // 1. Resolve Commission Rate: Strict 22.0% default across every segment
   let commissionRate = 22.0;
   if (commissionConfig?.categoryCommissions && typeof commissionConfig.categoryCommissions === "object") {
     const ratesMap = commissionConfig.categoryCommissions as Record<string, number>;
@@ -64,13 +84,10 @@ export async function getSellerSettlementProfile(
     ? Number(commissionConfig.flatOrderFee)
     : 15.0;
 
-  // 3. Resolve Settlement Cycle & Hold Days:
-  const cycle = commissionConfig?.settlementCycle || onboarding?.settlementCycle || "T_PLUS_7";
-  let holdDays = 7;
-  if (cycle === "T_PLUS_1") holdDays = 1;
-  else if (cycle === "T_PLUS_3") holdDays = 3;
-  else if (cycle === "T_PLUS_7") holdDays = 7;
-  else if (cycle === "T_PLUS_14") holdDays = 14;
+  // 3. Resolve Settlement Cycle & Hold Days (Strict Policy: ONLY T+7 and T+14):
+  const rawCycle = commissionConfig?.settlementCycle || onboarding?.settlementCycle || "T_PLUS_7";
+  const cycle: "T_PLUS_7" | "T_PLUS_14" = rawCycle === "T_PLUS_14" ? "T_PLUS_14" : "T_PLUS_7";
+  const holdDays: 7 | 14 = cycle === "T_PLUS_14" ? 14 : 7;
 
   const customConfig: Partial<SettlementFeeConfig> = {
     commissionRate,
@@ -83,6 +100,9 @@ export async function getSellerSettlementProfile(
     commissionRate,
     flatOrderFee,
     settlementCycle: cycle,
+    isLocked,
+    applicationId,
+    brandName,
   };
 }
 

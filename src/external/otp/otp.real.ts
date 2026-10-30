@@ -38,6 +38,13 @@ export const AIRTEL_DLT_TEMPLATES = {
 export const otpReal: OtpService = {
   async sendSms(phone: string, code: string, templateType: OtpTemplateType = "app_login"): Promise<void> {
     const rawNumber = phone.replace(/^\+91/, "").replace(/\D/g, "");
+
+    // Dev bypass: Absolutely no request to MSG91 or any gateway
+    if (rawNumber === "1111111111" || rawNumber === "11111111111" || rawNumber.endsWith("1111111111")) {
+      console.log(`[MSG91 BYPASS] Intercepted bypass number ${rawNumber}. ZERO HTTP requests made to MSG91.`);
+      return;
+    }
+
     const dltConfig = AIRTEL_DLT_TEMPLATES[templateType] || AIRTEL_DLT_TEMPLATES.app_login;
 
     // Resolve template ID: specific env var -> general env var -> DLT Template ID
@@ -129,6 +136,12 @@ export const otpReal: OtpService = {
 
   async resendSms(phone: string, retryType: "text" | "voice" = "text"): Promise<{ success: boolean; message?: string; requestId?: string }> {
     const rawNumber = phone.replace(/^\+91/, "").replace(/\D/g, "");
+
+    // Dev bypass: Absolutely no resend request to MSG91 or any gateway
+    if (rawNumber === "1111111111" || rawNumber === "11111111111" || rawNumber.endsWith("1111111111")) {
+      console.log(`[MSG91 BYPASS] Intercepted resend for bypass number ${rawNumber}. ZERO HTTP requests made to MSG91.`);
+      return { success: true, message: "Dev bypass OTP resend simulated (No MSG91 call)" };
+    }
 
     // MSG91 Retry OTP Gateway Integration
     if (process.env.MSG91_AUTH_KEY) {

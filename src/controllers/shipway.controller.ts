@@ -1,5 +1,6 @@
 import { Request, Response } from "express";
 import { shipwayService, SHIPWAY_STATUS_MAP } from "../services/shipway.service";
+import { razorpayRouteService } from "../services/razorpayRoute.service";
 import { asyncHandler } from "../utils/asyncHandler";
 import { prisma } from "../config/prisma";
 import { OrderStatus, NotificationType } from "../generated/prisma/client";
@@ -73,15 +74,11 @@ export const dispatchOrder = asyncHandler(async (req: Request, res: Response) =>
     );
   }
 
-  const courierTitle = selectedCarrier?.courier_name || "Delhivery Standard";
-  const generatedAwb = `AWB-${Date.now().toString().slice(-8)}`;
-
-  // Push to Shipway
-  await shipwayService.pushOrderData({
+  // Push to Shipway and request real carrier AWB allocation
+  const pushRes = await shipwayService.pushOrderData({
     order_id: order.orderNumber,
-    carrier_name: courierTitle,
+    carrier_name: selectedCarrier?.courier_name,
     carrier_id: selectedCarrier?.carrier_id,
-    awb_number: generatedAwb,
     customer_name: order.customerName,
     delivery_address: `${order.customerCity || "City"}, Pincode: ${toPincode}`,
     city: order.customerCity || "Mumbai",
@@ -90,12 +87,23 @@ export const dispatchOrder = asyncHandler(async (req: Request, res: Response) =>
     total_amount: Number(order.totalAmount),
   });
 
-  // Update Order in database
+  if (pushRes.status === "failed" || !pushRes.awb_number) {
+    res.status(400).json({
+      success: false,
+      error: `Shipway Dispatch Failed: ${pushRes.message || "Could not allocate official carrier AWB from Shipway. Please verify courier credentials and balance."}`,
+    });
+    return;
+  }
+
+  const realAwb = pushRes.awb_number;
+  const courierTitle = pushRes.carrier_name || selectedCarrier?.courier_name || "Shipway Partner";
+
+  // Update Order in database with official carrier details
   const updatedOrder = await prisma.order.update({
     where: { id: order.id },
     data: {
       status: OrderStatus.SHIPPED,
-      trackingNumber: generatedAwb,
+      trackingNumber: realAwb,
       courier: courierTitle,
     },
     include: { items: { include: { product: true } } },
@@ -108,11 +116,11 @@ export const dispatchOrder = asyncHandler(async (req: Request, res: Response) =>
         sellerId: order.sellerId,
         type: NotificationType.ORDER,
         title: `Dispatched: Order #${order.orderNumber}`,
-        body: `Package dispatched via ${courierTitle}. AWB: ${generatedAwb}. Tracking is now live.`,
+        body: `Package dispatched via ${courierTitle}. AWB: ${realAwb}. Tracking is now live.`,
         metadata: {
           orderId: order.id,
           orderNumber: order.orderNumber,
-          awb: generatedAwb,
+          awb: realAwb,
           courier: courierTitle,
         },
       },
@@ -123,9 +131,9 @@ export const dispatchOrder = asyncHandler(async (req: Request, res: Response) =>
     success: true,
     message: `Order #${order.orderNumber} dispatched successfully via ${courierTitle}`,
     order: updatedOrder,
-    trackingNumber: generatedAwb,
+    trackingNumber: realAwb,
     courier: courierTitle,
-    labelUrl: `https://app.shipway.com/label/${generatedAwb}`,
+    labelUrl: `https://app.shipway.com/label/${encodeURIComponent(realAwb)}`,
   });
 });
 
@@ -289,14 +297,117 @@ export const getShipwayDashboardStats = asyncHandler(async (req: Request, res: R
   });
 });
 
+async function resolveOrderLabelData(idOrAwb: string) {
+  const cleanId = idOrAwb.replace(/^#/, "").trim();
+
+  const order = await prisma.order.findFirst({
+    where: {
+      OR: [
+        { id: cleanId },
+        { orderNumber: cleanId },
+        { orderNumber: `#${cleanId}` },
+        { trackingNumber: cleanId },
+      ],
+    },
+    include: {
+      items: { include: { product: true } },
+      seller: { include: { onboarding: true } },
+    },
+  });
+
+  if (!order || !order.trackingNumber) {
+    return null;
+  }
+
+  const awb = order.trackingNumber;
+  const courier = order.courier || "Shipway Partner";
+  const sellerBiz = order.seller?.onboarding?.businessName || "Cikka Verified Merchant";
+  const sellerGst = order.seller?.onboarding?.gstNumber || "07AAAAA0000A1Z5";
+  const pickupAddr = order.seller?.onboarding?.pickupAddress as any;
+  const sellerAddress = pickupAddr?.addressLine1
+    ? `${pickupAddr.addressLine1}, ${pickupAddr.city || "Gurugram"}, ${pickupAddr.state || "Haryana"} - ${pickupAddr.pincode || "122008"}`
+    : "Seller Fulfillment Center";
+
+  const customerName = order.customerName || "Customer";
+  const customerCity = order.customerCity || "City";
+  const labelUrl = `https://app.shipway.com/label/${encodeURIComponent(awb)}`;
+  const orderDate = new Date(order.createdAt).toLocaleDateString("en-IN", {
+    day: "2-digit",
+    month: "short",
+    year: "numeric",
+  });
+
+  return {
+    orderId: order.id,
+    orderNumber: order.orderNumber.startsWith("#") ? order.orderNumber : `#${order.orderNumber}`,
+    orderDate,
+    awb,
+    courier,
+    consignee: {
+      name: customerName,
+      city: customerCity,
+    },
+    consignor: {
+      name: sellerBiz,
+      gstin: sellerGst,
+      address: sellerAddress,
+    },
+    items: order.items.map((it) => ({
+      name: it.product?.name || "Catalog Product",
+      sku: it.product?.sku || "SKU",
+      qty: it.quantity || 1,
+      price: Number(it.unitPrice || 0),
+    })),
+    declaredValue: Number(order.totalAmount || 0),
+    labelUrl,
+    printUrl: labelUrl,
+  };
+}
+
 /**
  * GET /api/shipway/label/:id
- * Get shipping label PDF link
+ * Get shipping label metadata and PDF links
  */
 export const getShippingLabel = asyncHandler(async (req: Request, res: Response) => {
   const { id } = req.params;
-  const result = await shipwayService.generateShippingLabel(id);
-  res.status(200).json({ success: true, ...result });
+  const labelData = await resolveOrderLabelData(id);
+
+  if (!labelData) {
+    res.status(404).json({
+      success: false,
+      error: "Shipping label not available. Order has not been allocated an AWB by Shipway yet. Please pack the order first.",
+    });
+    return;
+  }
+
+  res.status(200).json({ success: true, data: labelData, labelUrl: labelData.labelUrl });
+});
+
+/**
+ * GET /api/shipway/label/:id/print
+ * Standalone direct printable 4x6 / A4 shipping label issued by Shipway
+ */
+export const printShippingLabel = asyncHandler(async (req: Request, res: Response) => {
+  const { id } = req.params;
+  const data = await resolveOrderLabelData(id);
+
+  if (!data || !data.labelUrl) {
+    res.status(404).send(`
+      <!DOCTYPE html>
+      <html>
+        <head><title>Label Not Available</title></head>
+        <body style="font-family: sans-serif; text-align: center; padding: 60px;">
+          <h2 style="color: #dc2626;">Official Shipping Label Not Available</h2>
+          <p style="color: #4b5563;">This order has not been allocated an official courier AWB by Shipway yet.</p>
+          <p style="color: #4b5563;">Please pack the order first via the Seller Dashboard or WhatsApp to generate the official Shipway label.</p>
+        </body>
+      </html>
+    `);
+    return;
+  }
+
+  // Direct 302 redirect to Shipway's official carrier PDF label
+  res.redirect(data.labelUrl);
 });
 
 /**
@@ -437,38 +548,63 @@ export const handleWebhook = asyncHandler(async (req: Request, res: Response) =>
       });
 
       if (dbOrder) {
+        const isDelivered = mappedStatus === OrderStatus.DELIVERED;
+        const deliveredAt = isDelivered ? (dbOrder.deliveredAt || new Date()) : undefined;
+
         await prisma.order.update({
           where: { id: dbOrder.id },
           data: {
             ...(mappedStatus && { status: mappedStatus }),
             ...(awbno && { trackingNumber: awbno }),
             ...(carrier && { courier: carrier }),
+            ...(deliveredAt && { deliveredAt }),
           },
         });
 
-        // If delivered, confirm T+7 return window countdown on the settlement
-        if (mappedStatus === OrderStatus.DELIVERED) {
-          const holdUntil = new Date(Date.now() + 7 * 86400000);
-          await prisma.settlement.updateMany({
+        // If delivered, calculate strict T+7 hold countdown starting from the actual delivery date
+        if (isDelivered && deliveredAt) {
+          const holdUntil = new Date(deliveredAt.getTime() + 7 * 86400000);
+
+          // Find matching settlements for this order
+          const matchingSettlements = await prisma.settlement.findMany({
             where: {
-              sellerId: dbOrder.sellerId,
-              transferStatus: "ON_HOLD",
+              OR: [
+                { orderNumber: dbOrder.orderNumber },
+                { orderId: dbOrder.id },
+                { sellerId: dbOrder.sellerId, transferStatus: "ON_HOLD" },
+              ],
             },
-            data: {
-              holdUntil,
-              payoutDate: holdUntil,
-            } as any,
-          }).catch(() => {});
+          });
+
+          for (const s of matchingSettlements) {
+            await prisma.settlement.update({
+              where: { id: s.id },
+              data: {
+                holdUntil,
+                payoutDate: holdUntil,
+                orderId: dbOrder.id,
+                orderNumber: dbOrder.orderNumber,
+              },
+            }).catch(() => {});
+
+            // Update live hold timestamp on Razorpay Route if transfer exists
+            if (s.razorpayTransferId) {
+              await razorpayRouteService.updateTransferHoldUntil(s.razorpayTransferId, holdUntil).catch((rzpErr) => {
+                console.warn(`[Shipway Webhook] Could not update Razorpay transfer hold for #${dbOrder.orderNumber}:`, rzpErr.message);
+              });
+            }
+          }
 
           await prisma.notification.create({
             data: {
               sellerId: dbOrder.sellerId,
               type: NotificationType.SETTLEMENT,
               title: `Order Delivered: #${dbOrder.orderNumber}`,
-              body: `Package delivered to customer. T+7 return window countdown started. Expected auto-settlement on ${holdUntil.toLocaleDateString("en-IN")}.`,
+              body: `Package delivered to customer on ${deliveredAt.toLocaleDateString("en-IN")}. Strict T+7 return window countdown started. Expected auto-settlement on ${holdUntil.toLocaleDateString("en-IN")}.`,
               metadata: {
                 orderId: dbOrder.id,
                 orderNumber: dbOrder.orderNumber,
+                deliveredAt: deliveredAt.toISOString(),
                 holdUntil: holdUntil.toISOString(),
               },
             },

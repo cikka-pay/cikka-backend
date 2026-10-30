@@ -40,22 +40,24 @@ export const FULFILLMENT_TYPE_MAP: Record<string, FulfillmentType> = {
 
 /**
  * Maps human-readable UI values for SettlementCycle to Prisma enum values.
+ * POLICY: Only T+7 (Standard Weekly) and T+14 (Bi-weekly) are supported.
+ * All other values safely fallback to T_PLUS_7.
  */
 export const SETTLEMENT_CYCLE_MAP: Record<string, SettlementCycle> = {
-  // UI radio values (from HTML)
-  "T+1": "T_PLUS_1",
-  "T+3": "T_PLUS_3",
-  "T+4": "T_PLUS_3",
+  // UI radio values
+  "T+1": "T_PLUS_7",
+  "T+3": "T_PLUS_7",
+  "T+4": "T_PLUS_7",
   "T+7": "T_PLUS_7",
   "T+14": "T_PLUS_14",
-  "t1": "T_PLUS_1",
-  "t3": "T_PLUS_3",
-  "t4": "T_PLUS_3",
+  "t1": "T_PLUS_7",
+  "t3": "T_PLUS_7",
+  "t4": "T_PLUS_7",
   "t7": "T_PLUS_7",
   "t14": "T_PLUS_14",
-  // Passthrough
-  "T_PLUS_1": "T_PLUS_1",
-  "T_PLUS_3": "T_PLUS_3",
+  // Passthrough / Enum values
+  "T_PLUS_1": "T_PLUS_7",
+  "T_PLUS_3": "T_PLUS_7",
   "T_PLUS_7": "T_PLUS_7",
   "T_PLUS_14": "T_PLUS_14",
 };
