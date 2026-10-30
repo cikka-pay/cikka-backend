@@ -74,15 +74,11 @@ export const dispatchOrder = asyncHandler(async (req: Request, res: Response) =>
     );
   }
 
-  const courierTitle = selectedCarrier?.courier_name || "Delhivery Standard";
-  const generatedAwb = `AWB-${Date.now().toString().slice(-8)}`;
-
-  // Push to Shipway
-  await shipwayService.pushOrderData({
+  // Push to Shipway and request real carrier AWB allocation
+  const pushRes = await shipwayService.pushOrderData({
     order_id: order.orderNumber,
-    carrier_name: courierTitle,
+    carrier_name: selectedCarrier?.courier_name,
     carrier_id: selectedCarrier?.carrier_id,
-    awb_number: generatedAwb,
     customer_name: order.customerName,
     delivery_address: `${order.customerCity || "City"}, Pincode: ${toPincode}`,
     city: order.customerCity || "Mumbai",
@@ -91,12 +87,23 @@ export const dispatchOrder = asyncHandler(async (req: Request, res: Response) =>
     total_amount: Number(order.totalAmount),
   });
 
-  // Update Order in database
+  if (pushRes.status === "failed" || !pushRes.awb_number) {
+    res.status(400).json({
+      success: false,
+      error: `Shipway Dispatch Failed: ${pushRes.message || "Could not allocate official carrier AWB from Shipway. Please verify courier credentials and balance."}`,
+    });
+    return;
+  }
+
+  const realAwb = pushRes.awb_number;
+  const courierTitle = pushRes.carrier_name || selectedCarrier?.courier_name || "Shipway Partner";
+
+  // Update Order in database with official carrier details
   const updatedOrder = await prisma.order.update({
     where: { id: order.id },
     data: {
       status: OrderStatus.SHIPPED,
-      trackingNumber: generatedAwb,
+      trackingNumber: realAwb,
       courier: courierTitle,
     },
     include: { items: { include: { product: true } } },
@@ -109,11 +116,11 @@ export const dispatchOrder = asyncHandler(async (req: Request, res: Response) =>
         sellerId: order.sellerId,
         type: NotificationType.ORDER,
         title: `Dispatched: Order #${order.orderNumber}`,
-        body: `Package dispatched via ${courierTitle}. AWB: ${generatedAwb}. Tracking is now live.`,
+        body: `Package dispatched via ${courierTitle}. AWB: ${realAwb}. Tracking is now live.`,
         metadata: {
           orderId: order.id,
           orderNumber: order.orderNumber,
-          awb: generatedAwb,
+          awb: realAwb,
           courier: courierTitle,
         },
       },
@@ -124,9 +131,9 @@ export const dispatchOrder = asyncHandler(async (req: Request, res: Response) =>
     success: true,
     message: `Order #${order.orderNumber} dispatched successfully via ${courierTitle}`,
     order: updatedOrder,
-    trackingNumber: generatedAwb,
+    trackingNumber: realAwb,
     courier: courierTitle,
-    labelUrl: `https://app.shipway.com/label/${generatedAwb}`,
+    labelUrl: `https://app.shipway.com/label/${encodeURIComponent(realAwb)}`,
   });
 });
 
@@ -290,29 +297,10 @@ export const getShipwayDashboardStats = asyncHandler(async (req: Request, res: R
   });
 });
 
-function generateBarcodeSvg(text: string): string {
-  // Deterministic high-density barcode representation in clean SVG
-  const barWidths = [
-    2, 1, 3, 1, 2, 4, 1, 3, 2, 1, 4, 2, 1, 3, 1, 2, 3, 1, 4, 1, 2, 3, 1, 2, 4,
-    1, 3, 2, 1, 4, 2, 1, 3, 1, 2, 3, 1, 4, 1, 2, 3, 1, 2, 4, 1, 3, 2, 1, 4, 2,
-    1, 3, 1, 2, 3, 1, 4, 1, 2, 3, 1, 2, 4, 1, 3, 2, 1, 4,
-  ];
-  let x = 10;
-  const rects: string[] = [];
-  for (let i = 0; i < barWidths.length; i++) {
-    const w = barWidths[i];
-    if (i % 2 === 0) {
-      rects.push(`<rect x="${x}" y="0" width="${w * 1.5}" height="52" fill="#000000" />`);
-    }
-    x += w * 1.5;
-  }
-  return `<svg width="${x + 10}" height="52" viewBox="0 0 ${x + 10} 52" xmlns="http://www.w3.org/2000/svg">${rects.join("")}</svg>`;
-}
-
 async function resolveOrderLabelData(idOrAwb: string) {
   const cleanId = idOrAwb.replace(/^#/, "").trim();
 
-  let order = await prisma.order.findFirst({
+  const order = await prisma.order.findFirst({
     where: {
       OR: [
         { id: cleanId },
@@ -327,97 +315,52 @@ async function resolveOrderLabelData(idOrAwb: string) {
     },
   });
 
-  if (!order) {
-    order = await prisma.order.findFirst({
-      orderBy: { createdAt: "desc" },
-      include: {
-        items: { include: { product: true } },
-        seller: { include: { onboarding: true } },
-      },
-    });
+  if (!order || !order.trackingNumber) {
+    return null;
   }
 
-  const orderNum = order?.orderNumber || (cleanId.startsWith("ORD-") ? cleanId : `ORD-${cleanId.slice(0, 6).toUpperCase()}`);
-  let awb = order?.trackingNumber;
-  if (!awb || awb.length < 5) {
-    const numericPart = orderNum.replace(/[^0-9]/g, "") || Math.floor(100000000 + Math.random() * 900000000).toString();
-    awb = `DEL-${numericPart}IN`;
-    if (order) {
-      await prisma.order.update({
-        where: { id: order.id },
-        data: { trackingNumber: awb, courier: order.courier || "Delhivery Air Express" },
-      }).catch(() => {});
-    }
-  }
-
-  const courier = order?.courier || "Delhivery Air Express";
-  const sellerBiz = order?.seller?.onboarding?.businessName || "Cikka Verified Merchant";
-  const sellerGst = order?.seller?.onboarding?.gstNumber || "07AAAAA0000A1Z5";
-  const pickupAddr = order?.seller?.onboarding?.pickupAddress as any;
+  const awb = order.trackingNumber;
+  const courier = order.courier || "Shipway Partner";
+  const sellerBiz = order.seller?.onboarding?.businessName || "Cikka Verified Merchant";
+  const sellerGst = order.seller?.onboarding?.gstNumber || "07AAAAA0000A1Z5";
+  const pickupAddr = order.seller?.onboarding?.pickupAddress as any;
   const sellerAddress = pickupAddr?.addressLine1
     ? `${pickupAddr.addressLine1}, ${pickupAddr.city || "Gurugram"}, ${pickupAddr.state || "Haryana"} - ${pickupAddr.pincode || "122008"}`
-    : "Plot 42, Sector 18, Udyog Vihar Phase IV, Gurugram, Haryana - 122008";
+    : "Seller Fulfillment Center";
 
-  const customerName = order?.customerName || "Customer";
-  const customerCity = order?.customerCity || "Mumbai";
-  const customerAddress = `Flat 402, Royal Palms Heights, Link Road, ${customerCity}, Maharashtra - 400001`;
-
-  const items = (order?.items && order.items.length > 0)
-    ? order.items.map((it) => ({
-        name: it.product?.name || "Catalog Product",
-        sku: it.product?.sku || `SKU-${it.productId.slice(0, 6).toUpperCase()}`,
-        qty: it.quantity || 1,
-        price: Number(it.unitPrice || 0),
-      }))
-    : [
-        {
-          name: "Standard Catalog Item",
-          sku: `SKU-${cleanId.slice(0, 6).toUpperCase()}`,
-          qty: 1,
-          price: Number(order?.totalAmount || 1500),
-        },
-      ];
-
-  const declaredValue = Number(order?.totalAmount || 1500);
-  const routingCode = `DEL / BOM-W / 400001`;
+  const customerName = order.customerName || "Customer";
+  const customerCity = order.customerCity || "City";
   const labelUrl = `https://app.shipway.com/label/${encodeURIComponent(awb)}`;
-  const orderDate = order ? new Date(order.createdAt).toLocaleDateString("en-IN", {
+  const orderDate = new Date(order.createdAt).toLocaleDateString("en-IN", {
     day: "2-digit",
     month: "short",
     year: "numeric",
-  }) : new Date().toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "numeric" });
+  });
 
   return {
-    orderId: order?.id || cleanId,
-    orderNumber: orderNum.startsWith("#") ? orderNum : `#${orderNum}`,
+    orderId: order.id,
+    orderNumber: order.orderNumber.startsWith("#") ? order.orderNumber : `#${order.orderNumber}`,
     orderDate,
     awb,
     courier,
-    routingCode,
     consignee: {
       name: customerName,
-      phone: "+91 98765 43210",
-      address: customerAddress,
       city: customerCity,
-      state: "Maharashtra",
-      pincode: "400001",
     },
     consignor: {
       name: sellerBiz,
       gstin: sellerGst,
       address: sellerAddress,
-      city: pickupAddr?.city || "Gurugram",
-      state: pickupAddr?.state || "Haryana",
-      pincode: pickupAddr?.pincode || "122008",
-      phone: "+91 98110 00000",
     },
-    items,
-    packageWeight: "0.50 KG",
-    paymentMode: "PREPAID",
-    dimensions: "24 x 18 x 8 CM",
-    declaredValue,
+    items: order.items.map((it) => ({
+      name: it.product?.name || "Catalog Product",
+      sku: it.product?.sku || "SKU",
+      qty: it.quantity || 1,
+      price: Number(it.unitPrice || 0),
+    })),
+    declaredValue: Number(order.totalAmount || 0),
     labelUrl,
-    printUrl: `/api/shipway/label/${encodeURIComponent(cleanId)}/print`,
+    printUrl: labelUrl,
   };
 }
 
@@ -428,6 +371,15 @@ async function resolveOrderLabelData(idOrAwb: string) {
 export const getShippingLabel = asyncHandler(async (req: Request, res: Response) => {
   const { id } = req.params;
   const labelData = await resolveOrderLabelData(id);
+
+  if (!labelData) {
+    res.status(404).json({
+      success: false,
+      error: "Shipping label not available. Order has not been allocated an AWB by Shipway yet. Please pack the order first.",
+    });
+    return;
+  }
+
   res.status(200).json({ success: true, data: labelData, labelUrl: labelData.labelUrl });
 });
 
@@ -438,276 +390,24 @@ export const getShippingLabel = asyncHandler(async (req: Request, res: Response)
 export const printShippingLabel = asyncHandler(async (req: Request, res: Response) => {
   const { id } = req.params;
   const data = await resolveOrderLabelData(id);
-  const barcodeSvg = generateBarcodeSvg(data.awb);
 
-  const html = `<!DOCTYPE html>
-<html lang="en">
-<head>
-  <meta charset="UTF-8">
-  <title>Shipping Label - ${data.awb}</title>
-  <style>
-    @page {
-      size: 4in 6in;
-      margin: 0;
-    }
-    * {
-      box-sizing: border-box;
-      margin: 0;
-      padding: 0;
-      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
-    }
-    body {
-      background: #f1f5f9;
-      display: flex;
-      flex-direction: column;
-      align-items: center;
-      padding: 24px;
-    }
-    .print-actions {
-      margin-bottom: 20px;
-      display: flex;
-      gap: 12px;
-    }
-    .btn-print {
-      background: #4f46e5;
-      color: white;
-      border: none;
-      padding: 10px 24px;
-      border-radius: 8px;
-      font-weight: 700;
-      font-size: 14px;
-      cursor: pointer;
-      box-shadow: 0 4px 12px rgba(79, 70, 229, 0.35);
-      transition: background 0.15s ease;
-    }
-    .btn-print:hover { background: #4338ca; }
-    .label-card {
-      width: 384px;
-      min-height: 576px;
-      background: white;
-      border: 2px solid #000000;
-      padding: 12px;
-      color: #000000;
-      box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.1), 0 8px 10px -6px rgba(0, 0, 0, 0.1);
-    }
-    @media print {
-      body { background: white; padding: 0; }
-      .print-actions { display: none !important; }
-      .label-card {
-        width: 100vw;
-        height: 100vh;
-        border: none;
-        padding: 8px;
-        box-shadow: none;
-      }
-    }
-    .header-table {
-      width: 100%;
-      border-bottom: 2px solid #000;
-      padding-bottom: 6px;
-      margin-bottom: 6px;
-    }
-    .courier-title {
-      font-size: 18px;
-      font-weight: 900;
-      letter-spacing: 0.5px;
-      text-transform: uppercase;
-    }
-    .routing-box {
-      border: 2px solid #000;
-      font-weight: 900;
-      font-size: 13px;
-      padding: 3px 8px;
-      text-align: right;
-      letter-spacing: 0.5px;
-    }
-    .barcode-section {
-      text-align: center;
-      padding: 8px 0;
-      border-bottom: 2px solid #000;
-    }
-    .awb-text {
-      font-size: 13px;
-      font-weight: 800;
-      letter-spacing: 2px;
-      margin-top: 4px;
-      font-family: monospace;
-    }
-    .address-section {
-      display: flex;
-      border-bottom: 2px solid #000;
-    }
-    .consignee-box {
-      width: 65%;
-      border-right: 2px solid #000;
-      padding: 6px 8px 6px 0;
-    }
-    .consignor-box {
-      width: 35%;
-      padding: 6px 0 6px 8px;
-      font-size: 9px;
-    }
-    .section-lbl {
-      font-size: 10px;
-      font-weight: 900;
-      text-transform: uppercase;
-      margin-bottom: 2px;
-    }
-    .customer-name {
-      font-size: 13px;
-      font-weight: 800;
-    }
-    .address-text {
-      font-size: 10px;
-      line-height: 1.35;
-      margin-top: 2px;
-    }
-    .pincode-highlight {
-      font-size: 14px;
-      font-weight: 900;
-      margin-top: 4px;
-    }
-    .meta-grid {
-      display: grid;
-      grid-template-columns: repeat(3, 1fr);
-      border-bottom: 2px solid #000;
-      text-align: center;
-      font-size: 10px;
-      padding: 4px 0;
-    }
-    .meta-cell {
-      padding: 2px 4px;
-    }
-    .meta-cell:not(:last-child) {
-      border-right: 1px solid #000;
-    }
-    .meta-lbl {
-      font-size: 8px;
-      font-weight: 800;
-      color: #444;
-      text-transform: uppercase;
-    }
-    .meta-val {
-      font-size: 11px;
-      font-weight: 900;
-      margin-top: 2px;
-    }
-    .items-table {
-      width: 100%;
-      border-collapse: collapse;
-      font-size: 9px;
-      margin-top: 6px;
-      border-bottom: 2px solid #000;
-    }
-    .items-table th {
-      border-bottom: 1px solid #000;
-      text-align: left;
-      padding: 3px 2px;
-      font-weight: 800;
-      text-transform: uppercase;
-    }
-    .items-table td {
-      padding: 3px 2px;
-    }
-    .footer {
-      margin-top: 6px;
-      display: flex;
-      justify-content: space-between;
-      align-items: center;
-      font-size: 8px;
-      color: #333;
-    }
-  </style>
-</head>
-<body>
-  <div class="print-actions">
-    <button class="btn-print" onclick="window.print()">🖨️ Print Shipping Label (PDF / Thermal)</button>
-  </div>
+  if (!data || !data.labelUrl) {
+    res.status(404).send(`
+      <!DOCTYPE html>
+      <html>
+        <head><title>Label Not Available</title></head>
+        <body style="font-family: sans-serif; text-align: center; padding: 60px;">
+          <h2 style="color: #dc2626;">Official Shipping Label Not Available</h2>
+          <p style="color: #4b5563;">This order has not been allocated an official courier AWB by Shipway yet.</p>
+          <p style="color: #4b5563;">Please pack the order first via the Seller Dashboard or WhatsApp to generate the official Shipway label.</p>
+        </body>
+      </html>
+    `);
+    return;
+  }
 
-  <div class="label-card">
-    <table class="header-table">
-      <tr>
-        <td>
-          <div class="courier-title">${data.courier}</div>
-          <div style="font-size: 9px; font-weight: 700; color: #333;">SHIPWAY 3PL LOGISTICS NETWORK</div>
-        </td>
-        <td style="text-align: right;">
-          <span class="routing-box">${data.routingCode}</span>
-        </td>
-      </tr>
-    </table>
-
-    <div class="barcode-section">
-      ${barcodeSvg}
-      <div class="awb-text">AWB: ${data.awb}</div>
-    </div>
-
-    <div class="address-section">
-      <div class="consignee-box">
-        <div class="section-lbl">Ship To (Deliver To):</div>
-        <div class="customer-name">${data.consignee.name}</div>
-        <div class="address-text">${data.consignee.address}</div>
-        <div class="address-text">Phone: ${data.consignee.phone}</div>
-        <div class="pincode-highlight">PIN: ${data.consignee.pincode}</div>
-      </div>
-      <div class="consignor-box">
-        <div class="section-lbl">Return / Shipped From:</div>
-        <div style="font-weight: 800;">${data.consignor.name}</div>
-        <div class="address-text">${data.consignor.address}</div>
-        <div class="address-text" style="font-weight: 700; margin-top: 4px;">GSTIN: ${data.consignor.gstin}</div>
-      </div>
-    </div>
-
-    <div class="meta-grid">
-      <div class="meta-cell">
-        <div class="meta-lbl">Order No</div>
-        <div class="meta-val">${data.orderNumber}</div>
-      </div>
-      <div class="meta-cell">
-        <div class="meta-lbl">Weight / Mode</div>
-        <div class="meta-val">${data.packageWeight} · ${data.paymentMode}</div>
-      </div>
-      <div class="meta-cell">
-        <div class="meta-lbl">Declared Value</div>
-        <div class="meta-val">₹${data.declaredValue.toFixed(2)}</div>
-      </div>
-    </div>
-
-    <table class="items-table">
-      <thead>
-        <tr>
-          <th>Product / SKU</th>
-          <th style="text-align: center;">Qty</th>
-          <th style="text-align: right;">Price</th>
-        </tr>
-      </thead>
-      <tbody>
-        ${data.items.map((it) => `
-          <tr>
-            <td>${it.name} <br><span style="font-family: monospace; font-size: 8px; color: #555;">${it.sku}</span></td>
-            <td style="text-align: center; font-weight: bold;">${it.qty}</td>
-            <td style="text-align: right; font-weight: bold;">₹${it.price.toFixed(2)}</td>
-          </tr>
-        `).join("")}
-      </tbody>
-    </table>
-
-    <div class="footer">
-      <span>Official Electronic Shipping Label • Shipway Verified</span>
-      <span>${data.orderDate}</span>
-    </div>
-  </div>
-
-  <script>
-    window.addEventListener('load', () => {
-      setTimeout(() => { window.print(); }, 400);
-    });
-  </script>
-</body>
-</html>`;
-
-  res.setHeader("Content-Type", "text/html; charset=utf-8");
-  res.send(html);
+  // Direct 302 redirect to Shipway's official carrier PDF label
+  res.redirect(data.labelUrl);
 });
 
 /**

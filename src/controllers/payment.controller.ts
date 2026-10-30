@@ -295,7 +295,6 @@ export async function executeOrderFulfillmentPipeline(params: OrderFulfillmentPa
 
     const itemOrderId =
       rawItems.length > 1 ? `${razorpay_order_id}-${itemIdx}` : razorpay_order_id;
-    const generatedAwb = `AWB-${Math.floor(10000000 + Math.random() * 90000000)}`;
 
     try {
       // 1. Resolve or create Seller
@@ -307,14 +306,14 @@ export async function executeOrderFulfillmentPipeline(params: OrderFulfillmentPa
       // 2. Resolve or create Product to maintain OrderItem integrity
       const productId = await getOrCreateProductForSeller(seller.id, name, itemPrice, category);
 
-      // 3. Create Order & OrderItem in Prisma DB
+      // 3. Create Order & OrderItem in Prisma DB (PENDING seller packing)
       const createdOrder = await prisma.order.upsert({
         where: { orderNumber: itemOrderId },
         update: {
           totalAmount: Number(itemPrice),
-          trackingNumber: generatedAwb,
+          trackingNumber: null,
           courier: itemCarrier,
-          status: OrderStatus.SHIPPED,
+          status: OrderStatus.PENDING,
         },
         create: {
           sellerId: seller.id,
@@ -322,8 +321,8 @@ export async function executeOrderFulfillmentPipeline(params: OrderFulfillmentPa
           customerName: customer_name || "Cikka Mall Customer",
           customerCity: `${customerCity} (${destPincode})`,
           totalAmount: Number(itemPrice),
-          status: OrderStatus.SHIPPED,
-          trackingNumber: generatedAwb,
+          status: OrderStatus.PENDING,
+          trackingNumber: null,
           courier: itemCarrier,
           items: {
             create: [
@@ -339,7 +338,7 @@ export async function executeOrderFulfillmentPipeline(params: OrderFulfillmentPa
       });
 
       console.log(
-        `[Prisma DB Order Created] #${itemOrderId} (${name}, Origin: ${itemPickupPincode}) assigned to Seller #${seller.id} -> In Transit (${generatedAwb})`
+        `[Prisma DB Order Created] #${itemOrderId} (${name}, Origin: ${itemPickupPincode}) assigned to Seller #${seller.id} -> Status: PENDING (Ready to Pack)`
       );
 
       // 4. Resolve Seller Settlement Profile (Admin Commission & Settlement Cycle)
@@ -449,10 +448,9 @@ export async function executeOrderFulfillmentPipeline(params: OrderFulfillmentPa
           sellerId: seller.id,
           type: NotificationType.ORDER,
           title: `New Order: #${itemOrderId}`,
-          body: `New prepaid order for ${name} (₹${itemPrice.toFixed(2)}). Assigned to ${itemCarrier}. AWB: ${generatedAwb}`,
+          body: `New prepaid order for ${name} (₹${itemPrice.toFixed(2)}). Assigned to ${itemCarrier}. Please pack the order to generate shipping label.`,
           metadata: {
             orderNumber: itemOrderId,
-            awb: generatedAwb,
             courier: itemCarrier,
           },
         },
@@ -472,42 +470,9 @@ export async function executeOrderFulfillmentPipeline(params: OrderFulfillmentPa
         },
       }).catch(() => {});
 
-      // 9. Push separate itemized order to Shipway Experience API
-      shipwayService
-        .pushOrderData({
-          order_id: itemOrderId,
-          customer_name: customer_name || "Cikka Mall Customer",
-          customer_email: customer_email || "customer@cikka.club",
-          customer_phone: customer_phone || "9876543210",
-          delivery_address:
-            delivery_address || "123, Sample Street, Mumbai – 400001",
-          pincode: destPincode,
-          pickup_pincode: itemPickupPincode,
-          carrier_name: itemCarrier,
-          awb_number: generatedAwb,
-          total_amount: Number(itemPrice),
-          payment_type: "Prepaid",
-          products: [
-            {
-              product: name,
-              price: Number(itemPrice),
-              product_code: item.id || `PRD-${itemIdx}`,
-              product_quantity: item.qty || 1,
-            },
-          ],
-        })
-        .then((pushRes) => {
-          console.log(
-            `[Shipway Order Pushed] Order #${itemOrderId} (${name}, Pickup Pincode: ${itemPickupPincode}) -> Status: ${pushRes.status}`
-          );
-        })
-        .catch((err) => {
-          console.warn(`[Shipway Push Notice] Order #${itemOrderId} push error: ${err.message}`);
-        });
-
       processedOrders.push({
         order_number: itemOrderId,
-        awb: generatedAwb,
+        awb: null,
         courier: itemCarrier,
         seller_id: seller.id,
         transfer_id: transferResult?.transferId,

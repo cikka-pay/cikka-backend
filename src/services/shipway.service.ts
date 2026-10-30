@@ -194,11 +194,14 @@ export const shipwayService = {
     };
   },
 
-  /**
-   * Push Order Data to Shipway API
-   * Primary Official Endpoint: POST https://app.shipway.com/api/v2orders
-   */
-  async pushOrderData(data: ShipwayPushOrderDTO): Promise<{ status: string; message: string; data?: any }> {
+  async pushOrderData(data: ShipwayPushOrderDTO): Promise<{
+    status: string;
+    message: string;
+    awb_number?: string;
+    carrier_name?: string;
+    label_url?: string;
+    data?: any;
+  }> {
     const creds = getCredentials();
     const authHeaders = getAuthHeader();
     const nameParts = (data.customer_name || "Cikka Customer").trim().split(" ");
@@ -291,23 +294,68 @@ export const shipwayService = {
         timeout: 10000,
       });
 
-      if (response.data && (response.data.success || response.status === 201 || response.status === 200)) {
-        console.log(`[Shipway API] Order #${data.order_id} pushed to app.shipway.com/api/v2orders:`, response.data);
+      const resData = response.data;
+      console.log(`[Shipway API] Order #${data.order_id} v2orders response:`, resData);
+
+      // Extract real carrier AWB from Shipway response
+      const realAwb =
+        resData?.awb_number ||
+        resData?.awb ||
+        resData?.data?.awb_number ||
+        resData?.response?.awb_number ||
+        resData?.order?.awb_number ||
+        (typeof resData?.message === "object" ? resData?.message?.awb_number : undefined);
+
+      const realCarrier =
+        resData?.carrier_name ||
+        resData?.courier_name ||
+        resData?.data?.carrier_name ||
+        selectedCarrierInfo?.courier_name ||
+        data.carrier_name;
+
+      const realLabelUrl =
+        resData?.label_url ||
+        resData?.label ||
+        resData?.data?.label_url ||
+        (realAwb ? `https://app.shipway.com/label/${encodeURIComponent(realAwb)}` : undefined);
+
+      if (realAwb) {
         return {
           status: "success",
-          message: response.data.message || "Order added successfully to Shipway",
-          data: response.data,
+          message: resData?.message || "Order allocated real carrier AWB by Shipway",
+          awb_number: String(realAwb),
+          carrier_name: String(realCarrier || "Shipway Partner"),
+          label_url: realLabelUrl,
+          data: resData,
         };
       }
-    } catch (err: any) {
-      console.warn(`[Shipway API Notice] v2orders endpoint error: ${err.response?.data?.message || err.message}`);
-    }
 
-    return {
-      status: "success",
-      message: "Order pushed to Shipway tracking system",
-      data: v2Payload,
-    };
+      if (resData && (resData.success === false || resData.status === "failed")) {
+        const errDetail = resData.message || resData.error || "Carrier partner could not allocate AWB";
+        return {
+          status: "failed",
+          message: typeof errDetail === "string" ? errDetail : JSON.stringify(errDetail),
+          data: resData,
+        };
+      }
+
+      return {
+        status: "success",
+        message: typeof resData?.message === "string" ? resData.message : "Shipway accepted order",
+        awb_number: realAwb ? String(realAwb) : undefined,
+        carrier_name: realCarrier ? String(realCarrier) : undefined,
+        label_url: realLabelUrl,
+        data: resData,
+      };
+    } catch (err: any) {
+      const errMsg = err.response?.data?.message || err.response?.data?.error || err.message;
+      console.error(`[Shipway API Error] Order #${data.order_id} failed:`, errMsg);
+      return {
+        status: "failed",
+        message: `Shipway API error: ${typeof errMsg === "string" ? errMsg : JSON.stringify(errMsg)}`,
+        data: err.response?.data,
+      };
+    }
   },
 
   /**

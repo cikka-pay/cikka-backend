@@ -228,7 +228,6 @@ export const confirmRedemption = asyncHandler(async (req: Request, res: Response
   const randSuffix = Math.floor(100000 + Math.random() * 900000);
   const orderId = `ORD-RW-${randSuffix}`;
   const redemptionId = `RDM-${randSuffix}`;
-  const generatedAwb = `AWB-${Math.floor(10000000 + Math.random() * 90000000)}`;
 
   const numProductValue = Number(product_value) || 1000;
   const numPointsBurned = Number(points_burned) || 1000;
@@ -242,7 +241,7 @@ export const confirmRedemption = asyncHandler(async (req: Request, res: Response
 
   const productId = await getOrCreateProductForSeller(seller.id, product_name, numProductValue, "Rewards");
 
-  // 4. Create Order & OrderItem in Prisma DB (Marked as Rewards Store, Prepaid by Cikka)
+  // 4. Create Order & OrderItem in Prisma DB (Marked as Rewards Store, Prepaid by Cikka, PENDING packing)
   const dbOrder = await prisma.order.create({
     data: {
       sellerId: seller.id,
@@ -250,9 +249,9 @@ export const confirmRedemption = asyncHandler(async (req: Request, res: Response
       customerName: `${customer_name} (${redemptionId})`,
       customerCity: `${city} (${pincode})`,
       totalAmount: numProductValue,
-      status: OrderStatus.SHIPPED,
-      trackingNumber: generatedAwb,
-      courier: carrier_name,
+      status: OrderStatus.PENDING,
+      trackingNumber: null,
+      courier: carrier_name || null,
       items: {
         create: [
           {
@@ -403,11 +402,10 @@ export const confirmRedemption = asyncHandler(async (req: Request, res: Response
       sellerId: seller.id,
       type: NotificationType.ORDER,
       title: `Rewards Store Order: #${orderId}`,
-      body: `Prepaid by Cikka via CI Points Redemption (${redemptionId}). Courier: ${carrier_name}. AWB: ${generatedAwb}`,
+      body: `Prepaid by Cikka via CI Points Redemption (${redemptionId}). Courier: ${carrier_name || "Shipway Partner"}. Please pack order to generate shipping label.`,
       metadata: {
         orderNumber: orderId,
         redemptionNumber: redemptionId,
-        awb: generatedAwb,
         courier: carrier_name,
       },
     },
@@ -428,41 +426,11 @@ export const confirmRedemption = asyncHandler(async (req: Request, res: Response
     },
   }).catch(() => {});
 
-  // 10. Push to Shipway Experience API
-  shipwayService
-    .pushOrderData({
-      order_id: orderId,
-      customer_name: customer_name,
-      customer_email: customer_email,
-      customer_phone: customer_phone,
-      delivery_address: delivery_address,
-      pincode: pincode,
-      pickup_pincode: pickup_pincode,
-      carrier_name: carrier_name,
-      awb_number: generatedAwb,
-      total_amount: numProductValue,
-      payment_type: "Prepaid",
-      products: [
-        {
-          product: product_name,
-          price: numProductValue,
-          product_code: productId,
-          product_quantity: 1,
-        },
-      ],
-    })
-    .then((pushRes) => {
-      console.log(`[Shipway Rewards Order Pushed] Order #${orderId} -> Status: ${pushRes.status}`);
-    })
-    .catch((err) => {
-      console.warn(`[Shipway Rewards Push Notice]: ${err.message}`);
-    });
-
   // 11. Send Verified Response (Strict Rule: Zero Cashback & Zero Points Earned on Rewards Redemptions)
   res.status(200).json({
     success: true,
     verified: true,
-    message: "Rewards redemption confirmed, points deducted, corporate funding allocated on T+7 hold, and order pushed to Shipway.",
+    message: "Rewards redemption confirmed, points deducted, corporate funding allocated on T+7 hold. Ready to be packed.",
     order_id: orderId,
     redemption_id: redemptionId,
     customer_payment_id: razorpay_payment_id,
@@ -476,7 +444,7 @@ export const confirmRedemption = asyncHandler(async (req: Request, res: Response
     transfer_id: transferResult?.transferId,
     settlement_id: settlement.id,
     hold_until: holdUntil,
-    awb: generatedAwb,
+    awb: null,
     courier: carrier_name,
     tracking_url: `/api/shipway/tracking/${orderId}`,
     // Updated server-side wallet balance (undefined if user not authenticated or no points burned)

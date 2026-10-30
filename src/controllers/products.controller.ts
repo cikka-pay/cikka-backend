@@ -29,10 +29,10 @@ async function getValidSellerId(req: Request): Promise<string> {
 }
 
 export const listProducts = asyncHandler(async (req: Request, res: Response) => {
-  const { page = "1", limit = "20", status, category, q, sellerId } = req.query as any;
+  const { page = "1", limit = "500", status, category, q, sellerId } = req.query as any;
 
   const pageNum = parseInt(page, 10);
-  const limitNum = parseInt(limit, 10);
+  const limitNum = parseInt(limit, 10) || 500;
   const skip = (pageNum - 1) * limitNum;
 
   const where: Prisma.ProductWhereInput = {};
@@ -202,6 +202,11 @@ export const updateProduct = asyncHandler(async (req: Request, res: Response) =>
   const onboardedBrand = seller?.businessName || seller?.onboarding?.businessName;
   if (onboardedBrand) {
     updateData.brandName = onboardedBrand;
+  }
+
+  // Do not allow sellers to self-approve a pending product directly
+  if (existing.status === "PENDING_APPROVAL" && updateData.status === "ACTIVE" && !req.admin?.id) {
+    delete updateData.status;
   }
 
   if (variants && Array.isArray(variants)) {
