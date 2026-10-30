@@ -95,6 +95,12 @@ export const instantpayReal: InstantPayClient = {
       typeof panOrOptions === "string" ? { pan: panOrOptions } : panOrOptions;
 
     const pan = options.pan.toUpperCase().trim();
+
+    // Hard Guard: Never call live InstantPay API for test or dev bypass PANs
+    if (pan === "AAAAA1111A" || pan.startsWith("AAAAA")) {
+      console.log(`🛡️ [InstantPay Real Guard] Blocking outbound InstantPay API request for bypass PAN: ${pan}`);
+      return instantpayStub.verifyPan(panOrOptions);
+    }
     const externalRef = options.externalRef || `ref_${Date.now()}`;
     const latitude = options.latitude || "23.0000";
     const longitude = options.longitude || "45.0000";

@@ -37,8 +37,8 @@ export async function verifyPanService(dto: VerifyPanDTO) {
 
   const formattedPan = pan.toUpperCase().trim();
 
-  // Dev Bypass PAN: AAAAA1111A
-  if (formattedPan === "AAAAA1111A") {
+  // Dev Bypass PAN: AAAAA1111A or starts with AAAAA
+  if (formattedPan === "AAAAA1111A" || formattedPan.startsWith("AAAAA")) {
     console.log("==================================================");
     console.log(`🔍 [InstantPay PAN Dev Bypass] Validating bypass PAN: ${formattedPan}`);
     console.log("==================================================");
