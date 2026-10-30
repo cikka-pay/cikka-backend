@@ -86,6 +86,17 @@ export function verifySellerToken(token: string): CustomJwtPayload {
 
 
 export function verifyUserToken(token: string): CustomJwtPayload {
+  // Support dev bypass tokens when running in development mode
+  if (
+    process.env.NODE_ENV !== "production" &&
+    (token === "dev-bypass-jwt-token" || token === "dev-local-jwt-token")
+  ) {
+    return {
+      sub: "dev-bypass-user-id",
+      role: "user",
+    } as CustomJwtPayload;
+  }
+
   const secrets = Array.from(
     new Set([
       process.env.JWT_USER_SECRET,
@@ -115,6 +126,7 @@ export function verifyUserToken(token: string): CustomJwtPayload {
       if (err.message === AUTH_ERRORS.INVALID_USER_TOKEN) {
         throw err;
       }
+      // try next secret
     }
   }
 

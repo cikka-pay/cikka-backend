@@ -5,9 +5,10 @@ import { razorpayRouteService } from "../services/razorpayRoute.service";
 import { calculateSettlementBreakdown } from "../services/settlementCalculator.service";
 import { getSellerSettlementProfile } from "../services/settlement.service";
 import { shipwayService } from "../services/shipway.service";
+import { walletService } from "../services/wallet.service";
 import { asyncHandler } from "../utils/asyncHandler";
 import { prisma } from "../config/prisma";
-import { OrderStatus, NotificationType } from "../generated/prisma/client";
+import { OrderStatus, NotificationType, WalletTxType } from "../generated/prisma/client";
 
 /**
  * Helper to match or create a seller for a given pickup pincode
@@ -204,6 +205,25 @@ export const confirmRedemption = asyncHandler(async (req: Request, res: Response
     return;
   }
 
+  // 1b. Enforce server-side CI Points balance (replaces AsyncStorage trust)
+  //     Only check when the caller is an authenticated user.
+  const authenticatedUserId = req.user?.id ?? null;
+  const numPointsBurnedRequested = Number(points_burned) || 0;
+
+  if (authenticatedUserId && numPointsBurnedRequested > 0) {
+    const balance = await walletService.getBalance(authenticatedUserId);
+    if (balance.ciPoints < numPointsBurnedRequested) {
+      res.status(422).json({
+        success: false,
+        verified: false,
+        error: `Insufficient CI Points. You have ${balance.ciPoints} but the redemption requires ${numPointsBurnedRequested}.`,
+        current_balance: balance.ciPoints,
+        required: numPointsBurnedRequested,
+      });
+      return;
+    }
+  }
+
   // 2. Generate Dual Primary Identifiers
   const randSuffix = Math.floor(100000 + Math.random() * 900000);
   const orderId = `ORD-RW-${randSuffix}`;
@@ -353,6 +373,30 @@ export const confirmRedemption = asyncHandler(async (req: Request, res: Response
     } as any,
   });
 
+  // 8b. Atomically debit CI Points from server-side ledger (double-entry)
+  //     Tied to redemptionId so this can never be applied twice even if the
+  //     client retries the confirm endpoint.
+  let walletDebitResult: Awaited<ReturnType<typeof walletService.debitPoints>> | null = null;
+  if (authenticatedUserId && numPointsBurned > 0) {
+    try {
+      walletDebitResult = await walletService.debitPoints(
+        authenticatedUserId,
+        numPointsBurned,
+        WalletTxType.REDEEM_REWARD,
+        {
+          redemptionId,
+          razorpayPaymentId: razorpay_payment_id,
+          description: `Rewards Store redemption: ${product_name}`,
+          idempotencyKey: `REDEEM_REWARD:${redemptionId}`,
+        }
+      );
+    } catch (walletErr: any) {
+      // Log but don't fail the response — settlement is already recorded.
+      // The ledger entry will simply be missing; ops can reconcile manually.
+      console.warn(`[Rewards Wallet Debit Warning]: ${walletErr.message}`);
+    }
+  }
+
   // 9. Emit Seller In-App Notifications
   await prisma.notification.create({
     data: {
@@ -435,5 +479,13 @@ export const confirmRedemption = asyncHandler(async (req: Request, res: Response
     awb: generatedAwb,
     courier: carrier_name,
     tracking_url: `/api/shipway/tracking/${orderId}`,
+    // Updated server-side wallet balance (undefined if user not authenticated or no points burned)
+    wallet: walletDebitResult
+      ? {
+          balance_after_points: walletDebitResult.balanceAfterPoints,
+          balance_after_cash_rupees: walletDebitResult.balanceAfterPaise / 100,
+          ledger_entry_id: walletDebitResult.ledgerEntryId,
+        }
+      : null,
   });
 });

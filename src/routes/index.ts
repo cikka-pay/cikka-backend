@@ -23,6 +23,7 @@ import rewardsRoutes from "./rewards.routes";
 import shipwayRoutes from "./shipway.routes";
 import userAddressRoutes from "./user-address.routes";
 import cardsRoutes from "./cards.routes";
+import walletRoutes from "./wallet.routes";
 
 import hubbleRoutes from "./hubble.routes";
 import razorpayRouteRoutes from "./razorpay-route.routes";
@@ -60,6 +61,9 @@ router.use("/instantpay", instantpayRoutes);
 router.use("/pan", instantpayRoutes);
 router.use("/hubble", hubbleRoutes);
 router.use("/hubble.sso", hubbleRoutes);
+
+// User Wallet — CI Points & cashback double-entry ledger
+router.use("/wallet", walletRoutes);
 
 // Razorpay Route Split & Settlement Routes (/api/razorpay-route/*)
 router.use("/razorpay-route", razorpayRouteRoutes);
