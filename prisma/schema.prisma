@@ -659,29 +659,39 @@ model PaymentTransaction {
 
 // ============================================================
 // BBPS TRANSACTION — Setu Bharat BillPay Transaction Ledger
-// Stores refID (uniquePaymentRefID) for strict idempotency checks
+// Stores internalTxnId and refID for strict idempotency and audit
 // ============================================================
 
 model BbpsTransaction {
-  id                 String   @id @default(uuid())
-  refID              String   @unique // Dedup key provided by Setu (uniquePaymentRefID / refID)
+  id                 String    @id @default(uuid())
+  internalTxnId      String    @unique // e.g. CKK-BBPS-1730000000000-1234
+  refID              String    @unique // Dedup key provided by Setu (uniquePaymentRefID / refID)
+  platformBillId     String?
   userId             String?
   billerId           String
   billerName         String
   category           String
-  customerParams     Json?    // Key-value object of biller inputs e.g. { "Consumer Number": "12345678" }
-  amount             Decimal  @db.Decimal(10, 2)
-  status             String   // PENDING | SUCCESS | FAILED | REFUNDED
+  customerParams     Json?     // Key-value object of biller inputs e.g. { "Consumer Number": "12345678" }
+  amount             Decimal   @db.Decimal(10, 2)
+  paymentInstrument  String?   @default("UPI")
+  status             String    // INITIATED | VALIDATING | BILL_FETCHED | PAYMENT_PROCESSING | PENDING | SUCCESS | FAILED | EXPIRED | RECONCILIATION_REQUIRED
   setuBillId         String?
   setuPaymentId      String?
-  bbpsRefNo          String?  // BBPS trace / reference number
+  bbpsRefNo          String?   // BBPS trace / reference number
+  receiptNumber      String?
+  receiptDate        DateTime?
+  failureReason      String?
+  idempotencyKey     String?   @unique
+  settlementRef      String?
   rawPayload         Json?
   errorMessage       String?
 
-  createdAt          DateTime @default(now())
-  updatedAt          DateTime @updatedAt
+  createdAt          DateTime  @default(now())
+  updatedAt          DateTime  @updatedAt
 
+  @@index([internalTxnId])
   @@index([refID])
+  @@index([platformBillId])
   @@index([userId])
   @@index([status])
   @@index([category])
@@ -693,24 +703,103 @@ model BbpsTransaction {
 // ============================================================
 
 model BbpsBiller {
-  id              String   @id @default(uuid())
-  billerId        String   @unique // e.g. "BESCOM000KAR01", "HDFCCARD00001"
-  billerName      String
-  category        String   // ELECTRICITY | CREDIT_CARD | WATER | GAS | DTH | MOBILE_POSTPAID | BROADBAND
-  logoUrl         String?
-  coverageArea    String?
-  paramsSchema    Json     // Array of required input field keys [{ name: "accountNumber", label: "Account Number", regex: "..." }]
-  isActive        Boolean  @default(true)
+  id                    String   @id @default(uuid())
+  billerId              String   @unique // e.g. "BESCOM000KAR01", "HDFCCARD00001"
+  productInstanceId     String?  // Setu product instance mapping
+  billerName            String
+  category              String   // ELECTRICITY | CREDIT_CARD | WATER | GAS | DTH | MOBILE_POSTPAID | BROADBAND
+  description           String?
+  logoUrl               String?
+  coverageArea          String?
+  paramsSchema          Json     // Array of required input field keys [{ name: "accountNumber", label: "Account Number", regex: "..." }]
+  paymentInstruments    Json?    // Supported payment instruments e.g. ["UPI", "NET_BANKING", "DEBIT_CARD"]
+  fetchRequirement      String?  // OPTIONAL | MANDATORY | NOT_SUPPORTED
+  supportBillValidation String?  // OPTIONAL | MANDATORY | NOT_SUPPORTED
+  isActive              Boolean  @default(true)
 
-  createdAt       DateTime @default(now())
-  updatedAt       DateTime @updatedAt
+  createdAt             DateTime @default(now())
+  updatedAt             DateTime @updatedAt
 
   @@index([category])
+  @@index([billerId])
   @@map("bbps_billers")
 }
 
 // ============================================================
-// BBPS BILL FETCH — Customer Bill Fetch Records
+// BBPS SAVED BILLER — Customer's Saved Accounts & Nicknames
+// ============================================================
+
+model BbpsSavedBiller {
+  id             String   @id @default(uuid())
+  userId         String
+  billerId       String
+  customerParams Json     // Stored parameters e.g. { "Consumer Number": "12345" }
+  nickname       String?
+  isActive       Boolean  @default(true)
+
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  @@index([userId])
+  @@index([userId, billerId])
+  @@map("bbps_saved_billers")
+}
+
+// ============================================================
+// BBPS BILL — Setu Fetched Outstanding Bills
+// ============================================================
+
+model BbpsBill {
+  id                String    @id @default(uuid())
+  platformBillId    String    @unique // Setu platformBillId
+  billerBillId      String?
+  userId            String?
+  billerId          String
+  customerReference String?
+  amount            Decimal   @db.Decimal(10, 2)
+  currency          String    @default("INR")
+  dueDate           DateTime?
+  billDate          DateTime?
+  taxes             Decimal?  @db.Decimal(10, 2)
+  discounts         Decimal?  @db.Decimal(10, 2)
+  fees              Decimal?  @db.Decimal(10, 2)
+  items             Json?     // Individual bill line items
+  status            String    @default("UNPAID") // UNPAID | PAID | EXPIRED
+  rawPayload        Json?
+
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
+
+  @@index([platformBillId])
+  @@index([userId])
+  @@index([billerId])
+  @@map("bbps_bills")
+}
+
+// ============================================================
+// BBPS SETTLEMENT — Settlement and Reconciliation Records
+// ============================================================
+
+model BbpsSettlement {
+  id                   String   @id @default(uuid())
+  settlementReference  String   @unique
+  amount               Decimal  @db.Decimal(10, 2)
+  utr                  String?
+  ifsc                 String?
+  instrument           String?
+  transactionDetails   Json?
+  reconciliationStatus String   @default("PENDING") // PENDING | RECONCILED | DISCREPANCY
+
+  createdAt            DateTime @default(now())
+  updatedAt            DateTime @updatedAt
+
+  @@index([settlementReference])
+  @@index([reconciliationStatus])
+  @@map("bbps_settlements")
+}
+
+// ============================================================
+// BBPS BILL FETCH — Customer Bill Fetch Records (Legacy)
 // ============================================================
 
 model BbpsBillFetch {
@@ -733,7 +822,7 @@ model BbpsBillFetch {
 }
 
 // ============================================================
-// BBPS BILL PAYMENT — Payment Intent & Setu Integration Orders
+// BBPS BILL PAYMENT — Payment Intent & Setu Integration Orders (Legacy)
 // ============================================================
 
 model BbpsBillPayment {

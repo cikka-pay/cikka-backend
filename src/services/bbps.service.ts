@@ -65,6 +65,7 @@ export async function initiateBbpsPaymentService(userId: string | null, dto: Ini
   // 3. Persist record in BbpsTransaction database
   const bbpsTx = await prisma.bbpsTransaction.create({
     data: {
+      internalTxnId: refID,
       refID,
       userId: userId || null,
       billerId: dto.billerId,

@@ -25,11 +25,46 @@ export const config = {
   externalServicesMode: EXTERNAL_SERVICES_MODE,
   isRealExternalServices: EXTERNAL_SERVICES_MODE === "real",
 
-  // Setu gateway config
-  setuBaseUrl: process.env.SETU_BASE_URL || "https://uat.setu.co",
-  setuClientId: process.env.SETU_CLIENT_ID,
-  setuSecret: process.env.SETU_SECRET,
-  setuProductInstanceId: process.env.SETU_PRODUCT_INSTANCE_ID,
+  // Setu gateway & BBPS config (toggled via SETU_ENVIRONMENT="uat" | "production")
+  setuEnvironment: (() => {
+    const env = (process.env.SETU_ENVIRONMENT || "uat").toLowerCase();
+    return env === "production" ? "production" : "uat";
+  })(),
+  setuBaseUrl: (() => {
+    const isUat = (process.env.SETU_ENVIRONMENT || "uat").toLowerCase() !== "production";
+    if (isUat) {
+      return (process.env.SETU_UAT_BASE_URL || "https://uat.setu.co").replace(/\/+$/, "");
+    }
+    return (process.env.SETU_PROD_BASE_URL || process.env.SETU_BASE_URL || "https://coudc.setu.co").replace(/\/+$/, "");
+  })(),
+  setuClientId: (() => {
+    const isUat = (process.env.SETU_ENVIRONMENT || "uat").toLowerCase() !== "production";
+    if (isUat) {
+      return process.env.SETU_UAT_CLIENT_ID || "07579493-0c07-496b-b14c-7eef9d65f335";
+    }
+    return process.env.SETU_PROD_CLIENT_ID || process.env.SETU_CLIENT_ID || "";
+  })(),
+  setuSecret: (() => {
+    const isUat = (process.env.SETU_ENVIRONMENT || "uat").toLowerCase() !== "production";
+    if (isUat) {
+      return process.env.SETU_UAT_CLIENT_SECRET || "t8C8QxsXYdmMJYmDXwUUUBokKZL2q36t";
+    }
+    return process.env.SETU_PROD_CLIENT_SECRET || process.env.SETU_CLIENT_SECRET || "";
+  })(),
+  setuPartnerId: (() => {
+    const isUat = (process.env.SETU_ENVIRONMENT || "uat").toLowerCase() !== "production";
+    return isUat ? (process.env.SETU_UAT_PARTNER_ID || "") : (process.env.SETU_PARTNER_ID || "");
+  })(),
+  setuOrgId: (() => {
+    const isUat = (process.env.SETU_ENVIRONMENT || "uat").toLowerCase() !== "production";
+    return isUat ? (process.env.SETU_UAT_ORG_ID || "") : (process.env.SETU_ORG_ID || "");
+  })(),
+  setuProductInstanceId: (() => {
+    const isUat = (process.env.SETU_ENVIRONMENT || "uat").toLowerCase() !== "production";
+    return isUat ? (process.env.SETU_UAT_PRODUCT_INSTANCE_ID || "") : (process.env.SETU_PRODUCT_INSTANCE_ID || "");
+  })(),
+  setuStandardAccountId: process.env.SETU_STANDARD_ACCOUNT_ID || "",
+  setuProductAccountId: process.env.SETU_PRODUCT_ACCOUNT_ID || "",
   setuBasicAuthUser: process.env.SETU_BASIC_AUTH_USER || "setu_user",
   setuBasicAuthPass: process.env.SETU_BASIC_AUTH_PASS || "setu_secret_pass",
   setuBearerToken: process.env.SETU_BEARER_TOKEN,
@@ -38,7 +73,7 @@ export const config = {
   // Setu BBPS Whitelabel & Custom Payment config
   setuBbpsSchemeId: process.env.SETU_BBPS_SCHEME_ID || "setu_bbps_scheme_id",
   setuBbpsSecret: process.env.SETU_BBPS_SECRET || "setu_bbps_secret",
-  setuBbpsProductInstanceId: process.env.SETU_BBPS_PRODUCT_INSTANCE_ID || "setu_bbps_instance",
+  setuBbpsProductInstanceId: process.env.SETU_BBPS_PRODUCT_INSTANCE_ID || "12c58805-be18-4466-bd36-6b6158cbd151",
   setuBbpsBaseUrl: process.env.SETU_BBPS_BASE_URL || "https://kms.setu.co/api/v2",
   setuCheckStatusUrl: process.env.SETU_CHECK_STATUS_URL || "http://localhost:4000/setu/v1/checkStatus",
 
