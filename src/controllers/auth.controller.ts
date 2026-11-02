@@ -49,7 +49,16 @@ export const signupSendPhoneOtp = asyncHandler(async (req: Request, res: Respons
     },
   });
 
-  await otpService.sendSms(phone, otp, "seller_signup");
+  try {
+    await otpService.sendSms(phone, otp, "seller_signup");
+  } catch (smsErr: any) {
+    console.error(`[Auth Signup OTP Error] Gateway delivery failed for ${phone}: ${smsErr.message}`);
+    res.status(502).json({
+      success: false,
+      error: `Failed to deliver OTP SMS: ${smsErr.message || "SMS gateway error"}`,
+    });
+    return;
+  }
   res.json({ success: true, message: "OTP sent" });
 });
 
@@ -223,7 +232,16 @@ export const signinSendOtp = asyncHandler(async (req: Request, res: Response) =>
     });
   }
 
-  await otpService.sendSms(phone, otp, "seller_login");
+  try {
+    await otpService.sendSms(phone, otp, "seller_login");
+  } catch (smsErr: any) {
+    console.error(`[Auth Signin OTP Error] Gateway delivery failed for ${phone}: ${smsErr.message}`);
+    res.status(502).json({
+      success: false,
+      error: `Failed to deliver OTP SMS: ${smsErr.message || "SMS gateway error"}`,
+    });
+    return;
+  }
   res.json({ success: true, message: "OTP sent" });
 });
 
@@ -663,7 +681,16 @@ export const forgotPasswordSendOtp = asyncHandler(async (req: Request, res: Resp
     },
   });
 
-  await otpService.sendSms(phone, otp, "seller_login");
+  try {
+    await otpService.sendSms(phone, otp, "seller_login");
+  } catch (smsErr: any) {
+    console.error(`[Auth Forgot Password OTP Error] Gateway delivery failed for ${phone}: ${smsErr.message}`);
+    res.status(502).json({
+      success: false,
+      error: `Failed to deliver OTP SMS: ${smsErr.message || "SMS gateway error"}`,
+    });
+    return;
+  }
   res.json({ success: true, message: "OTP sent" });
 });
 
