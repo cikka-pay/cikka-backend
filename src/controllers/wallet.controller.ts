@@ -59,7 +59,7 @@ export const getWalletLedger = asyncHandler(async (req: Request, res: Response) 
   res.status(200).json({
     success: true,
     userId,
-    entries: entries.map((e) => ({
+    entries: entries.map((e: any) => ({
       id: e.id,
       tx_type: e.txType,
       points_delta: e.pointsDelta,

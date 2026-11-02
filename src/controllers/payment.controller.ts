@@ -193,11 +193,14 @@ export const verifyPayment = asyncHandler(async (req: Request, res: Response) =>
     items: req.body.items || req.body.cartItems,
     carrier_name: req.body.carrier_name,
     originPincode: req.body.originPincode,
+    delivery_option: req.body.delivery_option,
+    is_express: req.body.is_express || req.body.delivery_option === "express",
   });
 
   // Calculate earned Rewards for Cikka Mall Purchase (Cashback & CI Points)
-  const totalRupees = Number(amount) ? Number(amount) / 100 : 0;
-  const mallRewards = RewardsCalcService.calculateMallPurchaseRewards(totalRupees);
+  const totalRupees = Number(amount) ? (Number(amount) > 1000 ? Number(amount) / 100 : Number(amount)) : 0;
+  const hasSpecialSeller = processedOrders.some((p: any) => p.is_special_seller) || Boolean(req.body.is_special_seller);
+  const mallRewards = RewardsCalcService.calculateMallPurchaseRewards(totalRupees, hasSpecialSeller);
 
   res.status(200).json({
     success: true,
@@ -207,6 +210,8 @@ export const verifyPayment = asyncHandler(async (req: Request, res: Response) =>
     order_id: razorpay_order_id,
     cashback_earned: mallRewards.cashbackEarned,
     ci_points_earned: mallRewards.ciPointsEarned,
+    is_special_seller: mallRewards.isSpecialSeller,
+    cashback_multiplier: mallRewards.cashbackMultiplier,
     rewards_status: mallRewards.status,
     processed_orders: processedOrders,
   });
@@ -225,6 +230,8 @@ export interface OrderFulfillmentParams {
   items?: any[];
   carrier_name?: string;
   originPincode?: string;
+  delivery_option?: "standard" | "express";
+  is_express?: boolean;
 }
 
 /**
@@ -265,7 +272,24 @@ export async function executeOrderFulfillmentPipeline(params: OrderFulfillmentPa
   const customerCity = params.city || "Mumbai";
   const processedOrders: any[] = [];
 
-  let itemIdx = 1;
+  const isExpress =
+    params.delivery_option === "express" ||
+    params.is_express === true;
+
+  // Pre-resolve all items and merchants to identify distinct sellers in the cart
+  const itemResolvedList: Array<{
+    item: any;
+    name: string;
+    category: string;
+    itemPickupPincode: string;
+    itemCarrier: string;
+    itemPrice: number;
+    seller: any;
+    productId: string;
+  }> = [];
+
+  const distinctSellerIds = new Set<string>();
+
   for (const item of rawItems) {
     const name = item.name || item.productName || "Cikka Mall Product";
     const isSneakers =
@@ -283,7 +307,9 @@ export async function executeOrderFulfillmentPipeline(params: OrderFulfillmentPa
 
     const itemCarrier =
       item.carrier ||
-      (isSneakers
+      (isExpress
+        ? "Delhivery Express Air (24-48h)"
+        : isSneakers
         ? "Xpressbees Express (0.5kg)"
         : isLinen
         ? "Delhivery Surface (0.5kg)"
@@ -293,19 +319,42 @@ export async function executeOrderFulfillmentPipeline(params: OrderFulfillmentPa
       Number(item.price) ||
       (amount ? Number(amount) / (100 * rawItems.length) : 3499);
 
+    const seller = await findOrCreateSeller(itemPickupPincode, category);
+    if (!seller) {
+      throw new Error(`Unable to resolve merchant partner for pickup pincode ${itemPickupPincode}`);
+    }
+    distinctSellerIds.add(seller.id);
+
+    const productId = await getOrCreateProductForSeller(seller.id, name, itemPrice, category);
+
+    itemResolvedList.push({
+      item,
+      name,
+      category,
+      itemPickupPincode,
+      itemCarrier,
+      itemPrice,
+      seller,
+      productId,
+    });
+  }
+
+  // Determine Express Delivery Fee Split:
+  // Rule 1: Single order or multi-order SAME brand (distinctSellerIds.size <= 1):
+  //   User charged ₹50 -> Split ₹28 to seller, ₹22 to Cikka
+  // Rule 2: Multi-order DIFFERENT brands (distinctSellerIds.size > 1):
+  //   User charged ₹50 -> Split ₹0 to seller, whole ₹50 to Cikka; shipping cost of express delivery paid by seller
+  const isSameBrandExpress = isExpress && distinctSellerIds.size <= 1;
+
+  let itemIdx = 1;
+  for (const resolved of itemResolvedList) {
+    const { item, name, category, itemPickupPincode, itemCarrier, itemPrice, seller, productId } = resolved;
+    const isPrimarySubOrder = itemIdx === 1;
+
     const itemOrderId =
       rawItems.length > 1 ? `${razorpay_order_id}-${itemIdx}` : razorpay_order_id;
 
     try {
-      // 1. Resolve or create Seller
-      const seller = await findOrCreateSeller(itemPickupPincode, category);
-      if (!seller) {
-        throw new Error(`Unable to resolve merchant partner for pickup pincode ${itemPickupPincode}`);
-      }
-
-      // 2. Resolve or create Product to maintain OrderItem integrity
-      const productId = await getOrCreateProductForSeller(seller.id, name, itemPrice, category);
-
       // 3. Create Order & OrderItem in Prisma DB (PENDING seller packing)
       const createdOrder = await prisma.order.upsert({
         where: { orderNumber: itemOrderId },
@@ -341,9 +390,18 @@ export async function executeOrderFulfillmentPipeline(params: OrderFulfillmentPa
         `[Prisma DB Order Created] #${itemOrderId} (${name}, Origin: ${itemPickupPincode}) assigned to Seller #${seller.id} -> Status: PENDING (Ready to Pack)`
       );
 
-      // 4. Resolve Seller Settlement Profile (Admin Commission & Settlement Cycle)
+      // 4. Resolve Seller Settlement Profile (Admin Commission & Settlement Cycle) with Express Split logic
       const profile = await getSellerSettlementProfile(seller.id, category);
-      const breakdown = calculateSettlementBreakdown(itemPrice, profile.customConfig);
+      const breakdown = calculateSettlementBreakdown(
+        itemPrice,
+        profile.customConfig,
+        1,
+        {
+          isExpress,
+          isSameBrandExpress,
+          isPrimarySubOrder,
+        }
+      );
 
       // 5. Ensure Seller Razorpay Route Linked Account exists
       let rzpAccountId =
@@ -391,6 +449,11 @@ export async function executeOrderFulfillmentPipeline(params: OrderFulfillmentPa
               settlementCycle: profile.settlementCycle,
               grossSales: String(itemPrice),
               netPayable: String(netSellerPayout),
+              isExpress: String(isExpress),
+              isSameBrandExpress: String(isSameBrandExpress),
+              expressDeliveryFee: String(breakdown.expressDeliveryFee || 0),
+              expressSellerShare: String(breakdown.expressSellerShare || 0),
+              expressCikkaShare: String(breakdown.expressCikkaShare || 0),
             },
           });
         } catch (trfErr: any) {
@@ -475,6 +538,7 @@ export async function executeOrderFulfillmentPipeline(params: OrderFulfillmentPa
         awb: null,
         courier: itemCarrier,
         seller_id: seller.id,
+        is_special_seller: Boolean(seller?.isSpecialSeller),
         transfer_id: transferResult?.transferId,
         settlement_id: settlement.id,
         net_payable: netSellerPayout,
@@ -662,7 +726,13 @@ export const verifyCardOtp = asyncHandler(async (req: Request, res: Response) =>
     amount,
     items: items || req.body.cartItems,
     carrier_name: req.body.carrier_name,
+    delivery_option: req.body.delivery_option,
+    is_express: req.body.is_express || req.body.delivery_option === "express",
   });
+
+  const totalRupees = Number(amount) ? (Number(amount) > 1000 ? Number(amount) / 100 : Number(amount)) : 0;
+  const hasSpecialSeller = processedOrders.some((p: any) => p.is_special_seller) || Boolean(req.body.is_special_seller);
+  const mallRewards = RewardsCalcService.calculateMallPurchaseRewards(totalRupees, hasSpecialSeller);
 
   res.status(200).json({
     success: true,
@@ -671,6 +741,11 @@ export const verifyCardOtp = asyncHandler(async (req: Request, res: Response) =>
     order_id,
     razorpay_signature: signature,
     message: "Bank 3DS OTP verified successfully! Order placed and fulfillment initiated.",
+    cashback_earned: mallRewards.cashbackEarned,
+    ci_points_earned: mallRewards.ciPointsEarned,
+    is_special_seller: mallRewards.isSpecialSeller,
+    cashback_multiplier: mallRewards.cashbackMultiplier,
+    rewards_status: mallRewards.status,
     processed_orders: processedOrders,
   });
 });

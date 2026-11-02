@@ -28,6 +28,7 @@ export interface ShipwayPushOrderDTO {
     product_code: string;
     product_quantity: string | number;
   }>;
+  shipping_mode?: "standard" | "express_24_48h";
 }
 
 export interface OptimalCarrierSelection {
@@ -222,7 +223,8 @@ export const shipwayService = {
         data.pickup_pincode || "122008",
         data.pincode || "110001",
         data.payment_type === "COD" ? "cod" : "prepaid",
-        0.5
+        0.5,
+        data.shipping_mode || "standard"
       );
       if (optimal) {
         selectedCarrierInfo = optimal;

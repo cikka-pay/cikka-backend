@@ -140,6 +140,9 @@ model Seller {
   suspendedAt           DateTime?
   suspensionReason      String?
 
+  // Special Seller Program (offers 2X doubled cashback rewards on Cikka Mall)
+  isSpecialSeller       Boolean           @default(false)
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
@@ -563,6 +566,10 @@ model User {
   panNumber     String?
   panVerified   Boolean  @default(false)
   profilePic    String?
+
+  // Cikka Vault & Wallet Balances
+  ciPoints        Int      @default(100000)
+  cashbackBalance Decimal  @default(0.00) @db.Decimal(10, 2)
 
   addresses     UserAddress[]
   savedCards    UserSavedCard[]

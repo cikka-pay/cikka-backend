@@ -18,6 +18,9 @@
 export interface MallProductRewards {
   orderAmount: number;
   cashbackEarned: number;
+  cashbackRange?: [number, number];
+  isSpecialSeller?: boolean;
+  cashbackMultiplier?: number;
   ciPointsEarned: number;
   effectiveSavings: number;
   status: "PENDING_DELIVERY_WINDOW";
@@ -26,6 +29,7 @@ export interface MallProductRewards {
 export interface BillPaymentRewards {
   billAmount: number;
   cashbackEarned: number;
+  cashbackRange?: [number, number];
   ciPointsEarned: number;
   tier: "STANDARD" | "PREMIUM" | "VIP";
 }
@@ -37,6 +41,8 @@ export interface RewardsStoreRedemptionResult {
   ciPointsEarned: 0;
   customerPlatformFee: number;
   customerPlatformFeeGst: number;
+  expressDeliveryFee: number;
+  isExpress: boolean;
   totalPayableByCustomer: number;
 }
 
@@ -53,56 +59,140 @@ export interface CouponRewardResult {
 export class RewardsCalcService {
   /**
    * 1. CIKKA MALL PRODUCT PURCHASE
-   * Calculates Cashback and CI Points earned when a member buys items with real money.
-   * - Cashback: ~1.5% base cashback credited to Cikka Wallet (capped appropriately).
-   * - CI Points: Tiered multiplier based on order value:
-   *     • ≥ ₹100,000: 48% rate
-   *     • ≥ ₹40,000:  46% rate
-   *     • ≥ ₹15,000:  44% rate
-   *     • < ₹15,000:  42% rate
+   * New Tiered Cashback Rules:
+   *   • ≤ ₹100: ₹1 - ₹2 (default: ₹2)
+   *   • ₹100 - ₹500: ₹6 - ₹8 (default: ₹7)
+   *   • ₹500 - ₹2,000: ₹10 - ₹15 (default: ₹12)
+   *   • ₹2,000 - ₹5,000: ₹17 - ₹25 (default: ₹21)
+   *   • ₹5,000 - ₹15,000: ₹30 flat
+   *   • > ₹15,000: ₹30 flat
+   *
+   * Special Sellers Rule:
+   *   If user purchases from a special seller, cashback numbers are DOUBLED (2x).
    */
-  static calculateMallPurchaseRewards(orderAmount: number): MallProductRewards {
+  static calculateMallPurchaseRewards(
+    orderAmount: number,
+    isSpecialSeller: boolean = false
+  ): MallProductRewards {
     const total = Math.max(0, Number(orderAmount) || 0);
-
-    // 1.5% Direct Cashback (min ₹20, max ₹2,500 per order)
-    const rawCashback = Math.round(total * 0.015);
-    const cashbackEarned = total > 0 ? Math.min(2500, Math.max(20, rawCashback)) : 0;
-
-    // Tiered CI Points multiplier
-    let rate = 0.42;
-    if (total >= 100000) {
-      rate = 0.48;
-    } else if (total >= 40000) {
-      rate = 0.46;
-    } else if (total >= 15000) {
-      rate = 0.44;
+    if (total <= 0) {
+      return {
+        orderAmount: 0,
+        cashbackEarned: 0,
+        cashbackRange: [0, 0],
+        isSpecialSeller: Boolean(isSpecialSeller),
+        cashbackMultiplier: isSpecialSeller ? 2 : 1,
+        ciPointsEarned: 0,
+        effectiveSavings: 0,
+        status: "PENDING_DELIVERY_WINDOW",
+      };
     }
 
-    const ciPointsEarned = Math.round(total * rate);
+    let baseCashback = 2;
+    let baseRange: [number, number] = [1, 2];
+
+    if (total <= 100) {
+      baseCashback = 2;
+      baseRange = [1, 2];
+    } else if (total <= 500) {
+      baseCashback = 7;
+      baseRange = [6, 8];
+    } else if (total <= 2000) {
+      baseCashback = 12;
+      baseRange = [10, 15];
+    } else if (total <= 5000) {
+      baseCashback = 21;
+      baseRange = [17, 25];
+    } else {
+      // ₹5,000 - ₹15,000+
+      baseCashback = 30;
+      baseRange = [30, 30];
+    }
+
+    const multiplier = isSpecialSeller ? 2 : 1;
+    const finalCashback = baseCashback * multiplier;
+    const finalRange: [number, number] = [
+      baseRange[0] * multiplier,
+      baseRange[1] * multiplier,
+    ];
+
+    // Tiered CI Points multiplier based on order value
+    let ciRate = 0.42;
+    if (total >= 100000) {
+      ciRate = 0.48;
+    } else if (total >= 40000) {
+      ciRate = 0.46;
+    } else if (total >= 15000) {
+      ciRate = 0.44;
+    }
+
+    const ciPointsEarned = Math.round(total * ciRate);
 
     return {
       orderAmount: total,
-      cashbackEarned,
+      cashbackEarned: finalCashback,
+      cashbackRange: finalRange,
+      isSpecialSeller: Boolean(isSpecialSeller),
+      cashbackMultiplier: multiplier,
       ciPointsEarned,
-      effectiveSavings: cashbackEarned + Math.round(ciPointsEarned * 0.25),
+      effectiveSavings: finalCashback + Math.round(ciPointsEarned * 0.25),
       status: "PENDING_DELIVERY_WINDOW",
     };
   }
 
   /**
    * 2. CIKKA PAY BILL PAYMENT (Credit Card & BBPS Utility Bills)
-   * Calculates Cashback and CI Points for bill settlement transactions.
-   * - Cashback: 0.25% instant cashback (min ₹15, max ₹100 per transaction).
-   * - CI Points: 1 CI Point per ₹10 of bill amount (10% rate, e.g. ₹28,450 bill = 2,845 CI Points).
+   * New Tiered Cashback Rules:
+   *   • < ₹100: ₹2 flat
+   *   • ₹100 - ₹500: ₹4 - ₹6 (default: ₹5)
+   *   • ₹500 - ₹3,500: ₹10 - ₹11 (default: ₹10)
+   *   • ₹3,500 - ₹10,000: ₹15 - ₹16 (default: ₹15)
+   *   • ₹10,000 - ₹50,000: ₹17 - ₹18 (default: ₹17)
+   *   • ₹50,000 - ₹100,000: ₹19 - ₹20 (default: ₹19)
+   *   • > ₹100,000: ₹22 flat
+   *
+   * CI Points: 1 CI Point per ₹10 of bill amount (10% rate).
    */
   static calculateBillPaymentRewards(billAmount: number): BillPaymentRewards {
     const total = Math.max(0, Number(billAmount) || 0);
+    if (total <= 0) {
+      return {
+        billAmount: 0,
+        cashbackEarned: 0,
+        cashbackRange: [0, 0],
+        ciPointsEarned: 0,
+        tier: "STANDARD",
+      };
+    }
 
-    // 0.25% instant cashback
-    const rawCashback = Math.round(total * 0.0025);
-    const cashbackEarned = total > 0 ? Math.min(100, Math.max(15, rawCashback)) : 0;
+    let cashbackEarned = 2;
+    let cashbackRange: [number, number] = [2, 2];
 
-    // 1 CI Point per ₹10 paid
+    if (total < 100) {
+      cashbackEarned = 2;
+      cashbackRange = [2, 2];
+    } else if (total <= 500) {
+      cashbackEarned = 5;
+      cashbackRange = [4, 6];
+    } else if (total <= 3500) {
+      cashbackEarned = 10;
+      cashbackRange = [10, 11];
+    } else if (total <= 10000) {
+      cashbackEarned = 15;
+      cashbackRange = [15, 16];
+    } else if (total <= 50000) {
+      cashbackEarned = 17;
+      cashbackRange = [17, 18];
+    } else if (total <= 100000) {
+      cashbackEarned = 19;
+      cashbackRange = [19, 20];
+    } else {
+      // > ₹100,000
+      cashbackEarned = 22;
+      cashbackRange = [22, 22];
+    }
+
+    // 1 CI Point per ₹10 paid (10% standard rate)
     const ciPointsEarned = Math.round(total * 0.1);
 
     let tier: "STANDARD" | "PREMIUM" | "VIP" = "STANDARD";
@@ -112,6 +202,7 @@ export class RewardsCalcService {
     return {
       billAmount: total,
       cashbackEarned,
+      cashbackRange,
       ciPointsEarned,
       tier,
     };
@@ -121,21 +212,28 @@ export class RewardsCalcService {
    * 3. REWARDS STORE PRODUCT REDEMPTION
    * STRICT POLICY: ZERO CASHBACK and ZERO CI POINTS EARNED.
    * Product value is sponsored 100% by Cikka Corporate Treasury against burned CI Points.
-   * Customer pays only Customer Platform Fee (₹9.99 + 18% GST = ₹11.79).
+   * Customer fees:
+   *   • Standard Delivery: Customer Platform Fee (₹9.99 + 18% GST = ₹11.79)
+   *   • Express 2-Day Delivery: ₹50.00 Express Fee + ₹11.79 Platform Fee = ₹61.79
+   * All customer fee revenue (₹11.79 or ₹61.79) is directly received by Cikka.
    */
   static calculateRewardsStoreRedemption(
     productValue: number,
-    customPointsRequired?: number
+    customPointsRequired?: number,
+    isExpress: boolean = false
   ): RewardsStoreRedemptionResult {
     const val = Math.max(0, Number(productValue) || 1000);
     // Standard conversion: 1 CI Point = ₹1 face value (unless custom specified)
-    const pointsBurned = customPointsRequired !== undefined && customPointsRequired > 0
-      ? Number(customPointsRequired)
-      : val;
+    const pointsBurned =
+      customPointsRequired !== undefined && customPointsRequired > 0
+        ? Number(customPointsRequired)
+        : val;
 
     const customerPlatformFee = 9.99;
     const customerPlatformFeeGst = 1.8;
-    const totalPayableByCustomer = 11.79;
+    const platformFeeTotal = 11.79;
+    const expressDeliveryFee = isExpress ? 50.0 : 0.0;
+    const totalPayableByCustomer = Number((platformFeeTotal + expressDeliveryFee).toFixed(2));
 
     return {
       productValue: val,
@@ -144,6 +242,8 @@ export class RewardsCalcService {
       ciPointsEarned: 0, // Strict rule: No new points generated on rewards burn
       customerPlatformFee,
       customerPlatformFeeGst,
+      expressDeliveryFee,
+      isExpress: Boolean(isExpress),
       totalPayableByCustomer,
     };
   }
