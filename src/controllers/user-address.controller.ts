@@ -24,33 +24,17 @@ function formatFullAddress(addr: any): string {
  * Fetch all saved delivery addresses for the user
  */
 export const getUserAddress = asyncHandler(async (req: Request, res: Response) => {
-  const phone = (req.query.phone as string) || (req.query.userPhone as string) || "9876549812";
+  const phone = (req.query.phone as string) || (req.query.userPhone as string) || (req as any).user?.phone;
   const userId = (req.query.userId as string) || (req as any).user?.id;
 
-  const whereClause: any = userId ? { OR: [{ userId }, { phone }] } : { phone };
+  const whereClause: any = userId
+    ? (phone ? { OR: [{ userId }, { phone }] } : { userId })
+    : (phone ? { phone } : {});
 
-  let rawAddresses = await prisma.userAddress.findMany({
+  const rawAddresses = await prisma.userAddress.findMany({
     where: whereClause,
     orderBy: [{ isDefault: "desc" }, { updatedAt: "desc" }],
   });
-
-  // If no address exists, seed an initial authentic address for smooth checkout
-  if (rawAddresses.length === 0) {
-    const defaultAddr = await prisma.userAddress.create({
-      data: {
-        name: "Sujal Sharma",
-        phone,
-        houseNo: "Flat 402, Prestige Towers",
-        street: "BKC, Bandra East",
-        landmark: "Asian Heart Institute",
-        city: "Mumbai",
-        state: "Maharashtra",
-        pincode: "400051",
-        isDefault: true,
-      },
-    });
-    rawAddresses = [defaultAddr];
-  }
 
   const formattedAddresses = rawAddresses.map((a) => ({
     id: a.id,
@@ -66,7 +50,7 @@ export const getUserAddress = asyncHandler(async (req: Request, res: Response) =
     isDefault: a.isDefault,
   }));
 
-  const primary = formattedAddresses.find((a) => a.isDefault) || formattedAddresses[0];
+  const primary = formattedAddresses.find((a) => a.isDefault) || formattedAddresses[0] || null;
 
   res.status(200).json({
     success: true,
@@ -84,13 +68,13 @@ export const saveUserAddress = asyncHandler(async (req: Request, res: Response) 
   const {
     id,
     name,
-    phone = "9876549812",
+    phone = (req as any).user?.phone || "",
     houseNo,
     street,
     landmark,
     city = "Mumbai",
     state = "Maharashtra",
-    pincode = "400051",
+    pincode,
     isDefault = true,
   } = req.body;
 

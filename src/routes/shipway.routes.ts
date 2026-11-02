@@ -5,6 +5,7 @@ import {
   resolveNdr,
   getShipwayDashboardStats,
   getShippingLabel,
+  printShippingLabel,
   pushOrder,
   getShipmentDetails,
   addWebhooks,
@@ -23,6 +24,7 @@ router.post("/dispatch-order", dispatchOrder);
 router.post("/reverse-pickup", bookReversePickup);
 router.post("/ndr-action", resolveNdr);
 router.get("/dashboard-stats", getShipwayDashboardStats);
+router.get("/label/:id/print", printShippingLabel);
 router.get("/label/:id", getShippingLabel);
 
 // Push Order Data to Shipway

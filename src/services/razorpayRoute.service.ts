@@ -389,7 +389,43 @@ export const razorpayRouteService = {
   },
 
   /**
-   * 4. Reverse a transfer on customer product return or cancellation
+   * 4. Update transfer hold until date (e.g. recalculated on actual delivery)
+   * Endpoint: PATCH /v1/transfers/{transfer_id}
+   */
+  async updateTransferHoldUntil(transferId: string, holdUntilDate: Date): Promise<{ success: boolean; transfer?: any; error?: string }> {
+    if (!transferId) throw new Error("Transfer ID is required to update hold");
+
+    const headers = getRazorpayAuthHeaders();
+    const holdUntilUnix = Math.floor(holdUntilDate.getTime() / 1000);
+
+    try {
+      console.log(`[Razorpay Route] Updating hold for transfer ${transferId} to ${holdUntilDate.toISOString()} (${holdUntilUnix})`);
+      const response = await axios.patch(
+        `${RAZORPAY_BASE_URL}/transfers/${transferId}`,
+        { on_hold: 1, on_hold_until: holdUntilUnix },
+        { headers, timeout: 15000 }
+      );
+
+      return {
+        success: true,
+        transfer: response.data,
+      };
+    } catch (err: any) {
+      const errData = err.response?.data;
+      const errorMsg = errData?.error?.description || err.message || "Failed to update transfer hold";
+
+      // Sandbox simulated update
+      if (transferId.startsWith("trf_test") || config.isDevelopment || config.isTest) {
+        console.log(`[Razorpay Route - Sandbox] Transfer ${transferId} hold updated to ${holdUntilDate.toISOString()}.`);
+        return { success: true, transfer: { id: transferId, on_hold: true, on_hold_until: holdUntilUnix } };
+      }
+
+      return { success: false, error: errorMsg };
+    }
+  },
+
+  /**
+   * 5. Reverse a transfer on customer product return or cancellation
    * Endpoint: POST /v1/transfers/{transfer_id}/reversals
    */
   async reverseTransfer(transferId: string, amountInPaise?: number, reason?: string): Promise<ReversalResult> {

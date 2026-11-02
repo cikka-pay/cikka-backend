@@ -139,6 +139,10 @@ export const getProfile = asyncHandler(async (req: Request, res: Response) => {
     onboarding: seller.onboarding,
     commissionConfig: commissionConfig || seller.commissionConfig,
     agreementConfig: seller.agreementConfig,
+    warningCount: seller.warningCount || 0,
+    isSuspended: seller.isSuspended || false,
+    suspendedAt: seller.suspendedAt || null,
+    suspensionReason: seller.suspensionReason || null,
   });
 });
 
@@ -306,6 +310,30 @@ export const updateProfile = asyncHandler(async (req: Request, res: Response) =>
     message: "Profile updated successfully",
     seller: updatedSeller,
     onboarding,
+  });
+});
+
+export const decrementWarning = asyncHandler(async (req: Request, res: Response) => {
+  const { decrementSellerWarning } = await import("../cron/return-sla.cron");
+  const sellerId = (req.body.sellerId as string) || req.seller!.id;
+  const reason = (req.body.reason as string) || "Administrative / SLA compliance review";
+  const updatedSeller = await decrementSellerWarning(sellerId, reason);
+  res.json({
+    success: true,
+    message: "Seller warning count decremented successfully (vice-versa adjustment)",
+    seller: updatedSeller,
+  });
+});
+
+export const resetWarnings = asyncHandler(async (req: Request, res: Response) => {
+  const { resetSellerWarnings } = await import("../cron/return-sla.cron");
+  const sellerId = (req.body.sellerId as string) || req.seller!.id;
+  const reason = (req.body.reason as string) || "Full compliance reset approved";
+  const updatedSeller = await resetSellerWarnings(sellerId, reason);
+  res.json({
+    success: true,
+    message: "All seller warnings reset to 0/3 clean standing",
+    seller: updatedSeller,
   });
 });
 

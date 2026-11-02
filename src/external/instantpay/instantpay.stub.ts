@@ -19,7 +19,12 @@ export const instantpayStub: InstantPayClient = {
       };
     }
 
-    const registeredName = typeof panOrOptions !== "string" && panOrOptions.nameOnCard ? panOrOptions.nameOnCard.toUpperCase() : undefined;
+    const registeredName =
+      typeof panOrOptions !== "string" && panOrOptions.nameOnCard
+        ? panOrOptions.nameOnCard.toUpperCase()
+        : formattedPan.startsWith("AAAAA")
+        ? "DEV BYPASS USER"
+        : undefined;
 
     return {
       valid: true,

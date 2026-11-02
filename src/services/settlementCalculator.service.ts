@@ -66,9 +66,22 @@ export interface SettlementLedgerBreakdown {
   totalSellerDeductions: number;  // All deductions from base product value
   sellerNetSettlement: number;    // Amount transferred to seller's Razorpay Linked Account (T+7 hold)
 
+  // Express Delivery Accounting
+  expressDeliveryFee?: number;    // ₹50 if express requested
+  expressSellerShare?: number;    // ₹28 if single/same-brand, ₹0 if cross-brand
+  expressCikkaShare?: number;     // ₹22 if single/same-brand, ₹50 if cross-brand
+  isExpress?: boolean;
+  isSameBrandExpress?: boolean;
+
   // Cikka Revenue Accounting (BEFORE GST)
-  cikkaFeeRevenue: number;        // Commission + Seller Platform Fee + Success Fee + Customer Platform Fee
+  cikkaFeeRevenue: number;        // Commission + Seller Platform Fee + Success Fee + Customer Platform Fee + Express Cikka Share
   cikkaGstCollected: number;      // GST collected across all Cikka fees (Liability)
+}
+
+export interface ExpressDeliveryBreakdownOptions {
+  isExpress?: boolean;
+  isSameBrandExpress?: boolean;
+  isPrimarySubOrder?: boolean;
 }
 
 /**
@@ -84,11 +97,14 @@ export function round2(num: number): number {
  *
  * @param grossProductValue Product selling price inclusive of 18% GST (e.g. 1000)
  * @param customConfig Optional fee overrides (e.g. custom category commission)
+ * @param ordersCount Order items count
+ * @param expressOptions Optional Express delivery configuration and split parameters
  */
 export function calculateSettlementBreakdown(
   grossProductValue: number,
   customConfig?: Partial<SettlementFeeConfig>,
-  ordersCount: number = 1
+  ordersCount: number = 1,
+  expressOptions?: ExpressDeliveryBreakdownOptions
 ): SettlementLedgerBreakdown {
   const config: SettlementFeeConfig = {
     ...DEFAULT_SETTLEMENT_CONFIG,
@@ -97,6 +113,28 @@ export function calculateSettlementBreakdown(
 
   const count = Math.max(ordersCount || 1, 1);
   const gross = Number(grossProductValue) || 0;
+
+  const isExpress = Boolean(expressOptions?.isExpress);
+  const isSameBrandExpress = Boolean(expressOptions?.isSameBrandExpress);
+  const isPrimary = expressOptions?.isPrimarySubOrder !== false;
+
+  let expressDeliveryFee = 0;
+  let expressSellerShare = 0;
+  let expressCikkaShare = 0;
+
+  if (isExpress) {
+    expressDeliveryFee = 50;
+    if (isSameBrandExpress) {
+      // Rule 1: Single order OR multi-order SAME brand express: Split ₹28 to seller, ₹22 to Cikka
+      expressSellerShare = isPrimary ? 28 : 0;
+      expressCikkaShare = isPrimary ? 22 : 0;
+    } else {
+      // Rule 2: Multi-order DIFFERENT brands express: ₹0 to seller, whole ₹50 to Cikka; shipping paid by seller
+      expressSellerShare = 0;
+      expressCikkaShare = isPrimary ? 50 : 0;
+    }
+  }
+
   if (gross <= 0) {
     return {
       grossProductValue: 0,
@@ -125,8 +163,13 @@ export function calculateSettlementBreakdown(
       customerPlatformTotal: round2(config.customerPlatformFee * count * (1 + config.gstRate / 100)),
       customerTotalPayment: 0,
       totalSellerDeductions: 0,
-      sellerNetSettlement: 0,
-      cikkaFeeRevenue: 0,
+      sellerNetSettlement: expressSellerShare,
+      expressDeliveryFee,
+      expressSellerShare,
+      expressCikkaShare,
+      isExpress,
+      isSameBrandExpress,
+      cikkaFeeRevenue: expressCikkaShare,
       cikkaGstCollected: 0,
     };
   }
@@ -177,15 +220,16 @@ export function calculateSettlementBreakdown(
     statutoryTaxes
   );
 
-  // 9. Seller Net Settlement = GSV - Total Seller Deductions
-  const sellerNetSettlement = Math.max(0, round2(gross - totalSellerDeductions));
+  // 9. Seller Net Settlement = GSV - Total Seller Deductions + expressSellerShare
+  const sellerNetSettlement = Math.max(0, round2(gross - totalSellerDeductions + expressSellerShare));
 
-  // 10. Cikka Revenue (Commission + Seller Platform Fee + Success Fee + Customer Platform Fee BEFORE GST)
+  // 10. Cikka Revenue (Commission + Seller Platform Fee + Success Fee + Customer Platform Fee + expressCikkaShare BEFORE GST)
   const cikkaFeeRevenue = round2(
     commission +
     sellerPlatformFee +
     successFee +
-    customerPlatformFee
+    customerPlatformFee +
+    expressCikkaShare
   );
 
   // 11. GST Collected on Cikka Fees (Tax liability)
@@ -232,6 +276,12 @@ export function calculateSettlementBreakdown(
 
     totalSellerDeductions,
     sellerNetSettlement,
+
+    expressDeliveryFee,
+    expressSellerShare,
+    expressCikkaShare,
+    isExpress,
+    isSameBrandExpress,
 
     cikkaFeeRevenue,
     cikkaGstCollected,

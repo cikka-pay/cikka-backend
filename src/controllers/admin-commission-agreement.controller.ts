@@ -41,46 +41,42 @@ export const getSellerCommissionConfig = asyncHandler(async (req: Request, res: 
     where: { sellerId },
   });
 
-  if (!config) {
-    const categoryCommissionsObj: Record<string, number> = {};
-    const defaultRates: Record<string, number> = {
-      Fashion: 12.5,
-      Cosmetics: 10.0,
-      Electronics: 8.0,
-      Jewelry: 15.0,
-      "Home & Living": 11.0,
-      Home: 11.0,
-      Footwear: 13.0,
-    };
+  const [onboarding, agreement] = await Promise.all([
+    prisma.sellerOnboarding.findUnique({ where: { sellerId } }),
+    prisma.sellerAgreementConfig.findUnique({ where: { sellerId } }),
+  ]);
+  const applicationId = onboarding?.applicationId || `CKA-${seller.id.slice(0, 6).toUpperCase()}`;
+  const isLocked = Boolean(
+    onboarding?.commissionAcknowledged ||
+    onboarding?.merchantAgreementAccepted ||
+    ((agreement?.status === "ACCEPTED" || agreement?.status === "ACTIVE") && agreement?.signedAt)
+  );
 
+  if (!config) {
+    // POLICY: 22% default across every segment!
+    const categoryCommissionsObj: Record<string, number> = {};
     categories.forEach((cat) => {
-      categoryCommissionsObj[cat] = defaultRates[cat] || 12.0;
+      categoryCommissionsObj[cat] = 22.0;
     });
+
+    const rawCycle = seller.onboarding?.settlementCycle || "T_PLUS_7";
+    const initialCycle = rawCycle === "T_PLUS_14" ? "T_PLUS_14" : "T_PLUS_7";
 
     config = await prisma.sellerCommissionConfig.create({
       data: {
         sellerId,
         flatOrderFee: 15.00,
         categoryCommissions: categoryCommissionsObj,
-        settlementCycle: seller.onboarding?.settlementCycle || "T_PLUS_7",
-        notes: `Customized commission structure for ${seller.businessName || seller.onboarding?.businessName || 'Seller'}`,
+        settlementCycle: initialCycle as any,
+        notes: `Standard 22% commission structure for ${seller.businessName || 'Seller'} (${applicationId})`,
       },
     });
   } else if (config.categoryCommissions && typeof config.categoryCommissions === "object") {
-    const defaultRates: Record<string, number> = {
-      Fashion: 12.5,
-      Cosmetics: 10.0,
-      Electronics: 8.0,
-      Jewelry: 15.0,
-      "Home & Living": 11.0,
-      Home: 11.0,
-      Footwear: 13.0,
-    };
     const existing = config.categoryCommissions as Record<string, number>;
     let missingFound = false;
     categories.forEach((cat) => {
       if (existing[cat] === undefined) {
-        existing[cat] = defaultRates[cat] || 12.0;
+        existing[cat] = 22.0; // Enforce 22.0% default
         missingFound = true;
       }
     });
@@ -96,6 +92,11 @@ export const getSellerCommissionConfig = asyncHandler(async (req: Request, res: 
     commissionConfig: config,
     sellerCategories: categories,
     businessCategory: seller.onboarding?.businessCategory || null,
+    isLocked,
+    applicationId,
+    brandName: seller.businessName || seller.onboarding?.businessName,
+    defaultRate: 22.0,
+    allowedCycles: ["T_PLUS_7", "T_PLUS_14"],
   });
 });
 
@@ -103,23 +104,43 @@ export const updateSellerCommissionConfig = asyncHandler(async (req: Request, re
   const { sellerId } = req.params;
   const { flatOrderFee, categoryCommissions, settlementCycle, notes } = req.body;
 
-  const cycleEnum = settlementCycle ? (SETTLEMENT_CYCLE_MAP[settlementCycle] ?? settlementCycle) : undefined;
+  // Strict Policy: Only T_PLUS_7 and T_PLUS_14 allowed
+  let cycleEnum: string | undefined = undefined;
+  if (settlementCycle) {
+    const mapped = SETTLEMENT_CYCLE_MAP[settlementCycle] ?? settlementCycle;
+    cycleEnum = mapped === "T_PLUS_14" ? "T_PLUS_14" : "T_PLUS_7";
+  }
+
+  const [onboarding, agreement, seller] = await Promise.all([
+    prisma.sellerOnboarding.findUnique({ where: { sellerId } }),
+    prisma.sellerAgreementConfig.findUnique({ where: { sellerId } }),
+    prisma.seller.findUnique({ where: { id: sellerId } }),
+  ]);
+
+  const applicationId = onboarding?.applicationId || `CKA-${sellerId.slice(0, 6).toUpperCase()}`;
+  const isLocked = Boolean(
+    onboarding?.commissionAcknowledged ||
+    onboarding?.merchantAgreementAccepted ||
+    ((agreement?.status === "ACCEPTED" || agreement?.status === "ACTIVE") && agreement?.signedAt)
+  );
+
+  const fallbackCategories = { Fashion: 22.0, Cosmetics: 22.0, Electronics: 22.0 };
 
   const config = await prisma.sellerCommissionConfig.upsert({
     where: { sellerId },
     update: {
       flatOrderFee: flatOrderFee !== undefined ? flatOrderFee : undefined,
       categoryCommissions: categoryCommissions !== undefined ? categoryCommissions : undefined,
-      settlementCycle: cycleEnum as any,
-      notes: notes !== undefined ? notes : undefined,
+      settlementCycle: (cycleEnum as any) || undefined,
+      notes: notes !== undefined ? notes : (isLocked ? `Locked under signed Merchant Agreement (${applicationId})` : undefined),
       effectiveFrom: new Date(),
     },
     create: {
       sellerId,
       flatOrderFee: flatOrderFee ?? 15.00,
-      categoryCommissions: categoryCommissions ?? { Fashion: 12.5, Cosmetics: 10.0, Electronics: 8.0 },
+      categoryCommissions: categoryCommissions ?? fallbackCategories,
       settlementCycle: (cycleEnum as any) || "T_PLUS_7",
-      notes: notes || "Configured via Seller Dashboard Admin",
+      notes: notes || (isLocked ? `Locked under signed Merchant Agreement (${applicationId})` : "Configured via Seller Dashboard Admin"),
     },
   });
 

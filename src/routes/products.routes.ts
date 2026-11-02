@@ -14,7 +14,7 @@ const router = Router();
 
 const statusEnum = z.preprocess(
   (v) => (typeof v === "string" ? v.toUpperCase() : v),
-  z.enum(["DRAFT", "ACTIVE", "INACTIVE", "OUT_OF_STOCK"])
+  z.enum(["DRAFT", "PENDING_APPROVAL", "ACTIVE", "INACTIVE", "OUT_OF_STOCK", "REJECTED"])
 ).optional();
 
 const productQuerySchema = z.object({
@@ -23,6 +23,7 @@ const productQuerySchema = z.object({
   status: statusEnum,
   category: z.string().optional(),
   q: z.string().optional(),
+  sellerId: z.string().optional(),
 });
 
 const variantSchema = z.object({
@@ -62,15 +63,16 @@ const updateVariantSchema = z.object({
   price: z.number().positive().optional(),
 });
 
-import { requireRole } from "../middleware/auth.middleware";
+import { requireRole, requireSellerAuth, requirePanVerifiedUserOrSellerAuth } from "../middleware/auth.middleware";
 
-router.get("/", validate({ query: productQuerySchema }), listProducts);
-router.get("/:id", getProduct);
+// Protected Mall Catalog Endpoints: ONLY Sellers, Admins, or PAN-Verified Mobile Users can access
+router.get("/", requirePanVerifiedUserOrSellerAuth, validate({ query: productQuerySchema }), listProducts);
+router.get("/:id", requirePanVerifiedUserOrSellerAuth, getProduct);
 
-// Creation and modification allowed for ADMIN and EXECUTIVE, Viewer is read-only
-router.post("/", requireRole(["ADMIN", "EXECUTIVE"]), validate({ body: createProductSchema }), createProduct);
-router.patch("/:id", requireRole(["ADMIN", "EXECUTIVE"]), validate({ body: updateProductSchema }), updateProduct);
-router.patch("/:id/variants/:variantId", requireRole(["ADMIN", "EXECUTIVE"]), validate({ body: updateVariantSchema }), updateVariant);
-router.delete("/:id", requireRole(["ADMIN", "EXECUTIVE"]), deleteProduct);
+// Creation and modification allowed for ADMIN and EXECUTIVE on seller endpoints
+router.post("/", requireSellerAuth, requireRole(["ADMIN", "EXECUTIVE"]), validate({ body: createProductSchema }), createProduct);
+router.patch("/:id", requireSellerAuth, requireRole(["ADMIN", "EXECUTIVE"]), validate({ body: updateProductSchema }), updateProduct);
+router.patch("/:id/variants/:variantId", requireSellerAuth, requireRole(["ADMIN", "EXECUTIVE"]), validate({ body: updateVariantSchema }), updateVariant);
+router.delete("/:id", requireSellerAuth, requireRole(["ADMIN", "EXECUTIVE"]), deleteProduct);
 
 export default router;
