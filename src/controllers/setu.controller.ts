@@ -135,3 +135,64 @@ export const processRefund = asyncHandler(async (req: Request, res: Response) =>
     });
   }
 });
+
+/**
+ * POST /bills/fetch
+ * Setu Bill Fetch webhook for mock/sandbox testing
+ */
+export const handleBillsFetch = asyncHandler(async (req: Request, res: Response) => {
+  const customerIdentifiers = req.body?.customerIdentifiers || [];
+  const primaryId = customerIdentifiers[0]?.attributeValue || req.body?.billerBillId || "TEST-BILL-1001";
+
+  res.status(200).json({
+    status: 200,
+    success: true,
+    data: {
+      customer: {
+        name: "Cikka Verified User",
+      },
+      billDetails: {
+        billId: `BILL-${Date.now()}`,
+        billDate: new Date().toISOString().split("T")[0],
+        dueDate: new Date(Date.now() + 15 * 86400000).toISOString().split("T")[0],
+        amountExactness: "EXACT",
+        aggregates: {
+          total: {
+            displayName: "Total Amount Due",
+            amountValue: 50000,
+          },
+        },
+      },
+    },
+  });
+});
+
+/**
+ * POST /bills/fetchReceipt
+ */
+export const handleBillsFetchReceipt = asyncHandler(async (_req: Request, res: Response) => {
+  res.status(200).json({
+    status: 200,
+    success: true,
+    data: {
+      receipt: {
+        id: `RCP-${Date.now()}`,
+        date: new Date().toISOString().split("T")[0],
+      },
+    },
+  });
+});
+
+/**
+ * POST /notifications
+ * Receives Setu payment & settlement webhooks
+ */
+export const handleNotifications = asyncHandler(async (req: Request, res: Response) => {
+  console.log("[Setu Notifications Webhook] Received payload:", JSON.stringify(req.body));
+  res.status(200).json({
+    status: 200,
+    success: true,
+    message: "Notification acknowledged successfully",
+  });
+});
+

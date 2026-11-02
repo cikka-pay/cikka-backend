@@ -53,6 +53,8 @@ app.use("/uploads", express.static(path.resolve(process.cwd(), "uploads")));
 
 // Direct Setu endpoint matching POST {ourBaseURL}/setu/v1/*
 app.use("/setu/v1", setuRoutes);
+app.use("/bills", setuRoutes);
+app.use("/notifications", setuRoutes);
 
 // API v1 routes
 app.use("/api", routes);
