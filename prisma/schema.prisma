@@ -296,6 +296,11 @@ model Product {
   price             Decimal       @db.Decimal(10, 2)   // Selling price on Cikka
   gstSlab           Int           @default(12)          // 0 | 5 | 12 | 18 | 28
 
+  // Pending Price Request from Seller
+  pendingPrice      Decimal?      @db.Decimal(10, 2)   // Requested selling price awaiting admin approval
+  pendingMrp        Decimal?      @db.Decimal(10, 2)   // Requested MRP awaiting admin approval
+  priceRequestedAt  DateTime?                          // Timestamp when seller requested price update
+
   // Loyalty
   loyaltyPoints     Int           @default(0)
 

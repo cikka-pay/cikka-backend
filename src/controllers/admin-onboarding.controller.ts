@@ -347,8 +347,13 @@ export const getApprovedSellers = asyncHandler(async (req: Request, res: Respons
       onboarding: true,
       settings: true,
       products: {
-        where: { status: 'PENDING_APPROVAL' },
-        select: { id: true }
+        where: {
+          OR: [
+            { status: 'PENDING_APPROVAL' },
+            { pendingPrice: { not: null } }
+          ]
+        },
+        select: { id: true, status: true, pendingPrice: true }
       }
     },
     orderBy: { updatedAt: "desc" },
@@ -375,11 +380,16 @@ export const getApprovedSellers = asyncHandler(async (req: Request, res: Respons
     }
   }
 
-  const enrichedSellers = sellers.map(s => ({
-    ...s,
-    cikkaId: s.onboarding?.applicationId || null,
-    pendingProductsCount: s.products.length
-  }));
+  const enrichedSellers = sellers.map(s => {
+    const pendingProducts = s.products.filter(p => p.status === 'PENDING_APPROVAL');
+    const pendingPriceReqs = s.products.filter(p => p.pendingPrice !== null);
+    return {
+      ...s,
+      cikkaId: s.onboarding?.applicationId || null,
+      pendingProductsCount: pendingProducts.length,
+      pendingPriceRequestsCount: pendingPriceReqs.length,
+    };
+  });
 
   res.json(enrichedSellers);
 });
@@ -432,5 +442,86 @@ export const updateProductApproval = asyncHandler(async (req: Request, res: Resp
   }).catch(() => {});
 
   res.json(product);
+});
+
+export const updateProductPriceApproval = asyncHandler(async (req: Request, res: Response) => {
+  const { id } = req.params;
+  const { action, rejectionReason } = req.body; // "APPROVE" | "REJECT"
+
+  if (!["APPROVE", "REJECT"].includes(action)) {
+    res.status(400).json({ error: "Invalid action. Must be APPROVE or REJECT" });
+    return;
+  }
+
+  const existing = await prisma.product.findUnique({ where: { id } });
+  if (!existing) {
+    res.status(404).json({ error: "Product not found" });
+    return;
+  }
+
+  if (action === "APPROVE") {
+    if (!existing.pendingPrice) {
+      res.status(400).json({ error: "No pending price update found for this product" });
+      return;
+    }
+
+    const updated = await prisma.product.update({
+      where: { id },
+      data: {
+        price: existing.pendingPrice,
+        mrp: existing.pendingMrp !== null ? existing.pendingMrp : existing.mrp,
+        pendingPrice: null,
+        pendingMrp: null,
+        priceRequestedAt: null,
+        status: "ACTIVE",
+      },
+    });
+
+    await prisma.notification.create({
+      data: {
+        sellerId: existing.sellerId,
+        type: "PRODUCT" as any,
+        title: `Price Update Approved: ${existing.name}`,
+        body: `Your new price for "${existing.name}" (SKU: ${existing.sku}) of ₹${Number(updated.price).toFixed(2)} has been approved and is now active on Cikka Mall.`,
+        metadata: {
+          productId: existing.id,
+          sku: existing.sku,
+          newPrice: Number(updated.price),
+          newMrp: updated.mrp ? Number(updated.mrp) : undefined,
+          status: "APPROVED",
+        },
+      },
+    }).catch(() => {});
+
+    res.json(updated);
+  } else {
+    // REJECT
+    const updated = await prisma.product.update({
+      where: { id },
+      data: {
+        pendingPrice: null,
+        pendingMrp: null,
+        priceRequestedAt: null,
+      },
+    });
+
+    await prisma.notification.create({
+      data: {
+        sellerId: existing.sellerId,
+        type: "PRODUCT" as any,
+        title: `Price Update Rejected: ${existing.name}`,
+        body: `Your requested price update for "${existing.name}" (SKU: ${existing.sku}) was rejected.${rejectionReason ? ` Notes: ${rejectionReason}` : ''} The product remains active at ₹${Number(existing.price).toFixed(2)}.`,
+        metadata: {
+          productId: existing.id,
+          sku: existing.sku,
+          rejectionReason: rejectionReason || null,
+          currentPrice: Number(existing.price),
+          status: "REJECTED",
+        },
+      },
+    }).catch(() => {});
+
+    res.json(updated);
+  }
 });
 
