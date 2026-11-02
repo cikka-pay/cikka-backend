@@ -81,8 +81,32 @@ export const walletService = {
    * Returns zeros if the wallet has not been initialised yet.
    */
   async getBalance(userId: string): Promise<WalletBalance> {
-    const wallet = await prisma.userWallet.findUnique({ where: { userId } });
-    if (!wallet) {
+    try {
+      const wallet = await prisma.userWallet.findUnique({ where: { userId } });
+      if (!wallet) {
+        return {
+          ciPoints: 0,
+          cashPaise: 0,
+          cashRupees: 0,
+          lifetimeEarnedPoints: 0,
+          lifetimeRedeemedPoints: 0,
+          lifetimeEarnedPaise: 0,
+          lifetimeRedeemedPaise: 0,
+          walletId: "",
+        };
+      }
+      return {
+        ciPoints: wallet.ciPoints,
+        cashPaise: wallet.cashPaise,
+        cashRupees: wallet.cashPaise / 100,
+        lifetimeEarnedPoints: wallet.lifetimeEarnedPoints,
+        lifetimeRedeemedPoints: wallet.lifetimeRedeemedPoints,
+        lifetimeEarnedPaise: wallet.lifetimeEarnedPaise,
+        lifetimeRedeemedPaise: wallet.lifetimeRedeemedPaise,
+        walletId: wallet.id,
+      };
+    } catch (err: any) {
+      console.warn(`[WalletService Warning] getBalance fallback: ${err.message}`);
       return {
         ciPoints: 0,
         cashPaise: 0,
@@ -94,36 +118,31 @@ export const walletService = {
         walletId: "",
       };
     }
-    return {
-      ciPoints: wallet.ciPoints,
-      cashPaise: wallet.cashPaise,
-      cashRupees: wallet.cashPaise / 100,
-      lifetimeEarnedPoints: wallet.lifetimeEarnedPoints,
-      lifetimeRedeemedPoints: wallet.lifetimeRedeemedPoints,
-      lifetimeEarnedPaise: wallet.lifetimeEarnedPaise,
-      lifetimeRedeemedPaise: wallet.lifetimeRedeemedPaise,
-      walletId: wallet.id,
-    };
   },
 
   /**
    * Paginated ledger history for a user.
    */
   async getLedger(userId: string, limit = 20, cursor?: string) {
-    const entries = await prisma.loyaltyLedger.findMany({
-      where: { userId },
-      orderBy: { createdAt: "desc" },
-      take: limit + 1,
-      ...(cursor ? { cursor: { id: cursor }, skip: 1 } : {}),
-    });
+    try {
+      const entries = await prisma.loyaltyLedger.findMany({
+        where: { userId },
+        orderBy: { createdAt: "desc" },
+        take: limit + 1,
+        ...(cursor ? { cursor: { id: cursor }, skip: 1 } : {}),
+      });
 
-    let nextCursor: string | null = null;
-    if (entries.length > limit) {
-      const nextItem = entries.pop();
-      nextCursor = nextItem?.id ?? null;
+      let nextCursor: string | null = null;
+      if (entries.length > limit) {
+        const nextItem = entries.pop();
+        nextCursor = nextItem?.id ?? null;
+      }
+
+      return { entries, nextCursor };
+    } catch (err: any) {
+      console.warn(`[WalletService Warning] getLedger fallback: ${err.message}`);
+      return { entries: [], nextCursor: null };
     }
-
-    return { entries, nextCursor };
   },
 
   /**

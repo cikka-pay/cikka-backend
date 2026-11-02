@@ -37,24 +37,27 @@ export async function verifyPanService(dto: VerifyPanDTO) {
 
   const formattedPan = pan.toUpperCase().trim();
 
-  // Dev Bypass PAN: AAAAA1111A
-  if (formattedPan === "AAAAA1111A") {
+  // 1. Mobile App / Dev bypass: If request is from mobile app (no sellerId) OR bypass PAN format
+  // ZERO calls made to InstantPay API. Paid credits are never consumed for mobile app users.
+  if (!sellerId || formattedPan === "AAAAA1111A" || formattedPan.startsWith("AAAAA")) {
     console.log("==================================================");
-    console.log(`🔍 [InstantPay PAN Dev Bypass] Validating bypass PAN: ${formattedPan}`);
+    console.log(`🔍 [InstantPay PAN Bypass Active]`);
+    console.log(`Caller: ${sellerId ? "Seller Bypass" : "Mobile App User (Development Phase)"}`);
+    console.log(`PAN: ${formattedPan} -> ZERO HTTP requests to InstantPay API`);
     console.log("==================================================");
     return {
       verificationId: `v_pan_dev_${Date.now()}`,
       valid: true,
       pan: formattedPan,
-      registeredName: "DEV BYPASS USER",
-      legalName: "DEV BYPASS USER",
-      name: "DEV BYPASS USER",
+      registeredName: "Cikka Member",
+      legalName: "Cikka Member",
+      name: "Cikka Member",
       category: "INDIVIDUAL",
       userGender: "M",
       userDob: "01/01/1990",
       address: "Prestige Towers, BKC, Mumbai",
       status: "VALID",
-      rawResponse: { bypass: true },
+      rawResponse: { bypass: true, mobileDev: true },
     };
   }
 

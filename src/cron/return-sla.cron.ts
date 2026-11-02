@@ -11,17 +11,23 @@ import { sendResendMail } from "../utils/resend";
  * - After 24 hours without action: Issues formal 3rd Notice of Account Suspension via Email (Resend) and Dashboard Warning.
  */
 export async function checkAndEnforceReturnSLA() {
-  const pendingReturns = await prisma.return.findMany({
-    where: { status: "REQUESTED" },
-    include: {
-      order: {
-        include: {
-          seller: { include: { onboarding: true } },
+  let pendingReturns: any[] = [];
+  try {
+    pendingReturns = await prisma.return.findMany({
+      where: { status: "REQUESTED" },
+      include: {
+        order: {
+          include: {
+            seller: { include: { onboarding: true } },
+          },
         },
+        product: true,
       },
-      product: true,
-    },
-  });
+    });
+  } catch (err: any) {
+    console.warn(`[Return SLA Cron Warning] Query skipped: ${err.message}`);
+    return;
+  }
 
   if (pendingReturns.length === 0) return;
 
