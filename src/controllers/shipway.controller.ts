@@ -23,6 +23,13 @@ function mapShipwayToPrismaStatus(shipwayStatus: string): OrderStatus | null {
  */
 export const dispatchOrder = asyncHandler(async (req: Request, res: Response) => {
   const sellerId = req.seller?.id;
+  const isAdmin = Boolean(req.admin?.id);
+
+  if (!sellerId && !isAdmin) {
+    res.status(401).json({ success: false, error: "Seller or admin authentication required" });
+    return;
+  }
+
   const { orderId, carrierId, carrierName, shippingMode = "standard" } = req.body;
 
   if (!orderId) {
@@ -30,11 +37,11 @@ export const dispatchOrder = asyncHandler(async (req: Request, res: Response) =>
     return;
   }
 
-  // Find order scoped to seller (or allow admin/first seller fallback)
+  // Find order scoped to seller (or allow admin to dispatch any order)
   const orderWhere: any = {
     OR: [{ id: orderId }, { orderNumber: orderId }],
   };
-  if (sellerId) {
+  if (sellerId && !isAdmin) {
     orderWhere.sellerId = sellerId;
   }
 
@@ -47,7 +54,7 @@ export const dispatchOrder = asyncHandler(async (req: Request, res: Response) =>
   });
 
   if (!order) {
-    res.status(404).json({ success: false, error: "Order not found" });
+    res.status(404).json({ success: false, error: "Order not found or not owned by seller" });
     return;
   }
 
@@ -143,6 +150,13 @@ export const dispatchOrder = asyncHandler(async (req: Request, res: Response) =>
  */
 export const bookReversePickup = asyncHandler(async (req: Request, res: Response) => {
   const sellerId = req.seller?.id;
+  const isAdmin = Boolean(req.admin?.id);
+
+  if (!sellerId && !isAdmin) {
+    res.status(401).json({ success: false, error: "Seller or admin authentication required" });
+    return;
+  }
+
   const { returnId, carrierName } = req.body;
 
   if (!returnId) {
@@ -160,6 +174,11 @@ export const bookReversePickup = asyncHandler(async (req: Request, res: Response
 
   if (!returnRecord) {
     res.status(404).json({ success: false, error: "Return record not found" });
+    return;
+  }
+
+  if (sellerId && !isAdmin && returnRecord.order?.sellerId !== sellerId) {
+    res.status(403).json({ success: false, error: "Unauthorized: return does not belong to your store" });
     return;
   }
 
@@ -226,10 +245,29 @@ export const bookReversePickup = asyncHandler(async (req: Request, res: Response
  * Action Non-Delivery Report (Reattempt, Update Address, or RTO)
  */
 export const resolveNdr = asyncHandler(async (req: Request, res: Response) => {
+  const sellerId = req.seller?.id;
+  const isAdmin = Boolean(req.admin?.id);
+
+  if (!sellerId && !isAdmin) {
+    res.status(401).json({ success: false, error: "Seller or admin authentication required" });
+    return;
+  }
+
   const { orderId, action, reattemptDate, updatedAddress, updatedPhone, remarks } = req.body;
 
   if (!orderId || !action) {
     res.status(400).json({ success: false, error: "orderId and action are required" });
+    return;
+  }
+
+  const orderWhere: any = { OR: [{ orderNumber: orderId }, { id: orderId }] };
+  if (sellerId && !isAdmin) {
+    orderWhere.sellerId = sellerId;
+  }
+
+  const order = await prisma.order.findFirst({ where: orderWhere });
+  if (!order) {
+    res.status(404).json({ success: false, error: "Order not found or not owned by seller" });
     return;
   }
 
@@ -238,11 +276,6 @@ export const resolveNdr = asyncHandler(async (req: Request, res: Response) => {
     updatedAddress,
     updatedPhone,
     remarks,
-  });
-
-  // Find and update local order notification if needed
-  const order = await prisma.order.findFirst({
-    where: { OR: [{ orderNumber: orderId }, { id: orderId }] },
   });
 
   if (order && order.sellerId) {
@@ -297,18 +330,23 @@ export const getShipwayDashboardStats = asyncHandler(async (req: Request, res: R
   });
 });
 
-async function resolveOrderLabelData(idOrAwb: string) {
+async function resolveOrderLabelData(idOrAwb: string, sellerId?: string, isAdmin?: boolean) {
   const cleanId = idOrAwb.replace(/^#/, "").trim();
 
+  const whereClause: any = {
+    OR: [
+      { id: cleanId },
+      { orderNumber: cleanId },
+      { orderNumber: `#${cleanId}` },
+      { trackingNumber: cleanId },
+    ],
+  };
+  if (sellerId && !isAdmin) {
+    whereClause.sellerId = sellerId;
+  }
+
   const order = await prisma.order.findFirst({
-    where: {
-      OR: [
-        { id: cleanId },
-        { orderNumber: cleanId },
-        { orderNumber: `#${cleanId}` },
-        { trackingNumber: cleanId },
-      ],
-    },
+    where: whereClause,
     include: {
       items: { include: { product: true } },
       seller: { include: { onboarding: true } },
@@ -370,7 +408,10 @@ async function resolveOrderLabelData(idOrAwb: string) {
  */
 export const getShippingLabel = asyncHandler(async (req: Request, res: Response) => {
   const { id } = req.params;
-  const labelData = await resolveOrderLabelData(id);
+  const sellerId = req.seller?.id;
+  const isAdmin = Boolean(req.admin?.id);
+
+  const labelData = await resolveOrderLabelData(id, sellerId, isAdmin);
 
   if (!labelData) {
     res.status(404).json({
@@ -389,7 +430,10 @@ export const getShippingLabel = asyncHandler(async (req: Request, res: Response)
  */
 export const printShippingLabel = asyncHandler(async (req: Request, res: Response) => {
   const { id } = req.params;
-  const data = await resolveOrderLabelData(id);
+  const sellerId = req.seller?.id;
+  const isAdmin = Boolean(req.admin?.id);
+
+  const data = await resolveOrderLabelData(id, sellerId, isAdmin);
 
   if (!data || !data.labelUrl) {
     res.status(404).send(`
@@ -414,6 +458,14 @@ export const printShippingLabel = asyncHandler(async (req: Request, res: Respons
  * POST /api/shipway/push-order
  */
 export const pushOrder = asyncHandler(async (req: Request, res: Response) => {
+  const sellerId = req.seller?.id;
+  const isAdmin = Boolean(req.admin?.id);
+
+  if (!sellerId && !isAdmin) {
+    res.status(401).json({ success: false, error: "Seller or admin authentication required" });
+    return;
+  }
+
   const { order_id, carrier_name, awb_number, customer_name, customer_email, customer_phone, delivery_address, city, state, pincode, total_amount } = req.body;
 
   if (!order_id) {

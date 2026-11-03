@@ -1,5 +1,5 @@
 import { Router } from "express";
-import { requireSellerAuth } from "../middleware/auth.middleware";
+import { requireSellerAuth, optionalUserAuth } from "../middleware/auth.middleware";
 import authRoutes from "./auth.routes";
 import userAuthRoutes from "./user-auth.routes";
 import setuRoutes from "./setu.routes";
@@ -25,6 +25,7 @@ import shipwayRoutes from "./shipway.routes";
 import userAddressRoutes from "./user-address.routes";
 import cardsRoutes from "./cards.routes";
 import walletRoutes from "./wallet.routes";
+import userNotificationRoutes from "./user-notification.routes";
 
 import hubbleRoutes from "./hubble.routes";
 import razorpayRouteRoutes from "./razorpay-route.routes";
@@ -64,8 +65,10 @@ router.use("/pan", instantpayRoutes);
 router.use("/hubble", hubbleRoutes);
 router.use("/hubble.sso", hubbleRoutes);
 
-// User Wallet — CI Points & cashback double-entry ledger
+// User Wallet & In-App Notifications
 router.use("/wallet", walletRoutes);
+router.use("/user-notifications", userNotificationRoutes);
+router.use("/user/notifications", userNotificationRoutes);
 
 // Razorpay Route Split & Settlement Routes (/api/razorpay-route/*)
 router.use("/razorpay-route", razorpayRouteRoutes);
@@ -81,19 +84,19 @@ router.use("/rewards", rewardsRoutes);
 router.use("/shipway", shipwayRoutes);
 
 
-// Public Return Request Endpoint (Customer App / Postman)
+// Return Request Endpoint (Customer App / Postman)
 import { createReturn, createExchange } from "../controllers/returns.controller";
-router.post("/returns/request", createReturn);
-router.post("/returns/create", createReturn);
-router.post("/returns/exchange", createExchange);
+router.post("/returns/request", optionalUserAuth, createReturn);
+router.post("/returns/create", optionalUserAuth, createReturn);
+router.post("/returns/exchange", optionalUserAuth, createExchange);
 
 // Public Cikka Mall Catalog (Product exploration & single-loop exchanges)
 import { listMallCatalogProducts } from "../controllers/products.controller";
 import { createOrder } from "../controllers/orders.controller";
 router.get("/mall/products", listMallCatalogProducts);
 router.get("/products/mall", listMallCatalogProducts);
-// Public order simulation endpoint (customer app / Postman testing)
-router.post("/orders/create", createOrder);
+// Order simulation endpoint (customer app / Postman testing)
+router.post("/orders/create", optionalUserAuth, createOrder);
 
 
 

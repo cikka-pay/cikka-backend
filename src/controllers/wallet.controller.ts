@@ -189,6 +189,7 @@ const WithdrawSchema = z.object({
   type: z.enum(["cashback", "points"]),
   amount: z.number().positive(),
   description: z.string().optional(),
+  idempotency_key: z.string().optional(),
 });
 
 export const withdrawFunds = asyncHandler(async (req: Request, res: Response) => {
@@ -204,7 +205,20 @@ export const withdrawFunds = asyncHandler(async (req: Request, res: Response) =>
     return;
   }
 
-  const { type, amount, description } = parse.data;
+  const { type, amount, description, idempotency_key } = parse.data;
+
+  // Safeguard limits
+  if (type === "cashback" && amount > 25000) {
+    res.status(400).json({ success: false, error: "Maximum single withdrawal limit for cashback is ₹25,000" });
+    return;
+  }
+  if (type === "points" && amount > 100000) {
+    res.status(400).json({ success: false, error: "Maximum single withdrawal limit for CI Points is 100,000 pts" });
+    return;
+  }
+
+  const timestamp = Date.now();
+  const idem = idempotency_key || `WITHDRAW:${userId}:${timestamp}`;
 
   try {
     if (type === "cashback") {
@@ -214,7 +228,8 @@ export const withdrawFunds = asyncHandler(async (req: Request, res: Response) =>
         amountPaise,
         WalletTxType.CASHBACK_REDEEM,
         {
-          description: description || `Withdrawal of ₹${amount.toFixed(2)} to Cikka Account`,
+          idempotencyKey: idem,
+          description: description || `Withdrawal of ₹${amount.toFixed(2)} to registered bank/UPI`,
         }
       );
       res.status(200).json({
@@ -231,7 +246,8 @@ export const withdrawFunds = asyncHandler(async (req: Request, res: Response) =>
         points,
         WalletTxType.REDEEM_REWARD,
         {
-          description: description || `Withdrawal of ${points} CI Points to Cikka Account`,
+          idempotencyKey: idem,
+          description: description || `Withdrawal of ${points} CI Points to statement credit`,
         }
       );
       res.status(200).json({

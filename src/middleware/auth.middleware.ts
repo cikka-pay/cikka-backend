@@ -223,6 +223,43 @@ export function requireAdminAuth(req: Request, res: Response, next: NextFunction
   }
 }
 
+// Verifies either seller JWT or admin JWT for seller operations
+export function requireSellerOrAdminAuth(req: Request, res: Response, next: NextFunction): void {
+  const header = req.headers.authorization || "";
+  const [scheme, token] = header.split(" ");
+
+  if (scheme !== "Bearer" || !token) {
+    res.status(401).json({ error: AUTH_ERRORS.MISSING_AUTH_HEADER });
+    return;
+  }
+
+  // 1. Try Seller Token
+  try {
+    const payload = verifySellerToken(token);
+    const sellerId = typeof payload.sub === "object" && payload.sub !== null
+      ? ((payload.sub as any).id || String(payload.sub))
+      : (payload.sub as string);
+
+    req.seller = {
+      id: sellerId,
+      teamMemberId: payload.teamMemberId as string | undefined,
+      role: (payload as any).role || "ADMIN",
+    };
+    next();
+    return;
+  } catch (_sellerErr) {}
+
+  // 2. Try Admin Token
+  try {
+    const payload = verifyAdminToken(token);
+    req.admin = { id: payload.id, email: payload.email, role: payload.role };
+    next();
+    return;
+  } catch (_adminErr) {}
+
+  res.status(401).json({ error: "Invalid or expired seller or admin token" });
+}
+
 /**
  * Restricts Cikka Mall product access to:
  * 1. Authenticated Sellers (for seller dashboard management)

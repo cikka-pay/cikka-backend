@@ -35,16 +35,16 @@ router.post("/fetch-bill", optionalUserAuth, validate({ body: fetchBillSchema })
 // Bill Details by platformBillId
 router.get("/bills/:platformBillId", getBillDetails);
 
-// Bill Payment Fulfilment
-router.post("/pay", optionalUserAuth, validate({ body: payBillSchema }), payBill);
+// Bill Payment Fulfilment (Strictly requires authenticated user for rewards credit)
+router.post("/pay", requireUserAuth, validate({ body: payBillSchema }), payBill);
 
 // Transaction History & Tracking
-router.get("/transactions", optionalUserAuth, getTransactions);
+router.get("/transactions", requireUserAuth, getTransactions);
 router.get("/transactions/:id", getTransactionById);
 router.get("/transactions/:id/receipt", getTransactionReceipt);
 
-// Settlement & Reconciliation (Admin / Ops)
-router.get("/settlements", getSettlements);
-router.post("/reconcile", reconcilePending);
+// Settlement & Reconciliation (Admin / Ops Guarded)
+router.get("/settlements", requireUserAuth, getSettlements);
+router.post("/reconcile", requireUserAuth, reconcilePending);
 
 export default router;

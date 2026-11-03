@@ -272,9 +272,11 @@ async function executeRedemptionFulfillment(params: {
   const expressFee = is_express ? 50.0 : 0.0;
   const customerFeePaid = Number((11.79 + expressFee).toFixed(2));
 
-  // 1. Validate & Deduct exact Y CI Points from User
+  // 1. Resolve User and Generate Identifiers
   const cleanPhone = String(customer_phone || "").replace(/\D/g, "").slice(-10);
-  let user = cleanPhone
+  let user = authenticatedUserId
+    ? await prisma.user.findUnique({ where: { id: authenticatedUserId } })
+    : cleanPhone
     ? await prisma.user.findFirst({
         where: {
           OR: [
@@ -285,30 +287,35 @@ async function executeRedemptionFulfillment(params: {
       })
     : null;
 
-  const currentPoints = user?.ciPoints ?? 100000;
-  if (currentPoints < numPointsBurned) {
-    throw new Error("points doesnt match the require CI points");
+  const resolvedUserId = user?.id || authenticatedUserId;
+  if (!resolvedUserId) {
+    throw new Error("A valid authenticated user account is required to redeem rewards.");
   }
 
-  if (user) {
-    await prisma.user.update({
-      where: { id: user.id },
-      data: {
-        ciPoints: { decrement: numPointsBurned },
-      },
-    });
-    console.log(
-      `[CI Points Deducted] User #${user.id} (${cleanPhone}) burned EXACT ${numPointsBurned} CI Points. New Balance: ${
-        currentPoints - numPointsBurned
-      }`
-    );
-  }
-
-  // 2. Generate Primary Identifiers
   const randSuffix = Math.floor(100000 + Math.random() * 900000);
   const finalOrderId = `ORD-RW-${randSuffix}`;
   const redemptionId = `RDM-${randSuffix}`;
   const generatedAwb = `AWB-${Math.floor(10000000 + Math.random() * 90000000)}`;
+
+  // 2. Atomically Validate & Debit exact Y CI Points from UserWallet FIRST (Double-Entry Guard)
+  // If user has insufficient points, this throws immediately before any money is transferred to the seller.
+  let walletDebitResult: Awaited<ReturnType<typeof walletService.debitPoints>> | null = null;
+  if (numPointsBurned > 0) {
+    walletDebitResult = await walletService.debitPoints(
+      resolvedUserId,
+      numPointsBurned,
+      WalletTxType.REDEEM_REWARD,
+      {
+        redemptionId,
+        razorpayPaymentId: payment_id,
+        description: `Rewards Store redemption: ${product_name}`,
+        idempotencyKey: `REDEEM_REWARD:${redemptionId}`,
+      }
+    );
+    console.log(
+      `[CI Points Debited] User #${resolvedUserId} burned ${numPointsBurned} CI Points for Redemption #${redemptionId}. Remaining: ${walletDebitResult.balanceAfterPoints}`
+    );
+  }
 
   // 3. Resolve Seller & Product
   const seller = await findOrCreateSeller(pickup_pincode, "Rewards");
@@ -318,10 +325,11 @@ async function executeRedemptionFulfillment(params: {
 
   const productId = await getOrCreateProductForSeller(seller.id, product_name, numProductValue, "Rewards");
 
-  // 4. Create Order & OrderItem in Prisma DB (Marked as Rewards Store, Prepaid by Cikka, PENDING packing)
+  // 4. Create Order & OrderItem in Prisma DB (Linked to userId and redemptionId)
   const dbOrder = await prisma.order.create({
     data: {
       sellerId: seller.id,
+      userId: resolvedUserId,
       orderNumber: finalOrderId,
       customerName: `${customer_name} (${redemptionId})`,
       customerCity: `${city} (${pincode})`,
@@ -454,28 +462,8 @@ async function executeRedemptionFulfillment(params: {
   });
 
   // 8b. Atomically debit CI Points from server-side ledger (double-entry)
-  //     Tied to redemptionId so this can never be applied twice even if the
-  //     client retries the confirm endpoint.
-  let walletDebitResult: Awaited<ReturnType<typeof walletService.debitPoints>> | null = null;
-  if (authenticatedUserId && numPointsBurned > 0) {
-    try {
-      walletDebitResult = await walletService.debitPoints(
-        authenticatedUserId,
-        numPointsBurned,
-        WalletTxType.REDEEM_REWARD,
-        {
-          redemptionId,
-          razorpayPaymentId: payment_id,
-          description: `Rewards Store redemption: ${product_name}`,
-          idempotencyKey: `REDEEM_REWARD:${redemptionId}`,
-        }
-      );
-    } catch (walletErr: any) {
-      // Log but don't fail the response — settlement is already recorded.
-      // The ledger entry will simply be missing; ops can reconcile manually.
-      console.warn(`[Rewards Wallet Debit Warning]: ${walletErr.message}`);
-    }
-  }
+  // 8b. CI Points were atomically debited in Step 2 before orders or Route transfers were initiated.
+  //     walletDebitResult contains the authoritative balance snapshot.
 
   // 9. Emit Seller In-App Notifications
   await prisma.notification.create({

@@ -2,6 +2,7 @@ import { Request, Response } from "express";
 import { asyncHandler } from "../utils/asyncHandler";
 import { prisma } from "../config/prisma";
 import { Prisma } from "../generated/prisma/client";
+import { config } from "../config/env";
 
 async function getValidSellerId(req: Request): Promise<string> {
   const rawSellerId = req.seller?.id;
@@ -14,18 +15,29 @@ async function getValidSellerId(req: Request): Promise<string> {
     if (existingSeller) return existingSeller.id;
   }
 
-  const firstSeller = await prisma.seller.findFirst();
-  if (firstSeller) return firstSeller.id;
+  if (req.admin?.id) {
+    if (req.body?.sellerId) return req.body.sellerId;
+    const firstSeller = await prisma.seller.findFirst();
+    if (firstSeller) return firstSeller.id;
+  }
 
-  const newSeller = await prisma.seller.create({
-    data: {
-      phone: "+919876543210",
-      businessName: "Aura Vogue Store",
-      phoneVerified: true,
-      onboardingStatus: "VERIFIED",
-    },
-  });
-  return newSeller.id;
+  // Allow test seller creation only in development
+  if (!config.isProduction) {
+    const firstSeller = await prisma.seller.findFirst();
+    if (firstSeller) return firstSeller.id;
+
+    const newSeller = await prisma.seller.create({
+      data: {
+        phone: "+919876543210",
+        businessName: "Aura Vogue Store",
+        phoneVerified: true,
+        onboardingStatus: "VERIFIED",
+      },
+    });
+    return newSeller.id;
+  }
+
+  throw new Error("Seller authentication required");
 }
 
 export const listProducts = asyncHandler(async (req: Request, res: Response) => {
@@ -171,9 +183,22 @@ export const updateProduct = asyncHandler(async (req: Request, res: Response) =>
   const { id } = req.params;
   const data = req.body;
 
-  const existing = await prisma.product.findFirst({ where: { id } });
+  const isSeller = Boolean(req.seller?.id);
+  const isAdmin = Boolean(req.admin?.id);
+
+  if (!isSeller && !isAdmin) {
+    res.status(401).json({ error: "Seller or admin authentication required" });
+    return;
+  }
+
+  const whereClause: Prisma.ProductWhereInput = { id };
+  if (isSeller && !isAdmin) {
+    whereClause.sellerId = req.seller!.id;
+  }
+
+  const existing = await prisma.product.findFirst({ where: whereClause });
   if (!existing) {
-    res.status(404).json({ error: "Product not found" });
+    res.status(404).json({ error: "Product not found or not owned by seller" });
     return;
   }
 
@@ -236,28 +261,53 @@ export const updateProduct = asyncHandler(async (req: Request, res: Response) =>
 export const deleteProduct = asyncHandler(async (req: Request, res: Response) => {
   const { id } = req.params;
 
-  const existing = await prisma.product.findFirst({ where: { id } });
-  if (!existing) {
-    res.status(404).json({ error: "Product not found" });
+  const isSeller = Boolean(req.seller?.id);
+  const isAdmin = Boolean(req.admin?.id);
+
+  if (!isSeller && !isAdmin) {
+    res.status(401).json({ error: "Seller or admin authentication required" });
     return;
   }
 
-  await prisma.productVariant.deleteMany({ where: { productId: id } });
-  await prisma.orderItem.deleteMany({ where: { productId: id } });
-  await prisma.product.delete({ where: { id } });
+  const whereClause: Prisma.ProductWhereInput = { id };
+  if (isSeller && !isAdmin) {
+    whereClause.sellerId = req.seller!.id;
+  }
 
-  res.json({ message: "Product deleted successfully" });
+  const existing = await prisma.product.findFirst({ where: whereClause });
+  if (!existing) {
+    res.status(404).json({ error: "Product not found or not owned by seller" });
+    return;
+  }
+
+  // Soft-delete: mark product INACTIVE rather than deleting order items and breaking historical order tracking
+  await prisma.product.update({
+    where: { id },
+    data: { status: "INACTIVE" },
+  });
+
+  res.json({ message: "Product archived successfully" });
 });
 
 export const updateVariant = asyncHandler(async (req: Request, res: Response) => {
   const { id, variantId } = req.params;
-  const sellerId = await getValidSellerId(req);
-  const { stockQty, price } = req.body;
+  const isSeller = Boolean(req.seller?.id);
+  const isAdmin = Boolean(req.admin?.id);
+
+  if (!isSeller && !isAdmin) {
+    res.status(401).json({ error: "Seller or admin authentication required" });
+    return;
+  }
+
+  const whereClause: Prisma.ProductWhereInput = { id };
+  if (isSeller && !isAdmin) {
+    whereClause.sellerId = req.seller!.id;
+  }
 
   // Ensure the product belongs to this seller
-  const product = await prisma.product.findFirst({ where: { id, sellerId } });
+  const product = await prisma.product.findFirst({ where: whereClause });
   if (!product) {
-    res.status(404).json({ error: "Product not found" });
+    res.status(404).json({ error: "Product not found or not owned by seller" });
     return;
   }
 
@@ -269,6 +319,7 @@ export const updateVariant = asyncHandler(async (req: Request, res: Response) =>
     return;
   }
 
+  const { stockQty, price } = req.body;
   const updated = await prisma.productVariant.update({
     where: { id: variantId },
     data: {
@@ -291,7 +342,7 @@ export const listMallCatalogProducts = asyncHandler(async (req: Request, res: Re
   const skip = (pageNum - 1) * limitNum;
 
   const where: Prisma.ProductWhereInput = {
-    status: { in: ["ACTIVE", "DRAFT"] }, // Available in mall
+    status: "ACTIVE", // Available in mall
   };
 
   if (category && category !== "ALL") {

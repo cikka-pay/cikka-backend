@@ -362,6 +362,8 @@ model Order {
   id           String      @id @default(uuid())
   sellerId     String
   seller       Seller      @relation(fields: [sellerId], references: [id])
+  userId       String?
+  user         User?       @relation(fields: [userId], references: [id], onDelete: SetNull)
 
   orderNumber     String      @unique
   customerName    String
@@ -384,6 +386,7 @@ model Order {
 
   @@index([sellerId, createdAt])
   @@index([sellerId, status])
+  @@index([userId])
   @@map("orders")
 }
 
@@ -575,6 +578,8 @@ model User {
   savedCards    UserSavedCard[]
   wallet        UserWallet?
   ledgerEntries LoyaltyLedger[]
+  orders        Order[]
+  notifications UserNotification[]
 
   createdAt     DateTime @default(now())
   updatedAt     DateTime @updatedAt
@@ -631,6 +636,28 @@ model UserSavedCard {
   @@index([phone])
   @@index([razorpayTokenId])
   @@map("user_saved_cards")
+}
+
+// ============================================================
+// USER NOTIFICATION — In-app notifications for mobile app users
+// ============================================================
+
+model UserNotification {
+  id        String   @id @default(uuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  category  String   @default("rewards") // rewards | bills | orders | security
+  title     String
+  body      String
+  read      Boolean  @default(false)
+  metadata  Json?
+
+  createdAt DateTime @default(now())
+
+  @@index([userId, read])
+  @@index([userId, createdAt])
+  @@map("user_notifications")
 }
 
 

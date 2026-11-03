@@ -1,15 +1,16 @@
 import crypto from "crypto";
 import { Request, Response } from "express";
+import { config } from "../config/env";
+import { prisma } from "../config/prisma";
+import { NotificationType, OrderStatus, WalletTxType } from "../generated/prisma/client";
 import { razorpayService } from "../services/razorpay.service";
 import { razorpayRouteService } from "../services/razorpayRoute.service";
-import { calculateSettlementBreakdown } from "../services/settlementCalculator.service";
-import { getSellerSettlementProfile } from "../services/settlement.service";
-import { shipwayService } from "../services/shipway.service";
-import { asyncHandler } from "../utils/asyncHandler";
-import { prisma } from "../config/prisma";
-import { config } from "../config/env";
-import { OrderStatus, NotificationType } from "../generated/prisma/client";
 import { RewardsCalcService } from "../services/rewardsCalc.service";
+import { getSellerSettlementProfile } from "../services/settlement.service";
+import { calculateSettlementBreakdown } from "../services/settlementCalculator.service";
+import { shipwayService } from "../services/shipway.service";
+import { walletService } from "../services/wallet.service";
+import { asyncHandler } from "../utils/asyncHandler";
 
 /**
  * POST /api/payment/create-order
@@ -17,7 +18,7 @@ import { RewardsCalcService } from "../services/rewardsCalc.service";
  * Create a new Razorpay order for Cikka Mall purchases.
  */
 export const createOrder = asyncHandler(async (req: Request, res: Response) => {
-  const { amount, currency, receipt, notes } = req.body;
+  const { amount, currency, receipt, notes, items, ciPointsDiscount, exchangeCredit, deliveryFee } = req.body;
 
   if (amount === undefined || amount === null || isNaN(Number(amount))) {
     res.status(400).json({
@@ -27,8 +28,43 @@ export const createOrder = asyncHandler(async (req: Request, res: Response) => {
     return;
   }
 
+  let finalAmountInPaise = Number(amount);
+
+  // Authoritative server-side price recalculation if items are provided
+  if (Array.isArray(items) && items.length > 0) {
+    let computedRupees = 0;
+    let hasDbItems = false;
+
+    for (const it of items) {
+      if (it.id && !it.id.startsWith("PRD-") && !it.id.startsWith("item_")) {
+        const dbProd = await prisma.product.findUnique({ where: { id: it.id } }).catch(() => null);
+        if (dbProd) {
+          computedRupees += Number(dbProd.price) * (Number(it.qty) || 1);
+          hasDbItems = true;
+        } else {
+          computedRupees += (Number(it.price) || 0) * (Number(it.qty) || 1);
+        }
+      } else {
+        computedRupees += (Number(it.price) || 0) * (Number(it.qty) || 1);
+      }
+    }
+
+    if (hasDbItems && computedRupees > 0) {
+      const discount = Number(ciPointsDiscount) || 0;
+      const credit = Number(exchangeCredit) || 0;
+      const fee = Number(deliveryFee) || 0;
+      const expectedRupees = Math.max(0, computedRupees - discount - credit + fee);
+      const clientRupees = Number(amount) > 1000 ? Number(amount) / 100 : Number(amount);
+
+      // If price was tampered with downwards by client, enforce authoritative server price
+      if (clientRupees < expectedRupees * 0.95) {
+        finalAmountInPaise = Math.round(expectedRupees * 100);
+      }
+    }
+  }
+
   const result = await razorpayService.createOrder({
-    amount: Number(amount),
+    amount: finalAmountInPaise,
     currency,
     receipt,
     notes,
@@ -202,6 +238,15 @@ export const verifyPayment = asyncHandler(async (req: Request, res: Response) =>
   const hasSpecialSeller = processedOrders.some((p: any) => p.is_special_seller) || Boolean(req.body.is_special_seller);
   const mallRewards = RewardsCalcService.calculateMallPurchaseRewards(totalRupees, hasSpecialSeller);
 
+  // Credit earned rewards to authoritative double-entry wallet & ledger
+  await creditMallRewards(
+    (req as any).user?.id,
+    customer_phone,
+    razorpay_order_id,
+    razorpay_payment_id,
+    mallRewards
+  );
+
   res.status(200).json({
     success: true,
     verified: true,
@@ -216,6 +261,55 @@ export const verifyPayment = asyncHandler(async (req: Request, res: Response) =>
     processed_orders: processedOrders,
   });
 });
+
+async function creditMallRewards(
+  userId: string | null | undefined,
+  customerPhone: string | undefined,
+  razorpay_order_id: string,
+  razorpay_payment_id: string,
+  mallRewards: any
+) {
+  let targetUserId = userId;
+  if (!targetUserId && customerPhone) {
+    const clean = String(customerPhone).replace(/\D/g, "").slice(-10);
+    const user = await prisma.user.findFirst({
+      where: {
+        OR: [{ phone: { contains: clean } }, { phone: String(customerPhone) }],
+      },
+      select: { id: true },
+    });
+    if (user) targetUserId = user.id;
+  }
+
+  if (targetUserId) {
+    try {
+      if (mallRewards.cashbackEarned > 0) {
+        await walletService.applyEntry({
+          userId: targetUserId,
+          txType: WalletTxType.EARN_CASHBACK,
+          cashPaiseDelta: mallRewards.cashbackEarned * 100,
+          idempotencyKey: `MALL_CB:${razorpay_order_id}`,
+          orderId: razorpay_order_id,
+          razorpayPaymentId: razorpay_payment_id,
+          description: `Cikka Mall Cashback for Order #${razorpay_order_id}`,
+        });
+      }
+      if (mallRewards.ciPointsEarned > 0) {
+        await walletService.applyEntry({
+          userId: targetUserId,
+          txType: WalletTxType.EARN_ORDER,
+          pointsDelta: mallRewards.ciPointsEarned,
+          idempotencyKey: `MALL_PTS:${razorpay_order_id}`,
+          orderId: razorpay_order_id,
+          razorpayPaymentId: razorpay_payment_id,
+          description: `Cikka Mall CI Points for Order #${razorpay_order_id}`,
+        });
+      }
+    } catch (err: any) {
+      console.warn(`[Mall Rewards Credit Warning]: ${err.message}`);
+    }
+  }
+}
 
 export interface OrderFulfillmentParams {
   razorpay_order_id: string;
@@ -232,6 +326,7 @@ export interface OrderFulfillmentParams {
   originPincode?: string;
   delivery_option?: "standard" | "express";
   is_express?: boolean;
+  userId?: string | null;
 }
 
 /**
@@ -310,10 +405,10 @@ export async function executeOrderFulfillmentPipeline(params: OrderFulfillmentPa
       (isExpress
         ? "Delhivery Express Air (24-48h)"
         : isSneakers
-        ? "Xpressbees Express (0.5kg)"
-        : isLinen
-        ? "Delhivery Surface (0.5kg)"
-        : carrier_name || "Delhivery (0.5kg)");
+          ? "Xpressbees Express (0.5kg)"
+          : isLinen
+            ? "Delhivery Surface (0.5kg)"
+            : carrier_name || "Delhivery (0.5kg)");
 
     const itemPrice =
       Number(item.price) ||
@@ -360,12 +455,14 @@ export async function executeOrderFulfillmentPipeline(params: OrderFulfillmentPa
         where: { orderNumber: itemOrderId },
         update: {
           totalAmount: Number(itemPrice),
+          userId: params.userId || undefined,
           trackingNumber: null,
           courier: itemCarrier,
           status: OrderStatus.PENDING,
         },
         create: {
           sellerId: seller.id,
+          userId: params.userId || null,
           orderNumber: itemOrderId,
           customerName: customer_name || "Cikka Mall Customer",
           customerCity: `${customerCity} (${destPincode})`,
@@ -385,6 +482,20 @@ export async function executeOrderFulfillmentPipeline(params: OrderFulfillmentPa
         },
         include: { items: true },
       });
+
+      // Atomically decrement product inventory (flooring at 0)
+      try {
+        const prodRecord = await prisma.product.findUnique({ where: { id: productId } });
+        if (prodRecord) {
+          const qtyToDeduct = Math.min(prodRecord.stockQty, Number(item.qty) || 1);
+          if (qtyToDeduct > 0) {
+            await prisma.product.update({
+              where: { id: productId },
+              data: { stockQty: { decrement: qtyToDeduct } },
+            });
+          }
+        }
+      } catch (_stockErr) { }
 
       console.log(
         `[Prisma DB Order Created] #${itemOrderId} (${name}, Origin: ${itemPickupPincode}) assigned to Seller #${seller.id} -> Status: PENDING (Ready to Pack)`
@@ -517,7 +628,7 @@ export async function executeOrderFulfillmentPipeline(params: OrderFulfillmentPa
             courier: itemCarrier,
           },
         },
-      }).catch(() => {});
+      }).catch(() => { });
 
       await prisma.notification.create({
         data: {
@@ -531,7 +642,7 @@ export async function executeOrderFulfillmentPipeline(params: OrderFulfillmentPa
             holdUntil: holdUntil.toISOString(),
           },
         },
-      }).catch(() => {});
+      }).catch(() => { });
 
       processedOrders.push({
         order_number: itemOrderId,
@@ -710,7 +821,35 @@ export const verifyCardOtp = asyncHandler(async (req: Request, res: Response) =>
     return;
   }
 
-  // Generate authentic signature for order-payment confirmation
+  // Validate Bank 3DS OTP: In non-production allow authorized test OTPs (e.g. 111111, 123456, 482910)
+  const isAuthorizedDevOtp = cleanOtp === "111111" || cleanOtp === "123456" || cleanOtp === "482910";
+  if (!config.isProduction && !isAuthorizedDevOtp) {
+    res.status(400).json({
+      success: false,
+      verified: false,
+      error: "Invalid Bank OTP. Please enter the valid 6-digit code sent to your registered mobile.",
+    });
+    return;
+  }
+
+  // In production, require actual Razorpay gateway signature / payment capture
+  if (config.isProduction) {
+    const isGatewayValid = razorpayService.verifyPaymentSignature(
+      order_id,
+      payment_id,
+      req.body.razorpay_signature || ""
+    );
+    if (!isGatewayValid) {
+      res.status(400).json({
+        success: false,
+        verified: false,
+        error: "3D Secure authentication failed with the issuing bank.",
+      });
+      return;
+    }
+  }
+
+  // Generate signature for order-payment confirmation record
   const signature = razorpayService.generatePaymentSignature(order_id, payment_id);
 
   // Execute full fulfillment pipeline
@@ -733,6 +872,15 @@ export const verifyCardOtp = asyncHandler(async (req: Request, res: Response) =>
   const totalRupees = Number(amount) ? (Number(amount) > 1000 ? Number(amount) / 100 : Number(amount)) : 0;
   const hasSpecialSeller = processedOrders.some((p: any) => p.is_special_seller) || Boolean(req.body.is_special_seller);
   const mallRewards = RewardsCalcService.calculateMallPurchaseRewards(totalRupees, hasSpecialSeller);
+
+  // Credit earned rewards to authoritative double-entry wallet & ledger
+  await creditMallRewards(
+    (req as any).user?.id,
+    customer_phone,
+    order_id,
+    payment_id,
+    mallRewards
+  );
 
   res.status(200).json({
     success: true,
