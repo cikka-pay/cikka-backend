@@ -1,16 +1,56 @@
+import crypto from 'crypto';
 import { Request, Response } from 'express';
 import { HubbleService } from '../services/hubble.service';
 import { HubbleRestClient } from '../services/hubble-rest.service';
+import { walletService } from '../services/wallet.service';
+import { prisma } from '../config/prisma';
+import { WalletTxType } from '../generated/prisma/client';
 
-// In-memory store for user balances and transaction idempotency
-const userBalances: Record<string, number> = {
-  'cikka_9876543210': 100000.0,
-  '9876543210': 100000.0,
-  'partner_user_123': 15000.0,
-};
+/**
+ * Resolve a Hubble user identifier to an authoritative database User record.
+ * Supports direct UUID/User ID, phone number, or cikka_<phone> format.
+ */
+async function resolveHubbleUser(identifier?: string | null) {
+  if (!identifier) return null;
+  const trimmed = String(identifier).trim();
 
-const debitTransactions: Record<string, any> = {};
-const reverseTransactions: Record<string, any> = {};
+  // 1. Direct match on user.id
+  let user = await prisma.user.findUnique({
+    where: { id: trimmed },
+  });
+  if (user) return user;
+
+  // 2. Normalize 10-digit phone
+  const cleanPhone = trimmed.replace(/\D/g, '').slice(-10);
+  if (cleanPhone.length === 10) {
+    user = await prisma.user.findFirst({
+      where: {
+        OR: [
+          { phone: { contains: cleanPhone } },
+          { phone: cleanPhone },
+          { phone: `+91${cleanPhone}` },
+        ],
+      },
+    });
+    if (user) return user;
+  }
+
+  return null;
+}
+
+/**
+ * Helper to verify partner secret for Hubble callbacks
+ */
+function verifyPartnerSecret(req: Request): boolean {
+  const hubbleSecretHeader = req.headers['x-hubble-secret'];
+  const expectedSecret = process.env.HUBBLE_APP_SECRET || process.env.HUBBLE_SECRET;
+  if (process.env.NODE_ENV === 'production') {
+    if (!expectedSecret || hubbleSecretHeader !== expectedSecret) {
+      return false;
+    }
+  }
+  return true;
+}
 
 export class HubbleController {
   /**
@@ -19,20 +59,16 @@ export class HubbleController {
    */
   static async getSSOToken(req: Request, res: Response): Promise<void> {
     try {
-      // Optional portal handshake audit header
-      const hubbleSecretHeader = req.headers['x-hubble-secret'];
-      if (hubbleSecretHeader && typeof hubbleSecretHeader === 'string') {
-        console.log('[HubbleController] Received X-Hubble-Secret header audit signal');
-      }
-
+      const authUserId = (req as any).user?.id;
+      let dbUser = authUserId ? await prisma.user.findUnique({ where: { id: authUserId } }) : null;
 
       const { phone, userId, name, email } = req.body || {};
 
-      // User session fallback (can come from req.user if authenticated, or request body)
-      const userPhone = phone || (req as any).user?.phone || '9876543210';
-      const userIdentifier = userId || (req as any).user?.id || `cikka_${userPhone}`;
-      const userName = name || (req as any).user?.name || 'Cikka User';
-      const userEmail = email || (req as any).user?.email || 'user@cikka.app';
+      // User session fallback (authenticated user preferred)
+      const userPhone = dbUser?.phone?.replace(/\D/g, '').slice(-10) || phone || (req as any).user?.phone || '9876543210';
+      const userIdentifier = dbUser?.id || userId || (req as any).user?.id || `cikka_${userPhone}`;
+      const userName = dbUser?.name || name || (req as any).user?.name || 'Cikka User';
+      const userEmail = dbUser?.email || email || (req as any).user?.email || `${userPhone}@cikka.app`;
 
       const ssoData = HubbleService.generateSSOToken({
         phone: userPhone,
@@ -64,24 +100,48 @@ export class HubbleController {
 
   /**
    * Endpoint: GET /api/hubble/balance?userId={userId}
-   * Hubble calls this to fetch user's CI Points balance
+   * Hubble calls this to fetch user's CI Points balance from PostgreSQL UserWallet
    */
   static async getBalance(req: Request, res: Response): Promise<void> {
     try {
-      const userId = (req.query.userId as string) || (req.query.user_id as string) || 'cikka_9876543210';
-      
-      const balance = userBalances[userId] !== undefined ? userBalances[userId] : 100000.0;
-      userBalances[userId] = balance;
+      if (!verifyPartnerSecret(req)) {
+        res.status(401).json({
+          status: 'FAILED',
+          failureReason: 'Unauthorized Hubble partner request',
+        });
+        return;
+      }
+
+      const userIdParam = (req.query.userId as string) || (req.query.user_id as string) || (req.query.phone as string);
+      const user = await resolveHubbleUser(userIdParam);
+
+      if (!user) {
+        res.status(200).json({
+          status: 'SUCCESS',
+          userId: userIdParam || 'unknown',
+          totalCoins: 0,
+          coins: 0,
+          balance: 0,
+          total_coins: 0,
+          consumptionEligibility: {
+            allowed: false,
+          },
+        });
+        return;
+      }
+
+      const wallet = await walletService.getBalance(user.id);
+      const currentBalance = wallet.ciPoints;
 
       res.status(200).json({
         status: 'SUCCESS',
-        userId: userId,
-        totalCoins: balance,
-        coins: balance,
-        balance: balance,
-        total_coins: balance,
+        userId: user.id,
+        totalCoins: currentBalance,
+        coins: currentBalance,
+        balance: currentBalance,
+        total_coins: currentBalance,
         consumptionEligibility: {
-          allowed: true,
+          allowed: currentBalance > 0,
         },
       });
     } catch (error: any) {
@@ -96,9 +156,18 @@ export class HubbleController {
   /**
    * Endpoint: POST /api/hubble/debit
    * Hubble calls this to debit CI Points when redeeming a gift card
+   * Persisted atomically to PostgreSQL UserWallet and LoyaltyLedger with idempotency
    */
   static async debitCoins(req: Request, res: Response): Promise<void> {
     try {
+      if (!verifyPartnerSecret(req)) {
+        res.status(401).json({
+          status: 'FAILED',
+          failureReason: 'Unauthorized Hubble partner request',
+        });
+        return;
+      }
+
       const { userId, coins, referenceId } = req.body || {};
 
       if (!userId || !referenceId || typeof coins !== 'number') {
@@ -109,48 +178,56 @@ export class HubbleController {
         return;
       }
 
-      // Idempotency check: duplicate request with same referenceId
-      if (debitTransactions[referenceId]) {
-        console.log(`[HubbleController] Duplicate debit request for referenceId: ${referenceId}`);
-        res.status(200).json(debitTransactions[referenceId]);
-        return;
-      }
-
-      const currentBalance = userBalances[userId] !== undefined ? userBalances[userId] : 100000.0;
-
-      if (currentBalance < coins) {
+      const numCoins = Math.round(Number(coins));
+      if (numCoins <= 0) {
         res.status(200).json({
           status: 'FAILED',
-          failureReason: 'Insufficient balance',
-          balance: currentBalance,
+          failureReason: 'Invalid coins amount. Must be greater than zero.',
         });
         return;
       }
 
-      const updatedBalance = currentBalance - coins;
-      userBalances[userId] = updatedBalance;
+      const user = await resolveHubbleUser(userId);
+      if (!user) {
+        res.status(200).json({
+          status: 'FAILED',
+          failureReason: 'User not found in system',
+          balance: 0,
+        });
+        return;
+      }
 
-      const transactionId = `cikka_txn_${Date.now()}`;
-      const responsePayload = {
-        status: 'SUCCESS',
-        transactionId,
-        balance: updatedBalance,
-        referenceId,
-        coins,
-      };
+      try {
+        const result = await walletService.debitPoints(
+          user.id,
+          numCoins,
+          WalletTxType.REDEEM_REWARD,
+          {
+            description: `Hubble gift card redemption (ref: ${referenceId})`,
+            idempotencyKey: `HUBBLE_DEBIT:${referenceId}`,
+            redemptionId: referenceId,
+          }
+        );
 
-      debitTransactions[referenceId] = responsePayload;
-      console.log(`[HubbleController] Successfully debited ${coins} CI Points from ${userId}. Remaining: ${updatedBalance}`);
+        console.log(`[HubbleController] Successfully debited ${numCoins} CI Points from ${user.id}. Remaining: ${result.balanceAfterPoints}`);
 
-      res.status(200).json({
-        status: 'SUCCESS',
-        transactionId,
-        balance: updatedBalance,
-        totalCoins: updatedBalance,
-        coins: updatedBalance,
-        total_coins: updatedBalance,
-        referenceId,
-      });
+        res.status(200).json({
+          status: 'SUCCESS',
+          transactionId: `cikka_txn_${result.ledgerEntryId}`,
+          balance: result.balanceAfterPoints,
+          totalCoins: result.balanceAfterPoints,
+          coins: result.balanceAfterPoints,
+          total_coins: result.balanceAfterPoints,
+          referenceId,
+        });
+      } catch (debitErr: any) {
+        const currentWallet = await walletService.getBalance(user.id);
+        res.status(200).json({
+          status: 'FAILED',
+          failureReason: debitErr.message || 'Insufficient balance',
+          balance: currentWallet.ciPoints,
+        });
+      }
     } catch (error: any) {
       console.error('[HubbleController] Failed to debit coins:', error);
       res.status(200).json({
@@ -166,6 +243,14 @@ export class HubbleController {
    */
   static async reverseDebit(req: Request, res: Response): Promise<void> {
     try {
+      if (!verifyPartnerSecret(req)) {
+        res.status(401).json({
+          status: 'FAILED',
+          failureReason: 'Unauthorized Hubble partner request',
+        });
+        return;
+      }
+
       const { userId, referenceId } = req.body || {};
 
       if (!userId || !referenceId) {
@@ -176,36 +261,68 @@ export class HubbleController {
         return;
       }
 
-      // Idempotency check: already reversed
-      if (reverseTransactions[referenceId]) {
+      const user = await resolveHubbleUser(userId);
+      if (!user) {
+        res.status(200).json({
+          status: 'FAILED',
+          failureReason: 'User not found in system',
+        });
+        return;
+      }
+
+      // 1. Idempotency check: already reversed?
+      const reverseKey = `HUBBLE_REVERSE:${referenceId}`;
+      const existingReverse = await prisma.loyaltyLedger.findUnique({
+        where: { idempotencyKey: reverseKey },
+      });
+      if (existingReverse) {
         console.log(`[HubbleController] Duplicate reverse request for referenceId: ${referenceId}`);
         res.status(200).json({
           status: 'SUCCESS',
           message: 'Already reversed',
+          transactionId: `cikka_txn_rev_${existingReverse.id}`,
+          balance: existingReverse.balanceAfterPoints,
           referenceId,
         });
         return;
       }
 
-      const originalDebit = debitTransactions[referenceId];
-      const currentBalance = userBalances[userId] !== undefined ? userBalances[userId] : 100000.0;
-      
-      const coinsToRefund = originalDebit ? (originalDebit.coins || 0) : 0;
-      const updatedBalance = currentBalance + coinsToRefund;
-      userBalances[userId] = updatedBalance;
+      // 2. Verify original debit exists in PostgreSQL ledger
+      const debitKey = `HUBBLE_DEBIT:${referenceId}`;
+      const originalDebit = await prisma.loyaltyLedger.findUnique({
+        where: { idempotencyKey: debitKey },
+      });
 
-      const transactionId = `cikka_txn_rev_${Date.now()}`;
-      const responsePayload = {
+      if (!originalDebit) {
+        res.status(200).json({
+          status: 'FAILED',
+          failureReason: `Original debit transaction for reference ${referenceId} not found`,
+        });
+        return;
+      }
+
+      const coinsToRefund = Math.abs(originalDebit.pointsDelta);
+
+      // 3. Atomically restore CI Points
+      const refundResult = await walletService.creditPoints(
+        user.id,
+        coinsToRefund,
+        WalletTxType.EARN_ADMIN,
+        {
+          description: `Hubble reversal for transaction ${referenceId}`,
+          idempotencyKey: reverseKey,
+          redemptionId: referenceId,
+        }
+      );
+
+      console.log(`[HubbleController] Successfully reversed debit ${referenceId} for ${user.id}. New balance: ${refundResult.balanceAfterPoints}`);
+
+      res.status(200).json({
         status: 'SUCCESS',
-        transactionId,
-        balance: updatedBalance,
+        transactionId: `cikka_txn_rev_${refundResult.ledgerEntryId}`,
+        balance: refundResult.balanceAfterPoints,
         referenceId,
-      };
-
-      reverseTransactions[referenceId] = responsePayload;
-      console.log(`[HubbleController] Successfully reversed debit ${referenceId} for ${userId}. New balance: ${updatedBalance}`);
-
-      res.status(200).json(responsePayload);
+      });
     } catch (error: any) {
       console.error('[HubbleController] Failed to reverse debit:', error);
       res.status(200).json({
@@ -283,10 +400,21 @@ export class HubbleController {
 
   /**
    * Endpoint: POST /api/hubble/orders
-   * Place an order to generate gift card vouchers
+   * Place an order to generate gift card vouchers.
+   * STRICT SECURITY: Requires authenticated user, validates CI Points balance in PostgreSQL,
+   * atomically burns points before order placement, and automatically rolls back points if Hubble API fails.
    */
   static async createOrder(req: Request, res: Response): Promise<void> {
     try {
+      const authUserId = (req as any).user?.id;
+      if (!authUserId) {
+        res.status(401).json({
+          success: false,
+          error: 'Authentication required to redeem vouchers',
+        });
+        return;
+      }
+
       const { productId, denomination, quantity = 1, amount, customerDetails } = req.body;
 
       if (!productId) {
@@ -301,39 +429,106 @@ export class HubbleController {
       const qtyNum = Number(quantity || 1);
       const totalAmount = Number(amount || denomNum * qtyNum);
 
-      if (!denomNum || denomNum <= 0) {
+      if (!denomNum || denomNum <= 0 || qtyNum <= 0 || totalAmount <= 0) {
         res.status(400).json({
           success: false,
-          error: 'Valid denomination/amount is required',
+          error: 'Valid denomination, quantity, and amount are required',
         });
         return;
       }
 
-      const orderResult = await HubbleRestClient.placeOrder({
-        productId,
-        amount: totalAmount,
-        denominationDetails: [
-          {
-            denomination: denomNum,
-            quantity: qtyNum,
-          },
-        ],
-        customerDetails: customerDetails || {
-          name: (req as any).user?.name || 'Cikka Member',
-          phoneNumber: (req as any).user?.phone || '9876543210',
-          email: (req as any).user?.email || 'member@cikka.app',
-        },
-      });
+      // Strict Valuation: 1 CI Point = ₹1 gift voucher purchasing power
+      const totalPointsRequired = Math.round(totalAmount);
 
-      res.status(201).json({
-        success: true,
-        message: 'Gift card vouchers created successfully',
-        data: orderResult,
-        cashback_earned: 0, // Strict rule: No cashback on coupon/voucher redemption
-        points_earned: 0,   // Strict rule: No rewards or CI points earned on coupon redemption
-        source: orderResult.source,
-        isLiveApi: orderResult.isLiveApi,
-      });
+      // 1. Verify User CI Points balance in PostgreSQL UserWallet
+      const wallet = await walletService.getBalance(authUserId);
+      if (wallet.ciPoints < totalPointsRequired) {
+        res.status(400).json({
+          success: false,
+          error: `Insufficient CI Points. Required: ${totalPointsRequired}, Available: ${wallet.ciPoints}`,
+          required_points: totalPointsRequired,
+          current_points: wallet.ciPoints,
+        });
+        return;
+      }
+
+      // 2. Generate unique order reference and atomically debit points BEFORE calling partner
+      const orderReference = `hubble_ord_${Date.now()}_${crypto.randomBytes(4).toString('hex')}`;
+      let debitResult;
+      try {
+        debitResult = await walletService.debitPoints(
+          authUserId,
+          totalPointsRequired,
+          WalletTxType.REDEEM_REWARD,
+          {
+            description: `Hubble voucher purchase: ${productId} (₹${totalAmount})`,
+            idempotencyKey: `HUBBLE_ORDER_DEBIT:${orderReference}`,
+            redemptionId: orderReference,
+          }
+        );
+      } catch (debitErr: any) {
+        res.status(400).json({
+          success: false,
+          error: debitErr.message || 'Failed to debit CI Points for gift card order',
+        });
+        return;
+      }
+
+      // 3. Dispatch order creation to Hubble REST API
+      try {
+        const user = await prisma.user.findUnique({ where: { id: authUserId } });
+        const orderResult = await HubbleRestClient.placeOrder({
+          productId,
+          referenceId: orderReference,
+          amount: totalAmount,
+          denominationDetails: [
+            {
+              denomination: denomNum,
+              quantity: qtyNum,
+            },
+          ],
+          customerDetails: customerDetails || {
+            name: user?.name || (req as any).user?.name || 'Cikka Member',
+            phoneNumber: user?.phone || (req as any).user?.phone || '9876543210',
+            email: user?.email || (req as any).user?.email || 'member@cikka.app',
+          },
+        });
+
+        res.status(201).json({
+          success: true,
+          message: 'Gift card vouchers created successfully',
+          data: orderResult,
+          points_burned: totalPointsRequired,
+          remaining_points: debitResult.balanceAfterPoints,
+          cashback_earned: 0, // Strict rule: No cashback on coupon/voucher redemption
+          points_earned: 0,   // Strict rule: No rewards or CI points earned on coupon redemption
+          source: orderResult.source,
+          isLiveApi: orderResult.isLiveApi,
+        });
+      } catch (hubbleError: any) {
+        console.error('[HubbleController] Order placement failed, rolling back debited CI points:', hubbleError);
+
+        // 4. Automatic Rollback: Refund the exact points burned if Hubble API threw an error
+        try {
+          await walletService.creditPoints(
+            authUserId,
+            totalPointsRequired,
+            WalletTxType.EARN_ADMIN,
+            {
+              description: `Refund: Rollback for failed Hubble voucher order (${productId})`,
+              idempotencyKey: `HUBBLE_ORDER_ROLLBACK:${orderReference}`,
+              redemptionId: orderReference,
+            }
+          );
+        } catch (rollbackErr: any) {
+          console.error('[HubbleController] Critical: Failed to rollback points after order failure:', rollbackErr);
+        }
+
+        res.status(502).json({
+          success: false,
+          error: hubbleError.message || 'Failed to place gift card order with partner. Points have been refunded.',
+        });
+      }
     } catch (error: any) {
       console.error('[HubbleController] Failed to create order:', error);
       res.status(500).json({
@@ -361,32 +556,33 @@ export class HubbleController {
       });
     }
   }
+
   /**
    * Endpoint: GET /api/hubble/status
    * Get integration status
    */
   static async getStatus(req: Request, res: Response): Promise<void> {
     try {
-        const hasAppSecret = !!process.env.HUBBLE_APP_SECRET;
-        const hasRestClientSecret = !!process.env.HUBBLE_REST_CLIENT_SECRET;
-        const mockMode = process.env.HUBBLE_MOCK_MODE === 'true';
-        const publicIp = await HubbleRestClient.getPublicIp();
+      const hasAppSecret = !!process.env.HUBBLE_APP_SECRET;
+      const hasRestClientSecret = !!process.env.HUBBLE_REST_CLIENT_SECRET;
+      const mockMode = process.env.HUBBLE_MOCK_MODE === 'true';
+      const publicIp = await HubbleRestClient.getPublicIp();
 
-        res.status(200).json({
-            success: true,
-            status: {
-                mockMode,
-                sdkConfigured: hasAppSecret,
-                restApiConfigured: hasRestClientSecret,
-                currentPublicIp: publicIp,
-                liveApiConnected: !!HubbleRestClient.cachedToken,
-                environment: process.env.HUBBLE_ENV || 'staging',
-                targetEndpoint: process.env.HUBBLE_ENV === 'production' ? 'https://api.myhubble.money' : 'https://api.dev.myhubble.money',
-                lastAuthError: HubbleRestClient.lastAuthError || null,
-            }
-        });
-    } catch(err: any) {
-        res.status(500).json({ success: false, error: err.message });
+      res.status(200).json({
+        success: true,
+        status: {
+          mockMode,
+          sdkConfigured: hasAppSecret,
+          restApiConfigured: hasRestClientSecret,
+          currentPublicIp: publicIp,
+          liveApiConnected: !!HubbleRestClient.cachedToken,
+          environment: process.env.HUBBLE_ENV || 'staging',
+          targetEndpoint: process.env.HUBBLE_ENV === 'production' ? 'https://api.myhubble.money' : 'https://api.dev.myhubble.money',
+          lastAuthError: HubbleRestClient.lastAuthError || null,
+        },
+      });
+    } catch (err: any) {
+      res.status(500).json({ success: false, error: err.message });
     }
   }
 

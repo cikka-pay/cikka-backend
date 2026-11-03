@@ -1,10 +1,11 @@
 import { Request, Response } from "express";
 import { asyncHandler } from "../utils/asyncHandler";
 import { prisma } from "../config/prisma";
-import { Prisma, ReturnStatus, NotificationType } from "../generated/prisma/client";
+import { Prisma, ReturnStatus, NotificationType, WalletTxType } from "../generated/prisma/client";
 import { shipwayService } from "../services/shipway.service";
 import { razorpayRouteService } from "../services/razorpayRoute.service";
 import { razorpayService } from "../services/razorpay.service";
+import { walletService } from "../services/wallet.service";
 
 export const listReturns = asyncHandler(async (req: Request, res: Response) => {
   const sellerId = req.seller!.id;
@@ -176,15 +177,44 @@ export const updateReturnStatus = asyncHandler(async (req: Request, res: Respons
       }
 
       // If status is REFUNDED, issue customer card/points refund
-      if (status === "REFUNDED" && settlement?.razorpayPaymentId) {
-        customerRefundResult = await razorpayService.refundPayment(
-          settlement.razorpayPaymentId,
-          Math.round(Number(ret.refundAmount) * 100),
-          {
-            returnId: ret.id,
-            orderNumber: ret.order.orderNumber,
+      if (status === "REFUNDED") {
+        if (settlement?.razorpayPaymentId) {
+          customerRefundResult = await razorpayService.refundPayment(
+            settlement.razorpayPaymentId,
+            Math.round(Number(ret.refundAmount) * 100),
+            {
+              returnId: ret.id,
+              orderNumber: ret.order.orderNumber,
+            }
+          );
+        }
+
+        // Rewards Store CI Points Restoration: If this order was redeemed with points, refund them
+        if (
+          (ret.order.orderNumber.startsWith("ORD-RW-") || ret.order.customerName?.includes("RDM-")) &&
+          ret.order.userId
+        ) {
+          try {
+            const burnedPoints = Number(ret.order.totalAmount);
+            if (burnedPoints > 0) {
+              await walletService.creditPoints(
+                ret.order.userId,
+                burnedPoints,
+                WalletTxType.EARN_ADMIN,
+                {
+                  description: `CI Points restored for returned reward #${ret.order.orderNumber}`,
+                  idempotencyKey: `RETURN_REWARD_RESTORE:${ret.id}`,
+                  orderId: ret.order.orderNumber,
+                }
+              );
+              console.log(
+                `[Reward Store Return] Restored ${burnedPoints} CI Points to user ${ret.order.userId} for Return #${ret.id}`
+              );
+            }
+          } catch (restoreErr: any) {
+            console.warn("[Reward Points Restoration Warning]:", restoreErr.message);
           }
-        );
+        }
       }
     } catch (clawbackErr: any) {
       console.warn("[Return Clawback/Refund Error]:", clawbackErr.message || clawbackErr);
