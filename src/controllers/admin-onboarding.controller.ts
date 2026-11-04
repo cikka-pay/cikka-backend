@@ -335,29 +335,70 @@ export const deleteApplication = asyncHandler(async (req: Request, res: Response
 });
 
 export const getApprovedSellers = asyncHandler(async (req: Request, res: Response) => {
-  const sellers = await prisma.seller.findMany({
-    where: { 
-      onboardingStatus: "VERIFIED",
-      OR: [
-        { email: null },
-        { email: { not: { endsWith: "@testbrand.com" } } }
-      ]
-    },
-    include: {
-      onboarding: true,
-      settings: true,
-      products: {
-        where: {
+  let sellers: any[] = [];
+  try {
+    sellers = await prisma.seller.findMany({
+      where: { 
+        onboardingStatus: "VERIFIED",
+        OR: [
+          { email: null },
+          { email: { not: { endsWith: "@testbrand.com" } } }
+        ]
+      },
+      include: {
+        onboarding: true,
+        settings: true,
+        products: {
+          where: {
+            OR: [
+              { status: 'PENDING_APPROVAL' },
+              { pendingPrice: { not: null } }
+            ]
+          },
+          select: { id: true, status: true, pendingPrice: true }
+        }
+      },
+      orderBy: { updatedAt: "desc" },
+    });
+  } catch (dbErr: any) {
+    console.warn("[adminOnboarding.getApprovedSellers] Primary query failed (falling back):", dbErr?.message);
+    try {
+      sellers = await prisma.seller.findMany({
+        where: { 
+          onboardingStatus: "VERIFIED",
           OR: [
-            { status: 'PENDING_APPROVAL' },
-            { pendingPrice: { not: null } }
+            { email: null },
+            { email: { not: { endsWith: "@testbrand.com" } } }
           ]
         },
-        select: { id: true, status: true, pendingPrice: true }
-      }
-    },
-    orderBy: { updatedAt: "desc" },
-  });
+        include: {
+          onboarding: true,
+          settings: true,
+          products: {
+            where: { status: 'PENDING_APPROVAL' },
+            select: { id: true, status: true }
+          }
+        },
+        orderBy: { updatedAt: "desc" },
+      });
+    } catch (fallbackErr: any) {
+      console.warn("[adminOnboarding.getApprovedSellers] Secondary query failed (falling back to sellers-only):", fallbackErr?.message);
+      sellers = await prisma.seller.findMany({
+        where: { 
+          onboardingStatus: "VERIFIED",
+          OR: [
+            { email: null },
+            { email: { not: { endsWith: "@testbrand.com" } } }
+          ]
+        },
+        include: {
+          onboarding: true,
+          settings: true,
+        },
+        orderBy: { updatedAt: "desc" },
+      });
+    }
+  }
 
   // Ensure every seller has a CKA029XXX Cikka ID
   for (const seller of sellers) {
@@ -381,8 +422,9 @@ export const getApprovedSellers = asyncHandler(async (req: Request, res: Respons
   }
 
   const enrichedSellers = sellers.map(s => {
-    const pendingProducts = s.products.filter(p => p.status === 'PENDING_APPROVAL');
-    const pendingPriceReqs = s.products.filter(p => p.pendingPrice !== null);
+    const productsList = s.products || [];
+    const pendingProducts = productsList.filter((p: any) => p.status === 'PENDING_APPROVAL');
+    const pendingPriceReqs = productsList.filter((p: any) => p.pendingPrice !== undefined && p.pendingPrice !== null);
     return {
       ...s,
       cikkaId: s.onboarding?.applicationId || null,
