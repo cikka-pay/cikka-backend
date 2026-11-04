@@ -494,6 +494,42 @@ export class HubbleController {
           },
         });
 
+        // 3b. Persist vouchers to PostgreSQL UserVoucher vault
+        if (Array.isArray(orderResult.vouchers) && orderResult.vouchers.length > 0) {
+          try {
+            const { data: brand } = await HubbleRestClient.getBrandById(productId).catch(() => ({ data: null }));
+            const brandTitle = brand?.title || req.body.brandTitle || "Brand Voucher";
+            const brandCategory = (brand?.category && brand.category[0]) || "GENERAL";
+            const brandLogo = brand?.logoUrl || null;
+
+            for (let i = 0; i < orderResult.vouchers.length; i++) {
+              const v = orderResult.vouchers[i];
+              const vRef = v.id ? `${orderReference}_${v.id}` : `${orderReference}_${i}`;
+              const validDate = v.validTill ? new Date(v.validTill) : new Date(Date.now() + 365 * 86400000);
+
+              await prisma.userVoucher.create({
+                data: {
+                  userId: authUserId,
+                  orderReference: vRef,
+                  productId,
+                  brandTitle,
+                  brandCategory,
+                  brandLogo,
+                  cardNumber: v.cardNumber || `VCHR-${Date.now()}-${Math.floor(1000 + Math.random() * 9000)}`,
+                  cardPin: v.cardPin || null,
+                  denomination: Number(v.amount) || denomNum,
+                  pointsBurned: Number(v.amount) || denomNum,
+                  validTill: isNaN(validDate.getTime()) ? null : validDate,
+                  cardType: v.cardType || brand?.cardType || "CARD_AND_PIN_NO_SECURED",
+                  status: "ACTIVE",
+                },
+              });
+            }
+          } catch (persistErr: any) {
+            console.warn("[HubbleController] Failed to persist vouchers to UserVoucher:", persistErr.message);
+          }
+        }
+
         res.status(201).json({
           success: true,
           message: 'Gift card vouchers created successfully',

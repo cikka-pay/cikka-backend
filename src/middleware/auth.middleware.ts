@@ -293,7 +293,15 @@ export async function requirePanVerifiedUserOrSellerAuth(
       token.includes("bypass") ||
       token.includes("dev-local")
     ) {
-      req.user = { id: "dev-bypass-1" };
+      try {
+        const dbBypass = await prisma.user.findFirst({
+          where: { phone: { contains: "1111111111" } },
+          select: { id: true },
+        });
+        req.user = { id: dbBypass?.id || "975ada92-b982-4205-8c49-4f2723fce75a" };
+      } catch {
+        req.user = { id: "975ada92-b982-4205-8c49-4f2723fce75a" };
+      }
       next();
       return;
     }

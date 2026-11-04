@@ -1,31 +1,33 @@
 import { Router } from "express";
-import { requireSellerAuth, optionalUserAuth } from "../middleware/auth.middleware";
+import { optionalUserAuth, requireSellerAuth } from "../middleware/auth.middleware";
+import adminRoutes from "./admin.routes";
 import authRoutes from "./auth.routes";
-import userAuthRoutes from "./user-auth.routes";
-import setuRoutes from "./setu.routes";
 import bbpsRoutes from "./bbps.routes";
 import cikkaPayRoutes from "./cikka-pay.routes";
 import instantpayRoutes from "./instantpay.routes";
 import onboardingRoutes from "./onboarding.routes";
-import adminRoutes from "./admin.routes";
+import setuRoutes from "./setu.routes";
+import userAuthRoutes from "./user-auth.routes";
 
 import dashboardRoutes from "./dashboard.routes";
-import productsRoutes from "./products.routes";
-import ordersRoutes from "./orders.routes";
 import inventoryRoutes from "./inventory.routes";
-import settlementsRoutes from "./settlements.routes";
-import returnsRoutes from "./returns.routes";
 import notificationsRoutes from "./notifications.routes";
+import ordersRoutes from "./orders.routes";
+import productsRoutes from "./products.routes";
+import returnsRoutes from "./returns.routes";
 import settingsRoutes from "./settings.routes";
+import settlementsRoutes from "./settlements.routes";
 import teamRoutes from "./team.routes";
 
+import cardsRoutes from "./cards.routes";
 import paymentRoutes from "./payment.routes";
+import reviewsRoutes from "./reviews.routes";
 import rewardsRoutes from "./rewards.routes";
 import shipwayRoutes from "./shipway.routes";
 import userAddressRoutes from "./user-address.routes";
-import cardsRoutes from "./cards.routes";
-import walletRoutes from "./wallet.routes";
 import userNotificationRoutes from "./user-notification.routes";
+import userVoucherRoutes from "./user-voucher.routes";
+import walletRoutes from "./wallet.routes";
 
 import hubbleRoutes from "./hubble.routes";
 import razorpayRouteRoutes from "./razorpay-route.routes";
@@ -54,6 +56,9 @@ router.use("/customer-auth", userAuthRoutes); // Backward compatibility alias
 router.use("/user/address", userAddressRoutes);
 router.use("/user/addresses", userAddressRoutes);
 router.use("/user-address", userAddressRoutes);
+router.use("/user/orders", ordersRoutes);
+router.use("/user-orders", ordersRoutes);
+router.use("/reviews", reviewsRoutes);
 router.use("/cards", cardsRoutes);
 router.use("/user/cards", cardsRoutes);
 router.use("/setu/v1", setuRoutes);
@@ -67,6 +72,9 @@ router.use("/hubble.sso", hubbleRoutes);
 
 // User Wallet & In-App Notifications
 router.use("/wallet", walletRoutes);
+router.use("/user/vouchers", userVoucherRoutes);
+router.use("/user-vouchers", userVoucherRoutes);
+router.use("/vouchers", userVoucherRoutes);
 router.use("/user-notifications", userNotificationRoutes);
 router.use("/user/notifications", userNotificationRoutes);
 
@@ -85,14 +93,14 @@ router.use("/shipway", shipwayRoutes);
 
 
 // Return Request Endpoint (Customer App / Postman)
-import { createReturn, createExchange } from "../controllers/returns.controller";
+import { createExchange, createReturn } from "../controllers/returns.controller";
 router.post("/returns/request", optionalUserAuth, createReturn);
 router.post("/returns/create", optionalUserAuth, createReturn);
 router.post("/returns/exchange", optionalUserAuth, createExchange);
 
 // Public Cikka Mall Catalog (Product exploration & single-loop exchanges)
-import { listMallCatalogProducts } from "../controllers/products.controller";
 import { createOrder } from "../controllers/orders.controller";
+import { listMallCatalogProducts } from "../controllers/products.controller";
 router.get("/mall/products", listMallCatalogProducts);
 router.get("/products/mall", listMallCatalogProducts);
 // Order simulation endpoint (customer app / Postman testing)

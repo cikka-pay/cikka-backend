@@ -42,6 +42,12 @@ enum SettlementStatus {
   PAID
 }
 
+enum VoucherStatus {
+  ACTIVE
+  REDEEMED
+  EXPIRED
+}
+
 enum ReturnStatus {
   REQUESTED
   APPROVED
@@ -324,6 +330,7 @@ model Product {
   orderItems  OrderItem[]
   returns     Return[]
   variants    ProductVariant[]
+  reviews     ProductReview[]
 
   @@index([sellerId])
   @@index([sellerId, status])
@@ -352,6 +359,34 @@ model ProductVariant {
   @@unique([productId, typeName, value])
   @@index([productId])
   @@map("product_variants")
+}
+
+// ============================================================
+// PRODUCT REVIEW — Customer ratings, reviews, photos & videos
+// ============================================================
+
+model ProductReview {
+  id         String   @id @default(uuid())
+  productId  String
+  product    Product  @relation(fields: [productId], references: [id], onDelete: Cascade)
+  userId     String?
+  user       User?    @relation(fields: [userId], references: [id], onDelete: SetNull)
+  userName   String
+  userPhone  String?
+  rating     Int      @default(5)
+  title      String?
+  comment    String
+  photos     String[] @default([])
+  videoUrl   String?
+  helpfulYes Int      @default(0)
+  helpfulNo  Int      @default(0)
+  verified   Boolean  @default(true)
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  @@index([productId])
+  @@index([userId])
+  @@map("product_reviews")
 }
 
 // ============================================================
@@ -579,7 +614,9 @@ model User {
   wallet        UserWallet?
   ledgerEntries LoyaltyLedger[]
   orders        Order[]
+  vouchers      UserVoucher[]
   notifications UserNotification[]
+  reviews       ProductReview[]
 
   createdAt     DateTime @default(now())
   updatedAt     DateTime @updatedAt
@@ -641,6 +678,36 @@ model UserSavedCard {
 // ============================================================
 // USER NOTIFICATION — In-app notifications for mobile app users
 // ============================================================
+
+
+model UserVoucher {
+  id             String        @id @default(uuid())
+  userId         String
+  user           User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  orderReference String        @unique
+  productId      String
+  brandTitle     String
+  brandCategory  String?
+  brandLogo      String?
+
+  cardNumber     String
+  cardPin        String?
+  denomination   Int
+  pointsBurned   Int
+  validTill      DateTime?
+  cardType       String?
+
+  status         VoucherStatus @default(ACTIVE)
+  redeemedAt     DateTime?
+
+  createdAt      DateTime      @default(now())
+  updatedAt      DateTime      @updatedAt
+
+  @@index([userId, status])
+  @@index([userId, brandTitle])
+  @@map("user_vouchers")
+}
 
 model UserNotification {
   id        String   @id @default(uuid())
