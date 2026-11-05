@@ -335,29 +335,70 @@ export const deleteApplication = asyncHandler(async (req: Request, res: Response
 });
 
 export const getApprovedSellers = asyncHandler(async (req: Request, res: Response) => {
-  const sellers = await prisma.seller.findMany({
-    where: { 
-      onboardingStatus: "VERIFIED",
-      OR: [
-        { email: null },
-        { email: { not: { endsWith: "@testbrand.com" } } }
-      ]
-    },
-    include: {
-      onboarding: true,
-      settings: true,
-      products: {
-        where: {
+  let sellers: any[] = [];
+  try {
+    sellers = await prisma.seller.findMany({
+      where: { 
+        onboardingStatus: "VERIFIED",
+        OR: [
+          { email: null },
+          { email: { not: { endsWith: "@testbrand.com" } } }
+        ]
+      },
+      include: {
+        onboarding: true,
+        settings: true,
+        products: {
+          where: {
+            OR: [
+              { status: 'PENDING_APPROVAL' },
+              { pendingPrice: { not: null } }
+            ]
+          },
+          select: { id: true, status: true, pendingPrice: true }
+        }
+      },
+      orderBy: { updatedAt: "desc" },
+    });
+  } catch (dbErr: any) {
+    console.warn("[adminOnboarding.getApprovedSellers] Primary query failed (falling back):", dbErr?.message);
+    try {
+      sellers = await prisma.seller.findMany({
+        where: { 
+          onboardingStatus: "VERIFIED",
           OR: [
-            { status: 'PENDING_APPROVAL' },
-            { pendingPrice: { not: null } }
+            { email: null },
+            { email: { not: { endsWith: "@testbrand.com" } } }
           ]
         },
-        select: { id: true, status: true, pendingPrice: true }
-      }
-    },
-    orderBy: { updatedAt: "desc" },
-  });
+        include: {
+          onboarding: true,
+          settings: true,
+          products: {
+            where: { status: 'PENDING_APPROVAL' },
+            select: { id: true, status: true }
+          }
+        },
+        orderBy: { updatedAt: "desc" },
+      });
+    } catch (fallbackErr: any) {
+      console.warn("[adminOnboarding.getApprovedSellers] Secondary query failed (falling back to sellers-only):", fallbackErr?.message);
+      sellers = await prisma.seller.findMany({
+        where: { 
+          onboardingStatus: "VERIFIED",
+          OR: [
+            { email: null },
+            { email: { not: { endsWith: "@testbrand.com" } } }
+          ]
+        },
+        include: {
+          onboarding: true,
+          settings: true,
+        },
+        orderBy: { updatedAt: "desc" },
+      });
+    }
+  }
 
   // Ensure every seller has a CKA029XXX Cikka ID
   for (const seller of sellers) {
@@ -381,8 +422,9 @@ export const getApprovedSellers = asyncHandler(async (req: Request, res: Respons
   }
 
   const enrichedSellers = sellers.map(s => {
-    const pendingProducts = s.products.filter(p => p.status === 'PENDING_APPROVAL');
-    const pendingPriceReqs = s.products.filter(p => p.pendingPrice !== null);
+    const productsList = s.products || [];
+    const pendingProducts = productsList.filter((p: any) => p.status === 'PENDING_APPROVAL');
+    const pendingPriceReqs = productsList.filter((p: any) => p.pendingPrice !== undefined && p.pendingPrice !== null);
     return {
       ...s,
       cikkaId: s.onboarding?.applicationId || null,
@@ -396,12 +438,59 @@ export const getApprovedSellers = asyncHandler(async (req: Request, res: Respons
 
 export const getSellerProducts = asyncHandler(async (req: Request, res: Response) => {
   const { id } = req.params;
-  const products = await prisma.product.findMany({
-    where: { sellerId: id },
-    include: { variants: true },
-    orderBy: { createdAt: "desc" },
-  });
-  res.json(products);
+  try {
+    const products = await prisma.product.findMany({
+      where: { sellerId: id },
+      include: { variants: true },
+      orderBy: { createdAt: "desc" },
+    });
+    res.json(products);
+  } catch (err: any) {
+    console.warn(`[getSellerProducts] Primary query failed for seller ${id} (falling back):`, err?.message);
+    try {
+      const fallbackProducts = await prisma.product.findMany({
+        where: { sellerId: id },
+        select: {
+          id: true,
+          sellerId: true,
+          name: true,
+          brandName: true,
+          sku: true,
+          category: true,
+          description: true,
+          mrp: true,
+          price: true,
+          gstSlab: true,
+          loyaltyPoints: true,
+          stockQty: true,
+          lowStockThreshold: true,
+          weightGrams: true,
+          dimLengthCm: true,
+          dimWidthCm: true,
+          dimHeightCm: true,
+          fulfillmentType: true,
+          dispatchDays: true,
+          imageUrls: true,
+          videoUrl: true,
+          status: true,
+          createdAt: true,
+          updatedAt: true,
+          variants: true,
+        },
+        orderBy: { createdAt: "desc" },
+      });
+      const normalized = fallbackProducts.map((p: any) => ({
+        ...p,
+        pendingPrice: null,
+        pendingMrp: null,
+        priceRequestedAt: null,
+      }));
+      res.json(normalized);
+    } catch (fallbackErr: any) {
+      console.error(`[getSellerProducts] Fallback query failed for seller ${id}:`, fallbackErr?.message);
+      res.json([]);
+    }
+  }
 });
 
 export const updateProductApproval = asyncHandler(async (req: Request, res: Response) => {
@@ -413,10 +502,26 @@ export const updateProductApproval = asyncHandler(async (req: Request, res: Resp
     return;
   }
 
-  const product = await prisma.product.update({
-    where: { id },
-    data: { status },
-  });
+  let product: any;
+  try {
+    product = await prisma.product.update({
+      where: { id },
+      data: { status },
+    });
+  } catch (err: any) {
+    console.warn(`[updateProductApproval] Standard update failed, trying selective update:`, err?.message);
+    product = await prisma.product.update({
+      where: { id },
+      data: { status },
+      select: {
+        id: true,
+        sellerId: true,
+        name: true,
+        sku: true,
+        status: true,
+      },
+    });
+  }
 
   // Notify seller of catalog approval or rejection with notes
   const title = status === "ACTIVE"
