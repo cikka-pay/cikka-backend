@@ -135,10 +135,25 @@ back to stub data on error — it returns 502.
 
 ## Acceptance criteria
 
-- [ ] `POST /api/bbps/session` returns a working Setu link for a verified user; 401 without
+- [x] `POST /api/bbps/session` returns a working Setu link for a verified user; 401 without
       JWT; 400 if phone not verified; 502 (not fake data) when Setu fails in real mode.
-- [ ] Webhook rejects a wrong or missing API key with 401 and accepts the right one.
-- [ ] Re-delivering the same event changes nothing and still returns 200.
-- [ ] A late `bill_payment_failure` never overwrites `SUCCESS` or `REFUNDED`.
-- [ ] History returns only the caller's payments.
-- [ ] No `/setu/v1/*` or old `/api/bbps/*` fetch/pay routes remain.
+      _Verified in stub mode and with a mocked Setu client (unit + integration tests). A real
+      sandbox link is still unverified: needs `orgId` / credentials from Setu (open question)._
+- [x] Webhook rejects a wrong or missing API key with 401 and accepts the right one.
+- [x] Re-delivering the same event changes nothing and still returns 200.
+- [x] A late `bill_payment_failure` never overwrites `SUCCESS` or `REFUNDED`.
+- [x] History returns only the caller's payments.
+- [x] No `/setu/v1/*` or old `/api/bbps/*` fetch/pay routes remain.
+
+## Status
+
+Steps 1–8 done in this repo (routes wired in `src/routes/index.ts`; old Setu/BBPS code,
+config, env vars and tests removed; `PaymentTransaction` model kept for other code, with no
+BBPS writes). Tests: `src/__tests__/unit/billpay-*.test.ts` and
+`src/__tests__/integration/billpay.test.ts`. API docs: `specs/api-contract.yaml`, `specs/API.md`.
+
+Not done here:
+- Step 6 reward rule: CI Points hook is behind `BBPS_REWARDS_ENABLED` (off) until the rule is decided.
+- Step 9 (buyer app) and step 10 (go-live with Setu) are outside this repo.
+- Unmatched `/api/*` paths (including the retired ones) answer 401 rather than 404, because
+  `src/routes/index.ts` ends with a catch-all seller-auth wall. Pre-existing behaviour.
