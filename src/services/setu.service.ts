@@ -1,6 +1,7 @@
 import { prisma } from "../config/prisma";
 import { SETU_ERRORS } from "../constants/errors";
 import { setuBbpsService } from "../external/setu/setu-bbps.client";
+import { toBbpsTxnStatus } from "./bbps.service";
 
 export interface PaymentStatusDTO {
   uniquePaymentRefID?: string;
@@ -156,21 +157,22 @@ export async function checkPaymentStatusService(dto: CheckStatusDTO) {
   }
 
   // 1. Check BBPS Transactions table
-  const bbpsTx = await prisma.bbpsTransaction.findUnique({
-    where: { refID },
+  // Legacy flow (retired in spec 002 step 7): reads the reshaped model by refId.
+  const bbpsTx = await prisma.bbpsTransaction.findFirst({
+    where: { refId: refID },
   });
 
   if (bbpsTx) {
     return {
       found: true,
-      uniquePaymentRefID: bbpsTx.refID,
-      refID: bbpsTx.refID,
+      uniquePaymentRefID: bbpsTx.refId,
+      refID: bbpsTx.refId,
       status: bbpsTx.status,
-      amount: parseFloat(bbpsTx.amount.toString()),
+      amount: bbpsTx.amountPaid ? parseFloat(bbpsTx.amountPaid.toString()) : 0,
       billerId: bbpsTx.billerId,
       billerName: bbpsTx.billerName,
       category: bbpsTx.category,
-      bbpsRefNo: bbpsTx.bbpsRefNo,
+      bbpsRefNo: bbpsTx.bbpsTxnId,
       updatedAt: bbpsTx.updatedAt,
       rawPayload: bbpsTx.rawPayload,
     };
@@ -222,12 +224,12 @@ export async function checkPaymentStatusService(dto: CheckStatusDTO) {
 
 async function syncBbpsTransactionStatus(refID: string, status: string, rawPayload?: any) {
   try {
-    const bbpsTx = await prisma.bbpsTransaction.findUnique({ where: { refID } });
+    const bbpsTx = await prisma.bbpsTransaction.findFirst({ where: { refId: refID } });
     if (bbpsTx) {
       await prisma.bbpsTransaction.update({
-        where: { refID },
+        where: { id: bbpsTx.id },
         data: {
-          status,
+          status: toBbpsTxnStatus(status),
           rawPayload: rawPayload || bbpsTx.rawPayload,
         },
       });

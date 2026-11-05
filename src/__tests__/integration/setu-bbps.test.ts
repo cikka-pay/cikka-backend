@@ -10,7 +10,7 @@ describe("Setu BBPS & Check Status Integration Tests", () => {
 
   afterEach(async () => {
     await prisma.bbpsTransaction.deleteMany({
-      where: { refID: { contains: "CKK-TEST-BBPS" } },
+      where: { refId: { contains: "CKK-TEST-BBPS" } },
     });
     await prisma.paymentTransaction.deleteMany({
       where: { uniquePaymentRefID: { contains: "CKK-TEST-BBPS" } },
