@@ -42,6 +42,15 @@ export const config = {
   setuBbpsBaseUrl: process.env.SETU_BBPS_BASE_URL || "https://kms.setu.co/api/v2",
   setuCheckStatusUrl: process.env.SETU_CHECK_STATUS_URL || "http://localhost:4000/setu/v1/checkStatus",
 
+  // Setu BillPay pre-built screens (spec 002). Hosts: sandbox https://sandbox-coudc.setu.co,
+  // QA https://qa-coudc.setu.co, prod https://coudc.setu.co.
+  setuBillpayBaseUrl: (process.env.SETU_BILLPAY_BASE_URL || "https://sandbox-coudc.setu.co").replace(/\/+$/, ""),
+  setuBillpayClientId: process.env.SETU_BILLPAY_CLIENT_ID,
+  setuBillpaySecret: process.env.SETU_BILLPAY_SECRET,
+  setuBillpayPartnerId: process.env.SETU_BILLPAY_PARTNER_ID,
+  setuBillpayOrgId: process.env.SETU_BILLPAY_ORG_ID,
+  setuBillpayWebhookApiKey: process.env.SETU_BILLPAY_WEBHOOK_API_KEY,
+
   // InstantPay Identity & Verification Config
   instantpayBaseUrl: process.env.INSTANTPAY_BASE_URL || "https://sandbox.instantpay.in/v1",
   instantpayClientId: process.env.INSTANTPAY_CLIENT_ID,

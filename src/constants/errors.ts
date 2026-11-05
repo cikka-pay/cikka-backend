@@ -37,6 +37,12 @@ export const BBPS_ERRORS = {
   REFUND_FAILED: "BBPS refund processing failed",
 } as const;
 
+export const BILLPAY_ERRORS = {
+  PHONE_NOT_VERIFIED: "Verify your mobile number before paying bills",
+  INVALID_PHONE: "Your profile does not have a valid 10-digit mobile number",
+  SETU_UNAVAILABLE: "Bill payment service is unavailable right now. Please try again.",
+} as const;
+
 export const INSTANTPAY_ERRORS = {
   PAN_REQUIRED: "PAN number is required",
   INVALID_PAN_FORMAT: "Invalid PAN format. Example: AAAAA1111A",

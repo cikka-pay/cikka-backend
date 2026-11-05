@@ -12,6 +12,8 @@ import { storageRailway } from "./storage/storage.railway";
 import { setuBbpsStub, setuBbpsReal } from "./setu/setu-bbps.client";
 import { setuStub } from "./setu/setu.stub";
 import { setuReal } from "./setu/setu.real";
+import { setuBillpayReal } from "./setu/billpay.client";
+import { setuBillpayStub } from "./setu/billpay.stub";
 import { instantpayStub } from "./instantpay/instantpay.stub";
 import { instantpayReal } from "./instantpay/instantpay.real";
 import { config } from "../config/env";
@@ -20,6 +22,7 @@ import type { KybService } from "./kyb/kyb.interface";
 import type { StorageService } from "./storage/storage.interface";
 import type { SetuBbpsService } from "./setu/setu-bbps.interface";
 import type { SetuBbpsClient } from "./setu/setu.interface";
+import type { SetuBillpayClient } from "./setu/billpay.interface";
 import type { InstantPayClient } from "./instantpay/instantpay.interface";
 
 const mode = process.env.EXTERNAL_SERVICES_MODE ?? "stub";
@@ -50,6 +53,8 @@ if (storageProvider === "local" && config.isProduction) {
 export const storageService: StorageService = storageProviders[storageProvider];
 export const setuBbpsService: SetuBbpsService = mode === "real" ? setuBbpsReal : setuBbpsStub;
 export const setuClient: SetuBbpsClient = mode === "real" ? setuReal : setuStub;
+// Setu BillPay pre-built screens (spec 002). Real mode never falls back to the stub.
+export const setuBillpayClient: SetuBillpayClient = mode === "real" ? setuBillpayReal : setuBillpayStub;
 export const instantpayClient: InstantPayClient = mode === "real" ? instantpayReal : instantpayStub;
 
 console.log(`[External Services] Mode: ${mode}, storage: ${storageProvider}`);
