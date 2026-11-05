@@ -1,4 +1,4 @@
-import { Prisma } from "../generated/prisma/client";
+import { Prisma, BbpsTxnStatus } from "../generated/prisma/client";
 import { prisma } from "../config/prisma";
 import { setuBbpsService } from "../external/setu/setu-bbps.client";
 import { BBPS_ERRORS } from "../constants/errors";
@@ -38,18 +38,20 @@ export async function initiateBbpsPaymentService(userId: string | null, dto: Ini
   const refID = dto.refID || `CKK-BBPS-${Date.now()}-${Math.floor(1000 + Math.random() * 9000)}`;
 
   // 1. Check idempotency in BBPS ledger
-  const existingTx = await prisma.bbpsTransaction.findUnique({
-    where: { refID },
+  // NOTE (spec 002): legacy direct-pay flow, kept compiling against the reshaped
+  // BbpsTransaction model only until it is retired (implementation-plan step 7).
+  const existingTx = await prisma.bbpsTransaction.findFirst({
+    where: { refId: refID },
   });
 
   if (existingTx) {
     return {
       isDuplicate: true,
-      refID: existingTx.refID,
+      refID: existingTx.refId,
       status: existingTx.status,
-      amount: parseFloat(existingTx.amount.toString()),
-      bbpsRefNo: existingTx.bbpsRefNo,
-      setuPaymentId: existingTx.setuPaymentId,
+      amount: existingTx.amountPaid ? parseFloat(existingTx.amountPaid.toString()) : 0,
+      bbpsRefNo: existingTx.bbpsTxnId,
+      setuPaymentId: existingTx.setuOrderId,
     };
   }
 
@@ -65,18 +67,19 @@ export async function initiateBbpsPaymentService(userId: string | null, dto: Ini
   // 3. Persist record in BbpsTransaction database
   const bbpsTx = await prisma.bbpsTransaction.create({
     data: {
-      refID,
+      refId: refID,
       userId: userId || null,
       billerId: dto.billerId,
       billerName: dto.billerName,
       category: dto.category,
-      customerParams: dto.customerParams,
-      amount: dto.amount,
-      status: paymentResult.status,
-      setuBillId: dto.setuBillId || null,
-      setuPaymentId: paymentResult.setuPaymentId || null,
-      bbpsRefNo: paymentResult.bbpsRefNo || null,
-      rawPayload: paymentResult as unknown as Prisma.InputJsonValue,
+      amountPaid: dto.amount,
+      status: toBbpsTxnStatus(paymentResult.status),
+      bbpsTxnId: paymentResult.bbpsRefNo || null,
+      rawPayload: {
+        ...(paymentResult as unknown as Record<string, unknown>),
+        customerParams: dto.customerParams,
+        setuBillId: dto.setuBillId || null,
+      } as Prisma.InputJsonValue,
     },
   });
 
@@ -93,12 +96,12 @@ export async function initiateBbpsPaymentService(userId: string | null, dto: Ini
 
   return {
     isDuplicate: false,
-    refID: bbpsTx.refID,
+    refID: bbpsTx.refId,
     status: bbpsTx.status,
-    amount: parseFloat(bbpsTx.amount.toString()),
+    amount: dto.amount,
     billerName: bbpsTx.billerName,
-    setuPaymentId: bbpsTx.setuPaymentId,
-    bbpsRefNo: bbpsTx.bbpsRefNo,
+    setuPaymentId: paymentResult.setuPaymentId || null,
+    bbpsRefNo: bbpsTx.bbpsTxnId,
     receiptUrl: paymentResult.receiptUrl,
     createdAt: bbpsTx.createdAt,
   };
@@ -113,13 +116,28 @@ export async function getUserBbpsHistoryService(userId: string) {
 
   return transactions.map((tx) => ({
     id: tx.id,
-    refID: tx.refID,
+    refID: tx.refId,
     billerId: tx.billerId,
     billerName: tx.billerName,
     category: tx.category,
-    amount: parseFloat(tx.amount.toString()),
+    amount: tx.amountPaid ? parseFloat(tx.amountPaid.toString()) : 0,
     status: tx.status,
-    bbpsRefNo: tx.bbpsRefNo,
+    bbpsRefNo: tx.bbpsTxnId,
     createdAt: tx.createdAt,
   }));
+}
+
+/** Legacy-flow shim: map a free-text gateway status onto the BbpsTxnStatus enum. */
+export function toBbpsTxnStatus(status: string | undefined | null): BbpsTxnStatus {
+  switch ((status || "").toUpperCase()) {
+    case "SUCCESS":
+      return "SUCCESS";
+    case "FAILED":
+    case "FAILURE":
+      return "FAILED";
+    case "REFUNDED":
+      return "REFUNDED";
+    default:
+      return "PENDING";
+  }
 }

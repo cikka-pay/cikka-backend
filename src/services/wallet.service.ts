@@ -55,12 +55,14 @@ const EARN_TYPES = new Set<WalletTxType>([
   WalletTxType.EARN_REFERRAL,
   WalletTxType.EARN_CASHBACK,
   WalletTxType.EARN_ADMIN,
+  WalletTxType.EARN_BBPS,
 ]);
 
 const REDEEM_TYPES = new Set<WalletTxType>([
   WalletTxType.REDEEM_REWARD,
   WalletTxType.DEBIT_EXPIRY,
   WalletTxType.DEBIT_REFUND,
+  WalletTxType.DEBIT_BBPS,
   WalletTxType.DEBIT_ADMIN,
   WalletTxType.CASHBACK_REDEEM,
 ]);

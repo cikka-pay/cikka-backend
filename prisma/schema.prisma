@@ -77,6 +77,17 @@ enum WalletTxType {
   DEBIT_REFUND        // CI Points reversed on order return
   DEBIT_ADMIN         // Manual admin debit (fraud reversal)
   CASHBACK_REDEEM     // Cash balance applied to an order
+  EARN_BBPS           // CI Points earned on a BBPS bill payment (behind BBPS_REWARDS_ENABLED)
+  DEBIT_BBPS          // CI Points reversed when a BBPS bill payment is refunded
+}
+
+// Lifecycle of a BBPS bill payment made on Setu's pre-built screens.
+// Forward-only: PENDING → SUCCESS | FAILED, SUCCESS → REFUNDED (see billpayWebhook.service.ts)
+enum BbpsTxnStatus {
+  PENDING
+  SUCCESS
+  FAILED
+  REFUNDED
 }
 
 enum FulfillmentType {
@@ -580,6 +591,7 @@ model User {
   savedCards    UserSavedCard[]
   wallet        UserWallet?
   ledgerEntries LoyaltyLedger[]
+  bbpsTransactions BbpsTransaction[]
 
   createdAt     DateTime @default(now())
   updatedAt     DateTime @updatedAt
@@ -663,34 +675,60 @@ model PaymentTransaction {
 }
 
 // ============================================================
-// BBPS TRANSACTION — Setu Bharat BillPay Transaction Ledger
-// Stores refID (uniquePaymentRefID) for strict idempotency checks
+// BBPS TRANSACTION — one bill payment made on Setu BillPay pre-built screens
+// Written only by the Setu BillPay webhook (spec 002). Keyed by Setu's ids:
+// setuOrderId (unique) when the event carries orderId, otherwise looked up by refId.
 // ============================================================
 
 model BbpsTransaction {
-  id                 String   @id @default(uuid())
-  refID              String   @unique // Dedup key provided by Setu (uniquePaymentRefID / refID)
-  userId             String?
-  billerId           String
-  billerName         String
-  category           String
-  customerParams     Json?    // Key-value object of biller inputs e.g. { "Consumer Number": "12345678" }
-  amount             Decimal  @db.Decimal(10, 2)
-  status             String   // PENDING | SUCCESS | FAILED | REFUNDED
-  setuBillId         String?
-  setuPaymentId      String?
-  bbpsRefNo          String?  // BBPS trace / reference number
-  rawPayload         Json?
-  errorMessage       String?
+  id            String        @id @default(uuid())
+  setuOrderId   String?       @unique // Setu `orderId` — null until a payment event names it
+  bbpsTxnId     String? // BBPS txn id (`txnId`); disputes reference it
+  refId         String? // Setu `refId` (bill fetch / payment request ref) — fallback key, not unique
+  sessionId     String? // Setu link session (`sessionId`)
+  userId        String? // Our User.id, from `customerId` (= custID); null if unknown
+  user          User?         @relation(fields: [userId], references: [id], onDelete: SetNull)
+  mobileNumber  String?
+  billerId      String?
+  billerName    String?
+  category      String? // Setu `billerCategory`
+  billAmount    Decimal?      @db.Decimal(10, 2)
+  amountPaid    Decimal?      @db.Decimal(10, 2)
+  status        BbpsTxnStatus @default(PENDING)
+  paidOn        DateTime? // Setu `paidOn` (DD-MM-YYYY HH:mm:ss, IST) stored as an instant
+  errorCode     String?
+  errorMessage  String?
+  disputeRefId  String? // Setu dispute `referenceId`
+  disputeStatus String?
+  rawPayload    Json? // Last event payload that changed this row
 
-  createdAt          DateTime @default(now())
-  updatedAt          DateTime @updatedAt
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 
-  @@index([refID])
-  @@index([userId])
+  @@index([userId, createdAt])
+  @@index([refId])
+  @@index([bbpsTxnId])
   @@index([status])
-  @@index([category])
   @@map("bbps_transactions")
+}
+
+// ============================================================
+// BBPS WEBHOOK EVENT — append-only log of Setu BillPay webhook deliveries
+// dedupeKey = `${event}:${txnId|orderId|referenceId|refId|sessionId}` dedupes Setu retries.
+// processedAt null = stored but not (successfully) processed → a retry reprocesses it.
+// ============================================================
+
+model BbpsWebhookEvent {
+  id          String    @id @default(uuid())
+  event       String
+  dedupeKey   String    @unique
+  payload     Json
+  receivedAt  DateTime  @default(now())
+  processedAt DateTime?
+  error       String?
+
+  @@index([event, receivedAt])
+  @@map("bbps_webhook_events")
 }
 
 // ============================================================
