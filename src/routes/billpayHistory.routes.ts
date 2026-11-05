@@ -2,7 +2,7 @@ import { Router } from "express";
 import { requireUserAuth } from "../middleware/auth.middleware";
 import { getBillpayHistory, getBillpayHistoryById } from "../controllers/billpayHistory.controller";
 
-// Mounted at /api/bbps (before the legacy bbps router). Auth is per-route so this router
+// Mounted at /api/bbps (next to billpay.routes). Auth is per-route so this router
 // doesn't put a JWT check in front of other /api/bbps routes.
 const router = Router();
 

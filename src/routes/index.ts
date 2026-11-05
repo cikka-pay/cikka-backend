@@ -2,8 +2,9 @@ import { Router } from "express";
 import { requireSellerAuth } from "../middleware/auth.middleware";
 import authRoutes from "./auth.routes";
 import userAuthRoutes from "./user-auth.routes";
-import setuRoutes from "./setu.routes";
-import bbpsRoutes from "./bbps.routes";
+import billpayRoutes from "./billpay.routes";
+import billpayHistoryRoutes from "./billpayHistory.routes";
+import billpayWebhookRoutes from "./billpayWebhook.routes";
 import instantpayRoutes from "./instantpay.routes";
 import onboardingRoutes from "./onboarding.routes";
 import adminRoutes from "./admin.routes";
@@ -54,8 +55,11 @@ router.use("/user/addresses", userAddressRoutes);
 router.use("/user-address", userAddressRoutes);
 router.use("/cards", cardsRoutes);
 router.use("/user/cards", cardsRoutes);
-router.use("/setu/v1", setuRoutes);
-router.use("/bbps", bbpsRoutes);
+// BBPS bill pay via Setu pre-built screens (spec 002): /api/bbps/session, /api/bbps/history[/:id]
+router.use("/bbps", billpayHistoryRoutes);
+router.use("/bbps", billpayRoutes);
+// Setu BillPay webhook (X-BILL-WEBHOOK-API-KEY auth, no JWT)
+router.use("/webhooks/setu/billpay", billpayWebhookRoutes);
 router.use("/kyc", instantpayRoutes);
 router.use("/instantpay", instantpayRoutes);
 router.use("/pan", instantpayRoutes);
