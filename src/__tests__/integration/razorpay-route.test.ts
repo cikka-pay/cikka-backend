@@ -1,9 +1,14 @@
+import crypto from "crypto";
 import request from "supertest";
 import { describe, it, expect, beforeEach } from "vitest";
 import app from "../../app";
 import { prisma } from "../../config/prisma";
 import { cleanTestData, createTestSeller } from "../helpers";
 import { razorpayRouteService } from "../../services/razorpayRoute.service";
+import { signAdminToken } from "../../utils/jwt";
+
+const WEBHOOK_SECRET = "route_it_webhook_secret";
+const adminToken = () => signAdminToken({ id: "admin-it", email: "ops@cikka.in", role: "SUPER_ADMIN" });
 
 describe("Razorpay Route Integration Tests", () => {
   let token = "";
@@ -108,9 +113,18 @@ describe("Razorpay Route Integration Tests", () => {
         },
       };
 
+      process.env.RAZORPAY_WEBHOOK_SECRET = WEBHOOK_SECRET;
+      const raw = JSON.stringify(webhookPayload);
+
+      const unsigned = await request(app).post("/api/razorpay-route/webhook").send(webhookPayload);
+      expect(unsigned.status).toBe(401);
+
       const res = await request(app)
         .post("/api/razorpay-route/webhook")
-        .send(webhookPayload);
+        .set("Content-Type", "application/json")
+        .set("X-Razorpay-Signature", crypto.createHmac("sha256", WEBHOOK_SECRET).update(raw).digest("hex"))
+        .send(raw);
+      delete process.env.RAZORPAY_WEBHOOK_SECRET;
 
       expect(res.status).toBe(200);
       expect(res.body.success).toBe(true);
@@ -132,8 +146,14 @@ describe("Razorpay Route Integration Tests", () => {
         } as any,
       });
 
+      const anonymous = await request(app)
+        .post(`/api/razorpay-route/disburse/${settlement.id}`)
+        .send({ forceEarlyRelease: false });
+      expect(anonymous.status).toBe(401);
+
       const res = await request(app)
         .post(`/api/razorpay-route/disburse/${settlement.id}`)
+        .set("Authorization", `Bearer ${adminToken()}`)
         .send({ forceEarlyRelease: false });
 
       expect(res.status).toBe(200);

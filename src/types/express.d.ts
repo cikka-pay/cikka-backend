@@ -8,6 +8,8 @@ declare global {
       seller?: { id: string, teamMemberId?: string, role?: string };
       user?: { id: string };
       admin?: { id: string, email: string, role: string };
+      /** Raw JSON request body as received (set by express.json verify in app.ts). */
+      rawBody?: Buffer;
     }
   }
 }

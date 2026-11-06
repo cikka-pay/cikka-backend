@@ -34,7 +34,16 @@ app.use(cors({
   },
   credentials: true,
 }));
-app.use(express.json({ limit: "50mb" }));
+app.use(
+  express.json({
+    limit: "50mb",
+    // Keep the exact request bytes: webhook signatures (Razorpay X-Razorpay-Signature) are an
+    // HMAC over the raw body, and re-serialising the parsed JSON does not reproduce it.
+    verify: (req, _res, buf) => {
+      (req as express.Request).rawBody = buf;
+    },
+  })
+);
 app.use(express.urlencoded({ limit: "50mb", extended: true }));
 app.use(morgan("dev"));
 

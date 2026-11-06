@@ -3,6 +3,63 @@ import { asyncHandler } from "../utils/asyncHandler";
 import { prisma } from "../config/prisma";
 import { razorpayRouteService } from "../services/razorpayRoute.service";
 import { disburseSettlement } from "../services/settlement.service";
+import { config } from "../config/env";
+import { razorpayCheckoutService, PaymentVerificationError } from "../services/razorpayCheckout.service";
+import { fulfilMallCheckout } from "./payment.controller";
+import { fulfilRewardsCheckout } from "./rewards.controller";
+
+/**
+ * payment.captured / order.paid: fulfil the order if the app never called verify.
+ * Idempotent through the same checkout claim as verify-payment / verify-card-otp, so
+ * redeliveries and races with the client are safe. Returns a short status for the response.
+ */
+async function handleCapturedPaymentEvent(payload: any): Promise<string> {
+  const payment = payload?.payment?.entity;
+  const orderEntity = payload?.order?.entity;
+  const orderId: string | undefined = payment?.order_id || orderEntity?.id;
+  const paymentId: string | undefined = payment?.id;
+
+  if (!orderId || !paymentId) return "ignored: no order/payment id";
+  if (payment.status !== "captured") return `ignored: payment ${payment.status}`;
+
+  const checkout = await razorpayCheckoutService.findByOrderId(orderId);
+  if (!checkout) return "ignored: unknown order";
+
+  const amountPaise = Number(payment.amount);
+  if (amountPaise !== checkout.amountPaise || (payment.currency || "INR") !== checkout.currency) {
+    console.error(
+      `[Razorpay Webhook] Amount mismatch on ${orderId}: paid ${payment.amount} ${payment.currency}, expected ${checkout.amountPaise} ${checkout.currency}`
+    );
+    await razorpayCheckoutService.markPaidAwaitingDetails(orderId, paymentId, "AMOUNT_MISMATCH");
+    return "rejected: amount mismatch";
+  }
+
+  const snap = ((checkout.snapshot as any) || {}) as Record<string, any>;
+  if (checkout.purpose === "MALL" && !(Array.isArray(snap.items) && snap.items.length > 0)) {
+    // Order created without a cart (current app create-order call): wait for verify-payment.
+    await razorpayCheckoutService.markPaidAwaitingDetails(orderId, paymentId, "PAID_AWAITING_CART");
+    return "deferred: no cart recorded";
+  }
+  if (checkout.purpose === "REWARDS" && !(snap.delivery_address && snap.pincode)) {
+    await razorpayCheckoutService.markPaidAwaitingDetails(orderId, paymentId, "PAID_AWAITING_ADDRESS");
+    return "deferred: no delivery address recorded";
+  }
+
+  const outcome = await razorpayCheckoutService.fulfilOnce({
+    orderId,
+    paymentId,
+    purpose: checkout.purpose as "MALL" | "REWARDS",
+    amountPaise,
+    currency: checkout.currency,
+    userId: checkout.userId,
+    via: "WEBHOOK",
+    fulfil: (row) =>
+      row.purpose === "REWARDS"
+        ? fulfilRewardsCheckout(row, paymentId, amountPaise, {}, row.userId)
+        : fulfilMallCheckout(row, paymentId, amountPaise),
+  });
+  return outcome.state.toLowerCase();
+}
 
 /**
  * POST /api/razorpay-route/webhook
@@ -14,17 +71,23 @@ import { disburseSettlement } from "../services/settlement.service";
  * - account.activated
  */
 export const handleRouteWebhook = asyncHandler(async (req: Request, res: Response) => {
-  const signature = (req.headers["x-razorpay-signature"] as string) || "";
-  const rawBody = (req as any).rawBody || JSON.stringify(req.body);
+  const signature = String(req.headers["x-razorpay-signature"] || "");
+  const webhookSecret = (process.env.RAZORPAY_WEBHOOK_SECRET || config.razorpayWebhookSecret || "").trim();
 
-  // If signature is supplied, verify it
-  if (signature && process.env.RAZORPAY_WEBHOOK_SECRET) {
-    const isValid = razorpayRouteService.verifyWebhookSignature(rawBody, signature);
-    if (!isValid) {
-      console.warn("[Razorpay Route Webhook] Invalid webhook signature received.");
-      res.status(400).json({ success: false, error: "Invalid webhook signature" });
-      return;
-    }
+  if (!webhookSecret) {
+    console.error("[Razorpay Webhook] RAZORPAY_WEBHOOK_SECRET is not configured; rejecting webhook.");
+    res.status(401).json({ success: false, error: "Webhook secret not configured" });
+    return;
+  }
+  if (!signature) {
+    res.status(401).json({ success: false, error: "Missing X-Razorpay-Signature" });
+    return;
+  }
+  // Verify over the exact bytes received; never over re-serialised JSON.
+  if (!req.rawBody || !razorpayRouteService.verifyWebhookSignature(req.rawBody, signature)) {
+    console.warn("[Razorpay Webhook] Invalid webhook signature received.");
+    res.status(400).json({ success: false, error: "Invalid webhook signature" });
+    return;
   }
 
   const event = req.body?.event;
@@ -33,6 +96,25 @@ export const handleRouteWebhook = asyncHandler(async (req: Request, res: Respons
 
   try {
     switch (event) {
+      case "payment.captured":
+      case "order.paid": {
+        const status = await handleCapturedPaymentEvent(payload);
+        console.log(`[Razorpay Webhook] ${event}: ${status}`);
+        break;
+      }
+
+      case "transfer.failed":
+      case "transfers.failed": {
+        const transferId = payload.transfer?.entity?.id;
+        if (transferId) {
+          await prisma.settlement.updateMany({
+            where: { razorpayTransferId: transferId },
+            data: { transferStatus: "FAILED", failureReason: "Razorpay reported the transfer as failed" } as any,
+          });
+        }
+        break;
+      }
+
       case "transfer.processed": {
         const transfer = payload.transfer?.entity;
         const transferId = transfer?.id;
@@ -114,8 +196,10 @@ export const handleRouteWebhook = asyncHandler(async (req: Request, res: Respons
 
     res.status(200).json({ success: true, message: "Webhook processed successfully", event });
   } catch (error: any) {
-    console.error(`[Razorpay Route Webhook Error] ${error.message}`);
-    res.status(500).json({ success: false, error: error.message });
+    // Non-2xx makes Razorpay redeliver (with backoff, for 24h); fulfilment is idempotent.
+    console.error(`[Razorpay Webhook Error] ${event}: ${error.message}`);
+    const status = error instanceof PaymentVerificationError ? 200 : 500;
+    res.status(status).json({ success: false, error: error.message });
   }
 });
 
@@ -155,7 +239,7 @@ export const triggerRouteDisburse = asyncHandler(async (req: Request, res: Respo
  * Manually creates or syncs a seller's linked account on Razorpay Route
  */
 export const createLinkedAccountHandler = asyncHandler(async (req: Request, res: Response) => {
-  const sellerId = req.seller?.id || req.body.sellerId;
+  const sellerId = req.body?.sellerId;
   if (!sellerId) {
     res.status(400).json({ success: false, error: "Seller ID is required" });
     return;

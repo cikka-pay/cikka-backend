@@ -27,7 +27,7 @@ import cardsRoutes from "./cards.routes";
 import walletRoutes from "./wallet.routes";
 
 import hubbleRoutes from "./hubble.routes";
-import razorpayRouteRoutes from "./razorpay-route.routes";
+import razorpayRouteRoutes, { razorpayWebhookRouter } from "./razorpay-route.routes";
 
 import emailRoutes from "./email.routes";
 import { filesRouter, uploadsRouter } from "./files.routes";
@@ -71,7 +71,7 @@ router.use("/wallet", walletRoutes);
 
 // Razorpay Route Split & Settlement Routes (/api/razorpay-route/*)
 router.use("/razorpay-route", razorpayRouteRoutes);
-router.use("/webhooks/razorpay", razorpayRouteRoutes);
+router.use("/webhooks/razorpay", razorpayWebhookRouter);
 
 // Razorpay Payment Endpoints (/api/payment/create-order & /api/payment/verify-payment)
 router.use("/payment", paymentRoutes);
