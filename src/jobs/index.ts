@@ -1,24 +1,37 @@
-import { config } from "../config/env";
-import { PgBossQueue } from "./pgboss.queue";
-import { rewardCreditHandler } from "./handlers/reward-credit.handler";
-import type { JobQueue } from "./types";
-
-export * from "./types";
-
 /**
- * Process-wide job queue. Swap the adapter here to change providers.
- * Enqueue from anywhere: `await jobQueue.enqueue("reward.credit", payload, { key })`.
+ * App wiring for async jobs. The only place that picks a provider.
+ *
+ *   import { jobQueue } from "../jobs";
+ *   await jobQueue.enqueue("reward.credit", payload, { key: orderId, tx });
+ *
+ * To switch provider: replace `new PgBossAdapter(...)` with another adapter
+ * from src/lib/jobs/adapters that passes the contract suite. Nothing else changes.
  */
-export const jobQueue: JobQueue = new PgBossQueue({
-  connectionString: process.env.DATABASE_URL as string,
-  schema: process.env.JOBS_SCHEMA || "pgboss",
+import { config } from "../config/env";
+import { createJobQueue, type JobHandlers } from "../lib/jobs";
+import { PgBossAdapter } from "../lib/jobs/adapters/pgboss";
+import { jobs, type CikkaJobs } from "./definitions";
+import { rewardCreditHandler } from "./handlers/reward-credit.handler";
+
+export * from "./definitions";
+
+export const jobQueue = createJobQueue({
+  jobs,
+  adapter: new PgBossAdapter({
+    connectionString: process.env.DATABASE_URL as string,
+    schema: process.env.JOBS_SCHEMA || "pgboss",
+  }),
 });
+
+/** Every job's worker. Typed: a handler's payload must match its job's schema. */
+export const handlers: JobHandlers<CikkaJobs> = {
+  "reward.credit": rewardCreditHandler,
+};
 
 /**
  * Start the queue and (unless JOBS_WORKERS_ENABLED=false) register workers.
- * Running workers in the API process is fine at current volume; to scale,
- * deploy a second service with the same image and set JOBS_WORKERS_ENABLED
- * to false on the API.
+ * To scale, run a second service from the same image and set
+ * JOBS_WORKERS_ENABLED=false on the API.
  */
 export async function startJobs(): Promise<void> {
   if (!process.env.DATABASE_URL) {
@@ -27,10 +40,10 @@ export async function startJobs(): Promise<void> {
   }
   await jobQueue.start();
   if (config.jobs.workersEnabled) {
-    await jobQueue.work("reward.credit", rewardCreditHandler);
-    console.log("⚙️  [jobs] pg-boss started; workers: reward.credit");
+    await jobQueue.workAll(handlers);
+    console.log(`⚙️  [jobs] ${jobQueue.adapterName} started; workers: ${Object.keys(handlers).join(", ")}`);
   } else {
-    console.log("⚙️  [jobs] pg-boss started (enqueue only; workers disabled)");
+    console.log(`⚙️  [jobs] ${jobQueue.adapterName} started (enqueue only; workers disabled)`);
   }
 }
 

@@ -13,6 +13,7 @@
     "build": "tsc",
     "seed": "tsx prisma/seed.ts",
     "test": "vitest run",
+    "typecheck:jobs": "tsc -p tsconfig.jobs-typecheck.json",
     "create-seller": "tsx scripts/create-seller.ts",
     "delete-seller": "tsx scripts/delete-seller.ts",
     "migrate:images": "tsx src/scripts/migrate-base64-images.ts",

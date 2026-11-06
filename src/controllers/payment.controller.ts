@@ -245,7 +245,7 @@ export async function enqueueMallRewardCredit(
         ciPoints: rewards.ciPointsEarned,
         cashbackRupees: rewards.cashbackEarned,
       },
-      { key: `reward.credit:${razorpayOrderId}`, delaySeconds: config.jobs.rewardCreditDelaySeconds }
+      { key: razorpayOrderId, delaySeconds: config.jobs.rewardCreditDelaySeconds }
     );
   } catch (err: any) {
     console.error(

@@ -10,7 +10,7 @@ import { jobQueue } from "../../jobs";
 import { rewardCreditHandler } from "../../jobs/handlers/reward-credit.handler";
 import { enqueueMallRewardCredit } from "../../controllers/payment.controller";
 
-const ctx = { id: "job-1", name: "reward.credit" as const, retryCount: 0 };
+const ctx = { id: "job-1", name: "reward.credit" as const, attempt: 1 };
 
 describe("reward.credit job handler", () => {
   beforeEach(() => vi.clearAllMocks());
@@ -58,7 +58,7 @@ describe("enqueueMallRewardCredit", () => {
     expect(jobQueue.enqueue).toHaveBeenCalledWith(
       "reward.credit",
       { userId: "u1", razorpayOrderId: "order_9", razorpayPaymentId: "pay_9", ciPoints: 50, cashbackRupees: 7 },
-      expect.objectContaining({ key: "reward.credit:order_9" })
+      expect.objectContaining({ key: "order_9" })
     );
   });
 

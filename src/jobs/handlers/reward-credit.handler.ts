@@ -1,6 +1,7 @@
 import { walletService } from "../../services/wallet.service";
 import { WalletTxType } from "../../generated/prisma/client";
-import type { JobHandler } from "../types";
+import type { JobHandler } from "../../lib/jobs";
+import type { CikkaPayload } from "../definitions";
 
 /**
  * Credits Cikka Mall purchase rewards to the buyer's wallet.
@@ -10,11 +11,11 @@ import type { JobHandler } from "../types";
  * derives from `order_id`, so a retried job (or a client that also calls those
  * endpoints with the same order id) never double-credits.
  */
-export const rewardCreditHandler: JobHandler<"reward.credit"> = async (p) => {
+export const rewardCreditHandler: JobHandler<CikkaPayload<"reward.credit">> = async (p) => {
   const opts = { orderId: p.razorpayOrderId, razorpayPaymentId: p.razorpayPaymentId };
 
   if (p.ciPoints > 0) {
-    await walletService.creditPoints(p.userId, Math.round(p.ciPoints), WalletTxType.EARN_ORDER, {
+    await walletService.creditPoints(p.userId, p.ciPoints, WalletTxType.EARN_ORDER, {
       ...opts,
       description: `CI Points for Cikka Mall order ${p.razorpayOrderId}`,
       idempotencyKey: `${WalletTxType.EARN_ORDER}:${p.razorpayOrderId}`,

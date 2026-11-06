@@ -12,20 +12,22 @@ We want something light now that can be swapped for a real broker later.
 
 ## Decision
 
-Use **pg-boss** (v12) on the existing PostgreSQL, behind a provider-agnostic
-`JobQueue` interface in `src/jobs/`.
+Use **pg-boss** (v12) on the existing PostgreSQL, behind an in-repo typed library,
+`src/lib/jobs` (see its README). The library doesn't import any app code, and a test
+enforces that.
 
-- `src/jobs/types.ts` — `JobQueue` interface + typed `JobPayloads` registry. Business
-  code imports only this and `jobQueue` from `src/jobs`.
-- `src/jobs/pgboss.queue.ts` — the only file that imports pg-boss. Each job gets a
-  queue with exponential-backoff retries and a dead-letter queue `<name>.dlq`.
-- `src/jobs/handlers/*` — idempotent handlers.
+- `src/lib/jobs/core`: `defineJob`/`defineJobs` (payload types inferred from zod
+  schemas), `createJobQueue` (typed facade that validates on enqueue and consume and
+  namespaces idempotency keys), and the `JobQueueAdapter<TTx>` provider contract.
+- `src/lib/jobs/adapters`: `PgBossAdapter` (prod) and `MemoryAdapter` (tests/dev).
+- `src/lib/jobs/testing/contract.ts`: behaviour every adapter must pass (delivery,
+  dedupe, delay, retry, dead-letter). The test suite runs it against both adapters.
+- `src/jobs/` is the app side: the job catalogue (`definitions.ts`), handlers, and the
+  single line that picks the adapter (`index.ts`).
 - `enqueue(name, payload, { tx, key, delaySeconds })`:
-  - `tx` — a Prisma interactive-transaction client; the job is inserted in that same
-    transaction (via pg-boss `fromPrisma`) and only exists if it commits. This is the
-    transactional-outbox guarantee without a separate outbox table.
-  - `key` — dedupe key, mapped to a deterministic job id; re-enqueueing the same key
-    is a no-op while the job is retained.
+  - `tx`: typed per adapter (a Prisma tx for pg-boss). The job is written in that
+    transaction, giving the transactional-outbox guarantee without an outbox table.
+  - `key`: idempotency key, unique per job name.
 - Workers run in the API process by default (`JOBS_WORKERS_ENABLED`). To scale, deploy
   the same image as a second Railway service and disable workers on the API.
 
@@ -46,11 +48,12 @@ on `LoyaltyLedger.idempotencyKey` (`EARN_ORDER:<orderId>`, `EARN_CASHBACK:<order
 ## Migration path
 
 1. **Now:** pg-boss on main Postgres; more jobs (emails, notifications) added as
-   `JobPayloads` entries + handlers. Consider moving node-cron jobs to
+   entries in `src/jobs/definitions.ts` + handlers. Consider moving node-cron jobs to
    `boss.schedule()` so they run exactly once when the API is scaled horizontally.
-2. **At scale / multiple services:** keep the `JobQueue`/handler contracts; add an
-   adapter (or an outbox relay) publishing to NATS JetStream or SQS/SNS. Handlers and
-   idempotency keys stay unchanged.
+2. **At scale / multiple services:** write a new `JobQueueAdapter` (e.g. NATS JetStream
+   or SQS) that passes `runAdapterContract`, then swap it in `src/jobs/index.ts`. Job
+   definitions, handlers and call sites stay unchanged. Keep pg-boss or an outbox for
+   jobs that must be enqueued inside a DB transaction, and relay from there.
 
 ## Consequences
 
