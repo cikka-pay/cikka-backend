@@ -2,12 +2,23 @@ import dotenv from "dotenv";
 
 dotenv.config();
 
-const NODE_ENV = process.env.NODE_ENV || "development";
-const EXTERNAL_SERVICES_MODE = process.env.EXTERNAL_SERVICES_MODE || "stub";
+const NODE_ENV = (process.env.NODE_ENV || "development").trim();
+// "production" is the only value Railway/Docker set, but accept common spellings so a typo
+// can never silently switch on the dev bypasses (mock signatures, stub payments, ...).
+const IS_PRODUCTION = ["production", "prod"].includes(NODE_ENV.toLowerCase());
+
+// Stub mode fakes OTP / KYC / Setu / InstantPay / Razorpay. It must never run in production:
+// default to "real" there and refuse to start if someone explicitly asks for "stub".
+const EXTERNAL_SERVICES_MODE = process.env.EXTERNAL_SERVICES_MODE || (IS_PRODUCTION ? "real" : "stub");
+if (IS_PRODUCTION && EXTERNAL_SERVICES_MODE !== "real") {
+  throw new Error(
+    `EXTERNAL_SERVICES_MODE="${EXTERNAL_SERVICES_MODE}" is not allowed with NODE_ENV=${NODE_ENV}. Use "real" in production.`
+  );
+}
 
 export const config = {
   env: NODE_ENV,
-  isProduction: NODE_ENV === "production",
+  isProduction: IS_PRODUCTION,
   isDevelopment: NODE_ENV === "development" || (NODE_ENV as string) === "dev",
   isTest: NODE_ENV === "test",
 
@@ -49,7 +60,8 @@ export const config = {
   // Razorpay Gateway & Route Config
   razorpayKeyId: process.env.RAZORPAY_KEY_ID,
   razorpayKeySecret: process.env.RAZORPAY_KEY_SECRET,
-  razorpayWebhookSecret: process.env.RAZORPAY_WEBHOOK_SECRET || "cikka_route_prod_secret_2026",
+  // No default: webhooks are rejected until the secret from the Razorpay Dashboard is configured.
+  razorpayWebhookSecret: process.env.RAZORPAY_WEBHOOK_SECRET,
 
   // Shipway Experience API Config
   shipwayUsername: process.env.SHIPWAY_USERNAME,
@@ -90,3 +102,12 @@ export const config = {
 };
 
 
+
+/**
+ * Razorpay stub mode: fake orders/payments so the app can be exercised without keys.
+ * Read at call time (tests flip config.isProduction) and never true in production,
+ * whatever EXTERNAL_SERVICES_MODE says.
+ */
+export function isRazorpayStubMode(): boolean {
+  return !config.isProduction && config.externalServicesMode !== "real";
+}

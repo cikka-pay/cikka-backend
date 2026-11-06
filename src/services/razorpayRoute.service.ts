@@ -1,7 +1,17 @@
 import axios from "axios";
 import crypto from "crypto";
-import { config } from "../config/env";
+import { config, isRazorpayStubMode } from "../config/env";
 import { prisma } from "../config/prisma";
+import { hasRazorpayCredentials, safeEqualHex } from "./razorpay.service";
+
+/** Stub mode with no keys: return fake Route results without any network call. */
+function routeStubOnly(): boolean {
+  return isRazorpayStubMode() && !hasRazorpayCredentials();
+}
+
+function stubId(prefix: string): string {
+  return `${prefix}${Date.now().toString(36)}${crypto.randomBytes(3).toString("hex")}`;
+}
 
 export interface CreateLinkedAccountDTO {
   sellerId: string;
@@ -86,6 +96,18 @@ export const razorpayRouteService = {
    * Endpoint: POST /v1/accounts
    */
   async createLinkedAccount(data: CreateLinkedAccountDTO): Promise<LinkedAccountResult> {
+    if (routeStubOnly()) {
+      const mockAccountId = stubId("acc_test_");
+      await prisma.seller.update({
+        where: { id: data.sellerId },
+        data: { razorpayAccountId: mockAccountId, razorpayAccountStatus: "ACTIVATED" } as any,
+      });
+      await prisma.sellerOnboarding.updateMany({
+        where: { sellerId: data.sellerId },
+        data: { razorpayAccountId: mockAccountId, razorpayAccountStatus: "ACTIVATED" } as any,
+      });
+      return { success: true, accountId: mockAccountId, status: "ACTIVATED", message: "[Stub] Linked account created." };
+    }
     const headers = getRazorpayAuthHeaders();
 
     // Map business type to Razorpay accepted enum values
@@ -214,13 +236,9 @@ export const razorpayRouteService = {
         };
       }
 
-      // 2. Check if Real/Live Mode is active
+      // 2. Only generate mock accounts in stub mode with test keys (never in production)
       const keyId = (process.env.RAZORPAY_KEY_ID || config.razorpayKeyId || "").trim();
-      const isLiveKey = keyId.startsWith("rzp_live");
-      const isRealMode = isLiveKey || process.env.EXTERNAL_SERVICES_MODE === "real";
-
-      // Only generate mock accounts if strictly in test/stub mode with test keys
-      if (!isRealMode && keyId.startsWith("rzp_test")) {
+      if (isRazorpayStubMode() && keyId.startsWith("rzp_test")) {
         const mockAccountId = `acc_test_${Date.now().toString(36)}_${Math.random().toString(36).substring(2, 6)}`;
         console.log(`[Razorpay Route - Sandbox Mode] Assigned Linked Account ID: ${mockAccountId} for testing.`);
 
@@ -266,7 +284,6 @@ export const razorpayRouteService = {
    */
   async transferPaymentWithT7Hold(params: RouteTransferParams): Promise<RouteTransferResult> {
     const { paymentId, sellerAccountId, amountInPaise, holdDays = 7, notes = {} } = params;
-    const headers = getRazorpayAuthHeaders();
 
     if (!paymentId) {
       throw new Error("Razorpay Payment ID is required for Route transfer");
@@ -282,6 +299,20 @@ export const razorpayRouteService = {
     const holdDurationSeconds = holdDays * 24 * 60 * 60;
     const holdUntilUnix = Math.floor(Date.now() / 1000) + holdDurationSeconds;
     const holdUntilDate = new Date(holdUntilUnix * 1000);
+
+    if (routeStubOnly()) {
+      return {
+        success: true,
+        transferId: stubId("trf_test_"),
+        amount: amountInPaise / 100,
+        currency: "INR",
+        onHold: true,
+        holdUntil: holdUntilDate,
+        status: "processed",
+        message: `[Stub] Transfer scheduled with T+${holdDays} hold until ${holdUntilDate.toISOString()}`,
+      };
+    }
+    const headers = getRazorpayAuthHeaders();
 
     const payload = {
       transfers: [
@@ -327,9 +358,8 @@ export const razorpayRouteService = {
       const errorMsg = errData?.error?.description || err.message || "Failed to initiate Razorpay Route transfer";
       console.warn(`[Razorpay Route Transfer Notice] ${errorMsg}`);
 
-      // Sandbox Fallback
-      const isTestKey = (process.env.RAZORPAY_KEY_ID || "").startsWith("rzp_test");
-      if (isTestKey || config.isDevelopment || config.isTest) {
+      // Sandbox fallback: stub mode only (never in production)
+      if (isRazorpayStubMode()) {
         const mockTransferId = `trf_test_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`;
         console.log(`[Razorpay Route - Sandbox Transfer] Simulated T+${holdDays} transfer ID: ${mockTransferId} (Hold until ${holdUntilDate.toLocaleDateString()})`);
 
@@ -359,6 +389,9 @@ export const razorpayRouteService = {
    */
   async releaseTransferHold(transferId: string): Promise<{ success: boolean; transfer?: any; error?: string }> {
     if (!transferId) throw new Error("Transfer ID is required to release hold");
+    if (routeStubOnly()) {
+      return { success: true, transfer: { id: transferId, on_hold: false, status: "settled" } };
+    }
 
     const headers = getRazorpayAuthHeaders();
 
@@ -379,7 +412,7 @@ export const razorpayRouteService = {
       const errorMsg = errData?.error?.description || err.message || "Failed to release transfer hold";
 
       // Sandbox simulated release
-      if (transferId.startsWith("trf_test") || config.isDevelopment || config.isTest) {
+      if (isRazorpayStubMode()) {
         console.log(`[Razorpay Route - Sandbox] Transfer ${transferId} hold released successfully.`);
         return { success: true, transfer: { id: transferId, on_hold: false, status: "settled" } };
       }
@@ -394,9 +427,12 @@ export const razorpayRouteService = {
    */
   async updateTransferHoldUntil(transferId: string, holdUntilDate: Date): Promise<{ success: boolean; transfer?: any; error?: string }> {
     if (!transferId) throw new Error("Transfer ID is required to update hold");
+    const holdUntilUnix = Math.floor(holdUntilDate.getTime() / 1000);
+    if (routeStubOnly()) {
+      return { success: true, transfer: { id: transferId, on_hold: true, on_hold_until: holdUntilUnix } };
+    }
 
     const headers = getRazorpayAuthHeaders();
-    const holdUntilUnix = Math.floor(holdUntilDate.getTime() / 1000);
 
     try {
       console.log(`[Razorpay Route] Updating hold for transfer ${transferId} to ${holdUntilDate.toISOString()} (${holdUntilUnix})`);
@@ -415,7 +451,7 @@ export const razorpayRouteService = {
       const errorMsg = errData?.error?.description || err.message || "Failed to update transfer hold";
 
       // Sandbox simulated update
-      if (transferId.startsWith("trf_test") || config.isDevelopment || config.isTest) {
+      if (isRazorpayStubMode()) {
         console.log(`[Razorpay Route - Sandbox] Transfer ${transferId} hold updated to ${holdUntilDate.toISOString()}.`);
         return { success: true, transfer: { id: transferId, on_hold: true, on_hold_until: holdUntilUnix } };
       }
@@ -430,16 +466,25 @@ export const razorpayRouteService = {
    */
   async reverseTransfer(transferId: string, amountInPaise?: number, reason?: string): Promise<ReversalResult> {
     if (!transferId) throw new Error("Transfer ID is required to execute reversal");
+    if (routeStubOnly()) {
+      return {
+        success: true,
+        reversalId: stubId("rev_test_"),
+        transferId,
+        amount: amountInPaise ? amountInPaise / 100 : undefined,
+        message: "[Stub] Transfer reversal simulated.",
+      };
+    }
 
     const headers = getRazorpayAuthHeaders();
     const payload: any = {
       notes: { reason: reason || "Order Return / Replacement" },
     };
 
+    // POST /v1/transfers/:id/reversals takes an optional `amount`; omitting it reverses the
+    // whole transfer. (`reverse_all` belongs to the refund API, not to transfer reversals.)
     if (amountInPaise && amountInPaise > 0) {
       payload.amount = Math.round(amountInPaise);
-    } else {
-      payload.reverse_all = 1;
     }
 
     try {
@@ -460,7 +505,7 @@ export const razorpayRouteService = {
       const errData = err.response?.data;
       const errorMsg = errData?.error?.description || err.message || "Failed to reverse Route transfer";
 
-      if (transferId.startsWith("trf_test") || config.isDevelopment || config.isTest) {
+      if (isRazorpayStubMode()) {
         return {
           success: true,
           reversalId: `rev_test_${Date.now()}`,
@@ -478,6 +523,9 @@ export const razorpayRouteService = {
    * Endpoint: GET /v1/transfers/{transfer_id}
    */
   async fetchTransferDetails(transferId: string): Promise<any> {
+    if (routeStubOnly()) {
+      return { id: transferId, status: "processed", settlement_status: "settled" };
+    }
     const headers = getRazorpayAuthHeaders();
 
     try {
@@ -487,7 +535,7 @@ export const razorpayRouteService = {
       });
       return response.data;
     } catch (err: any) {
-      if (transferId.startsWith("trf_test") || config.isDevelopment || config.isTest) {
+      if (isRazorpayStubMode()) {
         return {
           id: transferId,
           status: "processed",
@@ -501,25 +549,15 @@ export const razorpayRouteService = {
   },
 
   /**
-   * 6. Verify incoming Razorpay Webhook signature
+   * 6. Verify an incoming Razorpay webhook.
+   * X-Razorpay-Signature = hex HMAC-SHA256 of the RAW request body, keyed with the webhook
+   * secret (not the API key secret). No secret configured → nothing verifies.
    */
   verifyWebhookSignature(rawBody: string | Buffer, signature: string): boolean {
-    const webhookSecret = process.env.RAZORPAY_WEBHOOK_SECRET || "cikka_webhook_secret_default";
-    if (!signature) return false;
+    const webhookSecret = (process.env.RAZORPAY_WEBHOOK_SECRET || config.razorpayWebhookSecret || "").trim();
+    if (!webhookSecret || !signature || rawBody === undefined || rawBody === null) return false;
 
-    const bodyString = typeof rawBody === "string" ? rawBody : rawBody.toString("utf-8");
-    const expectedSignature = crypto
-      .createHmac("sha256", webhookSecret)
-      .update(bodyString)
-      .digest("hex");
-
-    try {
-      return crypto.timingSafeEqual(
-        Buffer.from(expectedSignature, "utf-8"),
-        Buffer.from(signature, "utf-8")
-      );
-    } catch {
-      return expectedSignature === signature;
-    }
+    const expectedSignature = crypto.createHmac("sha256", webhookSecret).update(rawBody).digest("hex");
+    return safeEqualHex(expectedSignature, String(signature));
   },
 };

@@ -84,9 +84,10 @@ describe("Payment forgery guards in production", () => {
     expect(razorpayService.verifyPaymentSignature("order_dev_1", "pay_dev_1", "mock_signature_valid")).toBe(false);
   });
 
-  it("disables the custom payment simulator", async () => {
+  it("no longer serves the custom payment simulator", async () => {
     const res = await request(app).post("/api/payment/process-custom").send({ amount: 100, order_id: "order_x" });
-    expect(res.status).toBe(501);
+    // Route removed; unknown /api paths fall through to the seller-auth gate.
+    expect(res.status).toBe(401);
     expect(res.body.razorpay_signature).toBeUndefined();
   });
 });

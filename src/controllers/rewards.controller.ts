@@ -1,10 +1,16 @@
 import crypto from "crypto";
 import { Request, Response } from "express";
-import { razorpayService } from "../services/razorpay.service";
+import { razorpayService, STUB_PAYMENT_PREFIX } from "../services/razorpay.service";
+import {
+  razorpayCheckoutService,
+  PaymentVerificationError,
+  RazorpayCheckoutRow,
+  FulfilmentOutcome,
+} from "../services/razorpayCheckout.service";
+import { config, isRazorpayStubMode } from "../config/env";
 import { razorpayRouteService } from "../services/razorpayRoute.service";
 import { calculateSettlementBreakdown } from "../services/settlementCalculator.service";
 import { getSellerSettlementProfile } from "../services/settlement.service";
-import { shipwayService } from "../services/shipway.service";
 import { walletService } from "../services/wallet.service";
 import { asyncHandler } from "../utils/asyncHandler";
 import { prisma } from "../config/prisma";
@@ -130,6 +136,22 @@ export const getUserRewardBalance = asyncHandler(async (req: Request, res: Respo
 });
 
 /**
+ * The user whose CI Points are burned. Always the signed-in user when there is one; the old
+ * phone lookup is kept only outside production (guest demo flows).
+ */
+async function resolveRedeemingUser(authenticatedUserId: string | null, customerPhone?: string) {
+  if (authenticatedUserId) {
+    return prisma.user.findUnique({ where: { id: authenticatedUserId } });
+  }
+  if (config.isProduction) return null;
+  const cleanPhone = String(customerPhone || "").replace(/\D/g, "").slice(-10);
+  if (!cleanPhone) return null;
+  return prisma.user.findFirst({
+    where: { OR: [{ phone: { contains: cleanPhone } }, { phone: String(customerPhone) }] },
+  });
+}
+
+/**
  * POST /api/rewards/initiate-redemption
  * Step 1: Customer selects physical product to redeem with CI Points.
  * Validates points balance against product points requirement.
@@ -154,19 +176,15 @@ export const initiateRedemption = asyncHandler(async (req: Request, res: Respons
   const numPointsRequired = Number(pointsRequired) || numProductValue;
   const isExpress = Boolean(is_express || delivery_option === "express");
 
-  // Validate CI Points Balance: If user balance X < required points Y, return strict error
-  const cleanPhone = String(customerPhone || "").replace(/\D/g, "").slice(-10);
-  if (cleanPhone) {
-    const user = await prisma.user.findFirst({
-      where: {
-        OR: [
-          { phone: { contains: cleanPhone } },
-          { phone: String(customerPhone) },
-        ],
-      },
-    });
+  if (config.isProduction && !req.user?.id) {
+    res.status(401).json({ success: false, error: "Please sign in to redeem CI Points." });
+    return;
+  }
 
-    const userBalance = user?.ciPoints ?? 100000;
+  // Validate CI Points Balance: If user balance X < required points Y, return strict error
+  const user = await resolveRedeemingUser(req.user?.id ?? null, customerPhone);
+  if (user || req.user?.id) {
+    const userBalance = user?.ciPoints ?? 0;
     if (userBalance < numPointsRequired) {
       res.status(400).json({
         success: false,
@@ -187,18 +205,30 @@ export const initiateRedemption = asyncHandler(async (req: Request, res: Respons
   const customerPayablePaise = Math.round(customerPayableRupees * 100);
 
   const receipt = `rw_rcpt_${Date.now()}`;
-  const rzpOrder = await razorpayService.createOrder({
-    amount: customerPayablePaise,
+  const { order: rzpOrder } = await razorpayCheckoutService.createCheckout({
+    purpose: "REWARDS",
+    amountPaise: customerPayablePaise,
     currency: "INR",
     receipt,
+    userId: req.user?.id,
     notes: {
       type: isExpress ? "REWARDS_STORE_PLATFORM_AND_EXPRESS_FEE" : "REWARDS_STORE_PLATFORM_FEE",
       product_name: String(productName).slice(0, 40),
       product_value: String(numProductValue),
       points_required: String(numPointsRequired),
-      customer_name: customerName || "Cikka Member",
       is_express: String(isExpress),
       express_fee: String(expressFee),
+    },
+    // What is being redeemed is fixed here, before payment; confirm uses this, not the body.
+    snapshot: {
+      product_id: productId,
+      product_name: productName,
+      product_value: numProductValue,
+      points_burned: numPointsRequired,
+      is_express: isExpress,
+      customer_name: customerName,
+      customer_email: customerEmail,
+      customer_phone: customerPhone,
     },
   });
 
@@ -255,9 +285,9 @@ async function executeRedemptionFulfillment(params: {
     product_value = 1000,
     points_burned = 1000,
     customer_name = "Cikka Member",
-    customer_email = "member@cikka.club",
-    customer_phone = "9876549812",
-    delivery_address = "123, Sample Street, Mumbai – 400001",
+    customer_email = "",
+    customer_phone = "",
+    delivery_address = "",
     pincode = "400001",
     city = "Mumbai",
     pickup_pincode = "122008",
@@ -273,19 +303,13 @@ async function executeRedemptionFulfillment(params: {
   const customerFeePaid = Number((11.79 + expressFee).toFixed(2));
 
   // 1. Validate & Deduct exact Y CI Points from User
+  const user = await resolveRedeemingUser(authenticatedUserId, customer_phone);
+  if (!user && config.isProduction) {
+    throw new Error("Please sign in to redeem CI Points.");
+  }
   const cleanPhone = String(customer_phone || "").replace(/\D/g, "").slice(-10);
-  let user = cleanPhone
-    ? await prisma.user.findFirst({
-        where: {
-          OR: [
-            { phone: { contains: cleanPhone } },
-            { phone: String(customer_phone) },
-          ],
-        },
-      })
-    : null;
 
-  const currentPoints = user?.ciPoints ?? 100000;
+  const currentPoints = user ? user.ciPoints : 100000;
   if (currentPoints < numPointsBurned) {
     throw new Error("points doesnt match the require CI points");
   }
@@ -467,7 +491,8 @@ async function executeRedemptionFulfillment(params: {
           redemptionId,
           razorpayPaymentId: payment_id,
           description: `Rewards Store redemption: ${product_name}`,
-          idempotencyKey: `REDEEM_REWARD:${redemptionId}`,
+          // One debit per Razorpay order, however many times fulfilment is attempted.
+          idempotencyKey: `REDEEM_REWARD:${order_id}`,
         }
       );
     } catch (walletErr: any) {
@@ -524,29 +549,128 @@ async function executeRedemptionFulfillment(params: {
   };
 }
 
+/** Expected platform fee for a redemption, in paise: ₹11.79, or ₹61.79 with express. */
+function expectedRewardsFeePaise(isExpress: boolean): number {
+  return Math.round((11.79 + (isExpress ? 50 : 0)) * 100);
+}
+
+/**
+ * Fulfil a confirmed rewards payment. What is redeemed (product, value, points, express) comes
+ * from the snapshot recorded at initiate-redemption when there is one; delivery details come
+ * from the snapshot or the verified request.
+ */
+export async function fulfilRewardsCheckout(
+  checkout: RazorpayCheckoutRow,
+  paymentId: string,
+  amountPaise: number,
+  requestBody: any,
+  authenticatedUserId: string | null
+) {
+  const snap = ((checkout.snapshot as any) || {}) as Record<string, any>;
+  const body = requestBody || {};
+  const hasSnapshot = snap.points_burned !== undefined;
+  const pick = (key: string) => (snap[key] !== undefined ? snap[key] : body[key]);
+
+  const isExpress = hasSnapshot
+    ? Boolean(snap.is_express)
+    : Boolean(body.is_express || body.delivery_option === "express");
+  if (amountPaise !== expectedRewardsFeePaise(isExpress)) {
+    throw new PaymentVerificationError(400, "AMOUNT_MISMATCH", "Paid amount does not match the redemption fee.");
+  }
+
+  return executeRedemptionFulfillment({
+    order_id: checkout.razorpayOrderId,
+    payment_id: paymentId,
+    product_name: hasSnapshot ? snap.product_name : body.product_name,
+    product_value: hasSnapshot ? snap.product_value : body.product_value,
+    points_burned: hasSnapshot ? snap.points_burned : body.points_burned,
+    customer_name: pick("customer_name"),
+    customer_email: pick("customer_email"),
+    customer_phone: pick("customer_phone"),
+    delivery_address: pick("delivery_address"),
+    pincode: pick("pincode"),
+    city: pick("city"),
+    pickup_pincode: pick("pickup_pincode"),
+    carrier_name: pick("carrier_name"),
+    category: pick("category"),
+    is_express: isExpress,
+    authenticatedUserId: authenticatedUserId ?? checkout.userId ?? null,
+  });
+}
+
+/** Verify a rewards payment with Razorpay and fulfil it once; answers the HTTP request. */
+async function confirmAndFulfilRewards(
+  req: Request,
+  res: Response,
+  orderId: string,
+  paymentId: string,
+  via: "VERIFY" | "CARD_OTP",
+  message: string
+) {
+  if (config.isProduction && !req.user?.id) {
+    res.status(401).json({ success: false, verified: false, error: "Please sign in to redeem CI Points." });
+    return;
+  }
+
+  try {
+    const confirmed = await razorpayCheckoutService.confirmCapturedPayment({
+      orderId,
+      paymentId,
+      purpose: "REWARDS",
+    });
+    if (confirmed.checkout?.userId && req.user?.id && confirmed.checkout.userId !== req.user.id) {
+      throw new PaymentVerificationError(403, "WRONG_USER", "This redemption belongs to another account.");
+    }
+
+    const outcome: FulfilmentOutcome = await razorpayCheckoutService.fulfilOnce({
+      orderId,
+      paymentId,
+      purpose: "REWARDS",
+      amountPaise: confirmed.amountPaise,
+      currency: confirmed.payment.currency,
+      userId: req.user?.id,
+      via,
+      fulfil: (checkout) =>
+        fulfilRewardsCheckout(checkout, paymentId, confirmed.amountPaise, req.body, req.user?.id ?? null),
+    });
+
+    if (outcome.state === "IN_PROGRESS") {
+      res.status(202).json({
+        success: true,
+        verified: true,
+        processing: true,
+        message: "Payment verified. Your redemption is being processed.",
+        customer_payment_id: paymentId,
+      });
+      return;
+    }
+
+    res.status(200).json({
+      success: true,
+      verified: true,
+      message,
+      duplicate: outcome.state === "DUPLICATE" ? true : undefined,
+      ...(outcome.result || {}),
+    });
+  } catch (err: any) {
+    if (err instanceof PaymentVerificationError) {
+      res.status(err.status).json({ success: false, verified: false, error: err.message, code: err.code });
+      return;
+    }
+    res.status(400).json({
+      success: false,
+      verified: false,
+      error: err.message || "Failed to confirm redemption",
+    });
+  }
+}
+
 /**
  * POST /api/rewards/confirm-redemption
- * Step 2: Confirms standard Razorpay payment signature and runs fulfillment.
+ * Step 2: verify the Checkout signature, confirm the captured fee with Razorpay, then fulfil once.
  */
 export const confirmRedemption = asyncHandler(async (req: Request, res: Response) => {
-  const {
-    razorpay_order_id,
-    razorpay_payment_id,
-    razorpay_signature,
-    product_name,
-    product_value,
-    points_burned,
-    customer_name,
-    customer_email,
-    customer_phone,
-    delivery_address,
-    pincode,
-    city,
-    pickup_pincode,
-    carrier_name,
-    category,
-    is_express,
-  } = req.body;
+  const { razorpay_order_id, razorpay_payment_id, razorpay_signature } = req.body;
 
   if (!razorpay_order_id || !razorpay_payment_id || !razorpay_signature) {
     res.status(400).json({
@@ -557,11 +681,10 @@ export const confirmRedemption = asyncHandler(async (req: Request, res: Response
     return;
   }
 
-  // 1. Verify Signature
   const isValid = razorpayService.verifyPaymentSignature(
-    razorpay_order_id,
-    razorpay_payment_id,
-    razorpay_signature
+    String(razorpay_order_id),
+    String(razorpay_payment_id),
+    String(razorpay_signature)
   );
 
   if (!isValid) {
@@ -573,59 +696,35 @@ export const confirmRedemption = asyncHandler(async (req: Request, res: Response
     return;
   }
 
-  try {
-    const result = await executeRedemptionFulfillment({
-      order_id: razorpay_order_id,
-      payment_id: razorpay_payment_id,
-      product_name,
-      product_value,
-      points_burned,
-      customer_name,
-      customer_email,
-      customer_phone,
-      delivery_address,
-      pincode,
-      city,
-      pickup_pincode,
-      carrier_name,
-      category,
-      is_express: Boolean(is_express || req.body.delivery_option === "express"),
-      authenticatedUserId: (req as any).user?.id ?? null,
-    });
-
-    res.status(200).json({
-      success: true,
-      verified: true,
-      message:
-        "Rewards redemption confirmed, exact CI points burned, and order dispatched.",
-      ...result,
-    });
-  } catch (err: any) {
-    const msg = err.message || "Failed to confirm redemption";
-    res.status(400).json({
-      success: false,
-      verified: false,
-      error: msg,
-    });
-  }
+  await confirmAndFulfilRewards(
+    req,
+    res,
+    String(razorpay_order_id),
+    String(razorpay_payment_id),
+    "VERIFY",
+    "Rewards redemption confirmed, exact CI points burned, and order dispatched."
+  );
 });
 
 /**
  * POST /api/rewards/pay-with-card
- * Initiates payment for Platform Fee (₹11.79) or Express (₹61.79) via Tokenized Saved Credit Card.
- * Dispatches Bank 3DS OTP challenge.
+ * Saved-card payment of the redemption fee (₹11.79, or ₹61.79 with express).
+ * Real mode: answers `requires_otp: false` so the app opens Razorpay Checkout
+ * (initiate-redemption → confirm-redemption). Stub mode only: simulated 3DS flow.
  */
 export const payWithCardForRewards = asyncHandler(async (req: Request, res: Response) => {
   const {
     card_id,
     token_id,
+    product_id,
     product_name = "Cikka Rewards Store Product",
     product_value = 1000,
     points_required = 1000,
     is_express,
     delivery_option,
-    customer_name = "Cikka Member",
-    customer_phone = "9876549812",
+    customer_name,
+    customer_email,
+    customer_phone,
   } = req.body;
 
   const cardIdentifier = card_id || token_id;
@@ -639,20 +738,19 @@ export const payWithCardForRewards = asyncHandler(async (req: Request, res: Resp
 
   const numPointsRequired = Number(points_required) || 1000;
   const isExpress = Boolean(is_express || delivery_option === "express");
+  const expressFee = isExpress ? 50.0 : 0.0;
+  const totalPayableRupees = Number((11.79 + expressFee).toFixed(2));
+  const amountInPaise = expectedRewardsFeePaise(isExpress);
+
+  if (config.isProduction && !req.user?.id) {
+    res.status(401).json({ success: false, error: "Please sign in to redeem CI Points." });
+    return;
+  }
 
   // Validate CI Points Balance
-  const cleanPhone = String(customer_phone || "").replace(/\D/g, "").slice(-10);
-  if (cleanPhone) {
-    const user = await prisma.user.findFirst({
-      where: {
-        OR: [
-          { phone: { contains: cleanPhone } },
-          { phone: String(customer_phone) },
-        ],
-      },
-    });
-
-    const userBalance = user?.ciPoints ?? 100000;
+  const user = await resolveRedeemingUser(req.user?.id ?? null, customer_phone);
+  if (user || req.user?.id) {
+    const userBalance = user?.ciPoints ?? 0;
     if (userBalance < numPointsRequired) {
       res.status(400).json({
         success: false,
@@ -665,95 +763,80 @@ export const payWithCardForRewards = asyncHandler(async (req: Request, res: Resp
     }
   }
 
-  // Find saved card
-  let savedCard = await prisma.userSavedCard.findFirst({
-    where: {
-      OR: [{ id: cardIdentifier }, { razorpayTokenId: cardIdentifier }],
-    },
-  });
-
-  if (!savedCard) {
-    savedCard = {
-      id: cardIdentifier,
-      userId: (req as any).user?.id || "usr_guest",
-      razorpayCustomerId: "cust_demo",
-      razorpayTokenId: cardIdentifier,
-      bankName: req.body.bank_name || "HDFC Bank",
-      cardNetwork: req.body.card_network || "VISA",
-      cardType: "CREDIT",
-      last4: req.body.last4 || "4242",
-      expiryMonth: "12",
-      expiryYear: "2028",
-      cardHolderName: customer_name,
-      isDefault: true,
-      createdAt: new Date(),
-      updatedAt: new Date(),
-    } as any;
+  if (!isRazorpayStubMode()) {
+    res.status(200).json({
+      success: true,
+      requires_otp: false,
+      requires_checkout: true,
+      amount: totalPayableRupees,
+      amount_in_paise: amountInPaise,
+      is_express: isExpress,
+      express_delivery_fee: expressFee,
+      platform_fee: 11.79,
+      message: "Complete the fee payment in Razorpay Checkout.",
+    });
+    return;
   }
 
-  // Exact Billing: ₹11.79 standard vs ₹61.79 express
-  const expressFee = isExpress ? 50.0 : 0.0;
-  const totalPayableRupees = Number((11.79 + expressFee).toFixed(2));
-  const amountInPaise = Math.round(totalPayableRupees * 100);
+  const savedCard = req.user?.id
+    ? await prisma.userSavedCard.findFirst({
+        where: {
+          userId: req.user.id,
+          status: "ACTIVE",
+          OR: [{ id: String(cardIdentifier) }, { razorpayTokenId: String(cardIdentifier) }],
+        },
+      })
+    : null;
 
-  const orderId = `order_rw_${crypto.randomBytes(7).toString("hex")}`;
-  const paymentId = `pay_rw_${crypto.randomBytes(7).toString("hex")}`;
+  const { order } = await razorpayCheckoutService.createCheckout({
+    purpose: "REWARDS",
+    amountPaise: amountInPaise,
+    currency: "INR",
+    receipt: `rw_card_${Date.now()}`,
+    userId: req.user?.id,
+    snapshot: {
+      product_id,
+      product_name,
+      product_value: Number(product_value) || 1000,
+      points_burned: numPointsRequired,
+      is_express: isExpress,
+      customer_name,
+      customer_email,
+      customer_phone,
+    },
+  });
+  const paymentId = `${STUB_PAYMENT_PREFIX}${crypto.randomBytes(7).toString("hex")}`;
 
-  const rawPhone = String(customer_phone || "9876549812").replace(/\D/g, "");
-  const phoneLast4 = rawPhone.length >= 4 ? rawPhone.slice(-4) : "9812";
-
-  console.log(
-    `[Tokenized Card Rewards Flow] Order: ${orderId}, Card: ${savedCard?.bankName} •••• ${savedCard?.last4}, Amount: ₹${totalPayableRupees}`
-  );
+  const rawPhone = String(customer_phone || "").replace(/\D/g, "");
+  const phoneLast4 = rawPhone.length >= 4 ? rawPhone.slice(-4) : "";
 
   res.status(200).json({
     success: true,
     requires_otp: true,
-    order_id: orderId,
+    order_id: order.order_id,
     payment_id: paymentId,
-    bank_name: savedCard?.bankName || "HDFC Bank",
-    card_network: savedCard?.cardNetwork || "VISA",
-    card_type: savedCard?.cardType || "CREDIT",
-    card_last4: savedCard?.last4 || "4242",
+    bank_name: savedCard?.bankName || req.body.bank_name || "",
+    card_network: savedCard?.cardNetwork || req.body.card_network || "",
+    card_type: savedCard?.cardType || "credit",
+    card_last4: savedCard?.last4 || req.body.last4 || "",
     phone_last4: phoneLast4,
     amount: totalPayableRupees,
     amount_in_paise: amountInPaise,
     is_express: isExpress,
     express_delivery_fee: expressFee,
     platform_fee: 11.79,
-    acs_url: `https://api.razorpay.com/v1/payments/${paymentId}/authenticate`,
-    message: `3D Secure OTP dispatched by ${
-      savedCard?.bankName || "your bank"
-    } to mobile ending with ${phoneLast4}`,
+    acs_url: null,
+    message: "[Stub] 3D Secure OTP simulated",
   });
 });
 
 /**
  * POST /api/rewards/verify-card-otp
- * Verifies the 6-digit Bank 3DS OTP for the Rewards Platform/Express fee,
- * burns exact Y CI points, funds seller via Cikka Treasury on T+7 hold,
- * and pushes shipment to Shipway.
+ * Confirms the fee payment with Razorpay (exists, belongs to order_id, captured, right amount)
+ * and fulfils the redemption once. The OTP itself is checked by the bank, not by us.
  */
 export const verifyCardOtpForRewards = asyncHandler(async (req: Request, res: Response) => {
-  const {
-    order_id,
-    payment_id,
-    otp,
-    product_name,
-    product_value,
-    points_burned,
-    customer_name,
-    customer_email,
-    customer_phone,
-    delivery_address,
-    pincode,
-    city,
-    pickup_pincode,
-    carrier_name,
-    category,
-    is_express,
-    delivery_option,
-  } = req.body;
+  const { order_id, payment_id, otp } = req.body;
 
   if (!order_id || !payment_id) {
     res.status(400).json({
@@ -773,38 +856,12 @@ export const verifyCardOtpForRewards = asyncHandler(async (req: Request, res: Re
     return;
   }
 
-  try {
-    const result = await executeRedemptionFulfillment({
-      order_id,
-      payment_id,
-      product_name,
-      product_value,
-      points_burned,
-      customer_name,
-      customer_email,
-      customer_phone,
-      delivery_address,
-      pincode,
-      city,
-      pickup_pincode,
-      carrier_name,
-      category,
-      is_express: Boolean(is_express || delivery_option === "express"),
-      authenticatedUserId: (req as any).user?.id ?? null,
-    });
-
-    res.status(200).json({
-      success: true,
-      verified: true,
-      message:
-        "Rewards platform fee authorized, exact CI points burned, and order dispatched.",
-      ...result,
-    });
-  } catch (err: any) {
-    res.status(400).json({
-      success: false,
-      verified: false,
-      error: err.message || "Failed to verify rewards card OTP",
-    });
-  }
+  await confirmAndFulfilRewards(
+    req,
+    res,
+    String(order_id),
+    String(payment_id),
+    "CARD_OTP",
+    "Rewards platform fee authorized, exact CI points burned, and order dispatched."
+  );
 });

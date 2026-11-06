@@ -653,6 +653,37 @@ model UserSavedCard {
 
 
 // ============================================================
+// RAZORPAY CHECKOUT — one row per Razorpay order we create.
+// Holds the server-side amount and the cart/shipping snapshot taken at order
+// creation, and is the idempotency claim for fulfilment: the client verify call,
+// the card-OTP call and the payment.captured / order.paid webhook all race for
+// the same row, and only the caller that moves it CREATED → PROCESSING fulfils.
+// ============================================================
+
+model RazorpayCheckout {
+  id                String    @id @default(uuid())
+  razorpayOrderId   String    @unique
+  purpose           String    // MALL | REWARDS
+  userId            String?   // authenticated mobile user at order creation
+  amountPaise       Int       // amount the Razorpay order was created for
+  currency          String    @default("INR")
+  status            String    @default("CREATED") // CREATED | PROCESSING | FULFILLED | FAILED
+  razorpayPaymentId String?   @unique
+  snapshot          Json?     // cart + shipping details captured at order creation
+  result            Json?     // fulfilment response, replayed to duplicate callers
+  fulfilledVia      String?   // VERIFY | CARD_OTP | WEBHOOK
+  fulfilledAt       DateTime?
+  lastError         String?
+
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
+
+  @@index([userId])
+  @@index([status])
+  @@map("razorpay_checkouts")
+}
+
+// ============================================================
 // PAYMENT TRANSACTION — Setu Payment & Refund Ledger
 // Stores uniquePaymentRefID for strict idempotency checks
 // ============================================================

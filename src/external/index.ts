@@ -20,7 +20,7 @@ import type { StorageService } from "./storage/storage.interface";
 import type { SetuBillpayClient } from "./setu/billpay.interface";
 import type { InstantPayClient } from "./instantpay/instantpay.interface";
 
-const mode = process.env.EXTERNAL_SERVICES_MODE ?? "stub";
+const mode = config.externalServicesMode;
 
 if (mode !== "stub" && mode !== "real") {
   throw new Error(`Invalid EXTERNAL_SERVICES_MODE="${mode}". Must be "stub" or "real".`);
