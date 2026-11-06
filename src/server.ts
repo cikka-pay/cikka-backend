@@ -2,6 +2,7 @@ import "dotenv/config";
 import app from "./app";
 import { initSettlementCron } from "./cron/settlement.cron";
 import { initReturnSLACron } from "./cron/return-sla.cron";
+import { startJobs, stopJobs } from "./jobs";
 
 const port = parseInt(process.env.PORT as string, 10) || 4000;
 
@@ -19,7 +20,21 @@ const server = app.listen(port, "0.0.0.0", () => {
   // Start background cron jobs
   initSettlementCron();
   initReturnSLACron();
+
+  // Start async job queue + workers (pg-boss)
+  startJobs().catch((err) => console.error("❌ [jobs] failed to start:", err));
 });
+
+// Graceful shutdown: let in-flight jobs finish before exit (Railway sends SIGTERM on redeploy)
+for (const signal of ["SIGTERM", "SIGINT"] as const) {
+  process.once(signal, () => {
+    console.log(`\n${signal} received — shutting down...`);
+    server.close();
+    stopJobs()
+      .catch((err) => console.error("[jobs] stop error:", err))
+      .finally(() => process.exit(0));
+  });
+}
 
 
 server.on("error", (err: any) => {

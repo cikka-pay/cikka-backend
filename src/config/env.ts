@@ -87,6 +87,15 @@ export const config = {
   s3SecretAccessKey: process.env.S3_SECRET_ACCESS_KEY || process.env.SECRET_ACCESS_KEY,
   s3ForcePathStyle: process.env.S3_FORCE_PATH_STYLE === "true",
   s3SignedUrlExpiry: parseInt(process.env.S3_SIGNED_URL_EXPIRY || "3600", 10),
+
+  // Async jobs (pg-boss on the main Postgres — see src/jobs/)
+  jobs: {
+    // Set to "false" on the API service once workers run in a separate service.
+    workersEnabled: process.env.JOBS_WORKERS_ENABLED !== "false",
+    // Delay before Mall purchase rewards are credited (0 = immediately).
+    // e.g. 864000 (10 days) to credit only after the delivery + T+7 return window.
+    rewardCreditDelaySeconds: parseInt(process.env.REWARD_CREDIT_DELAY_SECONDS || "0", 10),
+  },
 };
 
 
