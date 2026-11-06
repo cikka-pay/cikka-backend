@@ -6,6 +6,91 @@ import { shipwayService } from "../services/shipway.service";
 import { razorpayRouteService } from "../services/razorpayRoute.service";
 import { razorpayService } from "../services/razorpay.service";
 
+/** Razorpay order id behind an order number (`order_X` or `order_X-<n>` for multi-item carts). */
+function baseRazorpayOrderId(orderNumber: string): string {
+  return orderNumber.replace(/-\d+$/, "");
+}
+
+/** The settlement written for this order at fulfilment (never "the seller's latest one"). */
+function findOrderSettlement(order: { id: string; orderNumber: string; sellerId: string }) {
+  return prisma.settlement.findFirst({
+    where: {
+      sellerId: order.sellerId,
+      OR: [{ orderId: order.id }, { orderNumber: order.orderNumber }],
+    },
+    orderBy: { createdAt: "desc" },
+  });
+}
+
+/** Payment id to refund: from the order's settlement, else from its Razorpay checkout record. */
+async function findOrderPaymentId(
+  order: { orderNumber: string },
+  settlement: { razorpayPaymentId: string | null } | null
+): Promise<string | null> {
+  if (settlement?.razorpayPaymentId) return settlement.razorpayPaymentId;
+  const checkout = await prisma.razorpayCheckout.findUnique({
+    where: { razorpayOrderId: baseRazorpayOrderId(order.orderNumber) },
+  });
+  return checkout?.razorpayPaymentId ?? null;
+}
+
+/**
+ * Reverse the seller's held transfer for this order exactly once: the settlement is claimed
+ * ON_HOLD → REVERSING first, so concurrent or repeated calls cannot reverse twice.
+ * A full refund reverses the whole transfer; a partial one reverses at most the refund.
+ */
+async function reverseOrderTransferOnce(
+  settlement: { id: string; razorpayTransferId: string | null; netPayable: any } | null,
+  refundAmount: number,
+  orderTotal: number,
+  reason: string
+) {
+  if (!settlement?.razorpayTransferId) return null;
+  const claim = await prisma.settlement.updateMany({
+    where: { id: settlement.id, transferStatus: "ON_HOLD" },
+    data: { transferStatus: "REVERSING" } as any,
+  });
+  if (claim.count === 0) return { success: false, skipped: true, message: "Transfer already reversed or released" };
+
+  const fullReversal = refundAmount >= orderTotal;
+  const reversePaise = fullReversal
+    ? undefined
+    : Math.min(Math.round(refundAmount * 100), Math.round(Number(settlement.netPayable) * 100));
+
+  const result = await razorpayRouteService.reverseTransfer(settlement.razorpayTransferId, reversePaise, reason);
+  await prisma.settlement.update({
+    where: { id: settlement.id },
+    data: result.success
+      ? ({ transferStatus: "REVERSED", failureReason: reason } as any) // SettlementStatus has no CANCELLED; REVERSED marks it
+      : ({ transferStatus: "ON_HOLD", failureReason: `Reversal failed: ${result.error}` } as any),
+  });
+  return result;
+}
+
+/**
+ * Refund amount from server data: the order total, or a smaller positive partial amount.
+ * Never more than the order was sold for.
+ */
+function serverRefundAmount(requested: unknown, orderTotal: number): number {
+  const n = Number(requested);
+  if (requested === undefined || requested === null || requested === "" || !Number.isFinite(n) || n <= 0) {
+    return orderTotal;
+  }
+  return Math.min(Number(n.toFixed(2)), orderTotal);
+}
+
+/**
+ * Orders placed through a Razorpay checkout recorded with a user may only be returned by that
+ * user. Returns an error message, or null when allowed.
+ */
+async function checkOrderOwnership(orderNumber: string, userId?: string): Promise<string | null> {
+  const checkout = await prisma.razorpayCheckout.findUnique({
+    where: { razorpayOrderId: baseRazorpayOrderId(orderNumber) },
+  });
+  if (checkout?.userId && checkout.userId !== userId) return "This order belongs to another account";
+  return null;
+}
+
 export const listReturns = asyncHandler(async (req: Request, res: Response) => {
   const sellerId = req.seller!.id;
   const { page = "1", limit = "100", status } = req.query as any;
@@ -123,68 +208,50 @@ export const updateReturnStatus = asyncHandler(async (req: Request, res: Respons
     }
   }
 
-  // 2. Automated Reverse Routing & Payout Clawback (Within 7-day hold window)
+  // 2. Payout clawback (within the hold window) and customer refund — each at most once.
   let reversalResult: any = null;
   let customerRefundResult: any = null;
+  const refundAmount = Number(ret.refundAmount);
+  const orderTotal = Number(ret.order.totalAmount);
 
   if (status === "APPROVED" || status === "REFUNDED") {
     try {
-      // Find the pending settlement associated with this seller and order
-      const settlement = await prisma.settlement.findFirst({
-        where: {
-          sellerId,
-          transferStatus: "ON_HOLD",
-          razorpayTransferId: { not: null },
-        },
-        orderBy: { createdAt: "desc" },
-      });
+      const settlement = await findOrderSettlement(ret.order);
+      reversalResult = await reverseOrderTransferOnce(
+        settlement,
+        refundAmount,
+        orderTotal,
+        `Return #${ret.id} for Order #${ret.order.orderNumber}`
+      );
 
-      if (settlement && settlement.razorpayTransferId) {
-        console.log(`[Return Clawback] Initiating reversal for transfer ${settlement.razorpayTransferId}`);
-        const refundPaise = Math.round(Number(ret.refundAmount) * 100);
-
-        reversalResult = await razorpayRouteService.reverseTransfer(
-          settlement.razorpayTransferId,
-          refundPaise,
-          `Return for Order #${ret.order.orderNumber}`
-        );
-
-        if (reversalResult.success) {
-          await prisma.settlement.update({
-            where: { id: settlement.id },
-            data: {
-              transferStatus: "REVERSED",
-              status: "CANCELLED",
-              failureReason: `Clawed back on customer return #${ret.id}`,
-            } as any,
-          });
-
-          await prisma.notification.create({
-            data: {
-              sellerId,
-              type: NotificationType.SETTLEMENT,
-              title: `Payout Clawback Reversal: Order #${ret.order.orderNumber}`,
-              body: `Return approved within hold window. Transfer ₹${ret.refundAmount} was reversed from your Linked Account.`,
-              metadata: {
-                returnId: ret.id,
-                transferId: settlement.razorpayTransferId,
-                amount: Number(ret.refundAmount),
-              },
-            },
-          }).catch(() => {});
-        }
+      if (reversalResult?.success) {
+        await prisma.notification.create({
+          data: {
+            sellerId,
+            type: NotificationType.SETTLEMENT,
+            title: `Payout Clawback Reversal: Order #${ret.order.orderNumber}`,
+            body: `Return approved within hold window. Your held payout for this order was reversed.`,
+            metadata: { returnId: ret.id, transferId: settlement?.razorpayTransferId, amount: refundAmount },
+          },
+        }).catch(() => {});
       }
 
-      // If status is REFUNDED, issue customer card/points refund
-      if (status === "REFUNDED" && settlement?.razorpayPaymentId) {
-        customerRefundResult = await razorpayService.refundPayment(
-          settlement.razorpayPaymentId,
-          Math.round(Number(ret.refundAmount) * 100),
-          {
-            returnId: ret.id,
-            orderNumber: ret.order.orderNumber,
+      // Refund only on the first move to REFUNDED; the refund receipt makes Razorpay reject
+      // a second refund for the same return even if this is retried.
+      if (status === "REFUNDED" && ret.status !== ReturnStatus.REFUNDED) {
+        const paymentId = await findOrderPaymentId(ret.order, settlement);
+        if (paymentId) {
+          customerRefundResult = await razorpayService.refundPayment(
+            paymentId,
+            Math.round(refundAmount * 100),
+            { returnId: ret.id, orderNumber: ret.order.orderNumber },
+            `rtn_${ret.id}`
+          );
+          if (!customerRefundResult.success) {
+            res.status(502).json({ error: `Refund failed: ${customerRefundResult.error}`, reversalResult, customerRefundResult });
+            return;
           }
-        );
+        }
       }
     } catch (clawbackErr: any) {
       console.warn("[Return Clawback/Refund Error]:", clawbackErr.message || clawbackErr);
@@ -208,26 +275,33 @@ export const updateReturnStatus = asyncHandler(async (req: Request, res: Respons
 export const createReturn = asyncHandler(async (req: Request, res: Response) => {
   const { orderId, orderNumber, productId, reason, refundAmount } = req.body;
 
-  let order = null;
-  if (orderId) {
-    order = await prisma.order.findUnique({
-      where: { id: orderId },
-      include: { items: { include: { product: true } }, seller: { include: { onboarding: true } } },
-    });
-  } else if (orderNumber) {
-    order = await prisma.order.findUnique({
-      where: { orderNumber },
-      include: { items: { include: { product: true } }, seller: { include: { onboarding: true } } },
-    });
-  } else {
-    order = await prisma.order.findFirst({
-      orderBy: { createdAt: "desc" },
-      include: { items: { include: { product: true } }, seller: { include: { onboarding: true } } },
-    });
+  if (!orderId && !orderNumber) {
+    res.status(400).json({ error: "orderId or orderNumber is required to initiate a return" });
+    return;
   }
+
+  const include = { items: { include: { product: true } }, seller: { include: { onboarding: true } } } as const;
+  const order = orderId
+    ? await prisma.order.findUnique({ where: { id: orderId }, include })
+    : await prisma.order.findUnique({ where: { orderNumber }, include });
 
   if (!order) {
     res.status(404).json({ error: "Order not found to initiate return" });
+    return;
+  }
+
+  const ownershipError = await checkOrderOwnership(order.orderNumber, req.user?.id);
+  if (ownershipError) {
+    res.status(403).json({ error: ownershipError });
+    return;
+  }
+
+  // One active return per order: a second request must not refund or claw back again.
+  const existingReturn = await prisma.return.findFirst({
+    where: { orderId: order.id, status: { in: [ReturnStatus.REQUESTED, ReturnStatus.APPROVED, ReturnStatus.REFUNDED] } },
+  });
+  if (existingReturn) {
+    res.status(409).json({ success: false, error: "A return already exists for this order", data: existingReturn });
     return;
   }
 
@@ -236,22 +310,21 @@ export const createReturn = asyncHandler(async (req: Request, res: Response) => 
     prodId = order.items[0].productId;
   }
   if (!prodId) {
-    const anyProd = await prisma.product.findFirst();
-    prodId = anyProd?.id;
+    res.status(400).json({ error: "productId is required for this order" });
+    return;
   }
 
-  const effectiveRefundAmount =
-    refundAmount !== undefined ? Number(refundAmount) : Number(order.totalAmount);
+  const orderTotal = Number(order.totalAmount);
+  const effectiveRefundAmount = serverRefundAmount(refundAmount, orderTotal);
 
   // =========================================================================
   // SCENARIO 1: ORDER IS IN-TRANSIT (Cancellation / Return before delivery)
-  // No seller approval required! Automatic instant refund & escrow clawback.
+  // No seller approval required: instant refund & escrow clawback, each at most once.
   // =========================================================================
   const isInTransit = (order.status as any) !== "DELIVERED";
 
   if (isInTransit) {
-    // 1. Create Return marked as APPROVED directly
-    const ret = await prisma.return.create({
+    let ret = await prisma.return.create({
       data: {
         orderId: order.id,
         productId: prodId,
@@ -262,59 +335,37 @@ export const createReturn = asyncHandler(async (req: Request, res: Response) => 
       include: { order: true, product: true },
     });
 
-    // 2. Mark order as RETURNED
     await prisma.order.update({
       where: { id: order.id },
       data: { status: "RETURNED" as any },
     });
 
-    // 3. Find pending settlement on hold and claw back money from seller linked account
-    let clawbackResult: any = null;
+    const settlement = await findOrderSettlement(order);
+    const clawbackResult = await reverseOrderTransferOnce(
+      settlement,
+      effectiveRefundAmount,
+      orderTotal,
+      `In-transit return #${ret.id} for Order #${order.orderNumber}`
+    );
+
     let customerRefundResult: any = null;
-
-    const settlement = await prisma.settlement.findFirst({
-      where: {
-        sellerId: order.sellerId,
-        transferStatus: "ON_HOLD",
-        razorpayTransferId: { not: null },
-      },
-      orderBy: { createdAt: "desc" },
-    });
-
-    if (settlement && settlement.razorpayTransferId) {
-      const refundPaise = Math.round(effectiveRefundAmount * 100);
-      clawbackResult = await razorpayRouteService.reverseTransfer(
-        settlement.razorpayTransferId,
-        refundPaise,
-        `In-transit Return RTO for Order #${order.orderNumber}`
+    const paymentId = await findOrderPaymentId(order, settlement);
+    if (paymentId) {
+      customerRefundResult = await razorpayService.refundPayment(
+        paymentId,
+        Math.round(effectiveRefundAmount * 100),
+        { returnId: ret.id, orderNumber: order.orderNumber, reason: "Instant In-Transit Return Refund" },
+        `rtn_${ret.id}`
       );
-
-      if (clawbackResult.success) {
-        await prisma.settlement.update({
-          where: { id: settlement.id },
-          data: {
-            transferStatus: "REVERSED",
-            status: "CANCELLED",
-            failureReason: `In-transit return initiated by customer for Order #${order.orderNumber}. Escrow hold reversed and removed from active settlements.`,
-          } as any,
+      if (customerRefundResult.success) {
+        ret = await prisma.return.update({
+          where: { id: ret.id },
+          data: { status: ReturnStatus.REFUNDED },
+          include: { order: true, product: true },
         });
-      }
-
-      // 4. Instant Customer Refund to Card/UPI
-      if (settlement.razorpayPaymentId) {
-        customerRefundResult = await razorpayService.refundPayment(
-          settlement.razorpayPaymentId,
-          refundPaise,
-          {
-            returnId: ret.id,
-            orderNumber: order.orderNumber,
-            reason: "Instant In-Transit Return Refund",
-          }
-        );
       }
     }
 
-    // 5. In-App Notification to Seller (Returns Category)
     await prisma.notification.create({
       data: {
         sellerId: order.sellerId,
@@ -402,27 +453,34 @@ export const createExchange = asyncHandler(async (req: Request, res: Response) =
     res.status(400).json({ error: "newProductId is required to process an exchange" });
     return;
   }
-
-  let order = null;
-  if (orderId) {
-    order = await prisma.order.findUnique({
-      where: { id: orderId },
-      include: { items: { include: { product: true } }, seller: { include: { onboarding: true } } },
-    });
-  } else if (orderNumber) {
-    order = await prisma.order.findUnique({
-      where: { orderNumber },
-      include: { items: { include: { product: true } }, seller: { include: { onboarding: true } } },
-    });
-  } else {
-    order = await prisma.order.findFirst({
-      orderBy: { createdAt: "desc" },
-      include: { items: { include: { product: true } }, seller: { include: { onboarding: true } } },
-    });
+  if (!orderId && !orderNumber) {
+    res.status(400).json({ error: "orderId or orderNumber is required to process an exchange" });
+    return;
   }
+
+  const include = { items: { include: { product: true } }, seller: { include: { onboarding: true } } } as const;
+  const order = orderId
+    ? await prisma.order.findUnique({ where: { id: orderId }, include })
+    : await prisma.order.findUnique({ where: { orderNumber }, include });
 
   if (!order) {
     res.status(404).json({ error: "Original order not found for exchange" });
+    return;
+  }
+
+  const ownershipError = await checkOrderOwnership(order.orderNumber, req.user?.id);
+  if (ownershipError) {
+    res.status(403).json({ error: ownershipError });
+    return;
+  }
+
+  // An order can be exchanged once; repeating the call must not refund or claw back again.
+  const exchangeClaim = await prisma.order.updateMany({
+    where: { id: order.id, status: { notIn: ["EXCHANGE", "RETURNED", "CANCELLED"] as any } },
+    data: { status: "EXCHANGE" as any },
+  });
+  if (exchangeClaim.count === 0) {
+    res.status(409).json({ success: false, error: "This order has already been exchanged, returned or cancelled" });
     return;
   }
 
@@ -461,11 +519,7 @@ export const createExchange = asyncHandler(async (req: Request, res: Response) =
     include: { order: true, product: true },
   });
 
-  // 1b. Trigger EXCHANGE status for the order in dashboard summary & order lists
-  await prisma.order.update({
-    where: { id: order.id },
-    data: { status: "EXCHANGE" as any },
-  });
+  // 1b. Order status was already moved to EXCHANGE by the claim above.
 
   // 2. Trigger Shipway Reverse Courier for old parcel
   let reverseDetails: any = null;
@@ -490,15 +544,10 @@ export const createExchange = asyncHandler(async (req: Request, res: Response) =
     console.warn("[Exchange Shipway Notice]:", shipErr.message);
   }
 
-  // 3. Locate active settlement on hold
-  const settlement = await prisma.settlement.findFirst({
-    where: {
-      sellerId: order.sellerId,
-      transferStatus: "ON_HOLD",
-      razorpayTransferId: { not: null },
-    },
-    orderBy: { createdAt: "desc" },
-  });
+  // 3. Locate this order's settlement (still on hold) and the payment to refund against
+  const orderSettlement = await findOrderSettlement(order);
+  const settlement = orderSettlement?.transferStatus === "ON_HOLD" ? orderSettlement : null;
+  const exchangePaymentId = await findOrderPaymentId(order, orderSettlement);
 
   let clawbackResult: any = null;
   let customerRefundResult: any = null;
@@ -534,14 +583,15 @@ export const createExchange = asyncHandler(async (req: Request, res: Response) =
     } else if (delta < 0) {
       // DOWNGRADE: Customer gets instant refund of delta
       const refundPaise = Math.round(Math.abs(delta) * 100);
-      if (settlement?.razorpayPaymentId) {
+      if (exchangePaymentId) {
         customerRefundResult = await razorpayService.refundPayment(
-          settlement.razorpayPaymentId,
+          exchangePaymentId,
           refundPaise,
           {
             orderNumber: order.orderNumber,
             reason: `Exchange downgrade refund: ${Math.abs(delta)} INR`,
-          }
+          },
+          `exc_${ret.id}`
         );
       }
 
@@ -606,22 +656,13 @@ export const createExchange = asyncHandler(async (req: Request, res: Response) =
   // =========================================================================
   else {
     // 1. Claw back 100% of held payout from Seller A (Old Seller)
-    if (settlement?.razorpayTransferId) {
-      clawbackResult = await razorpayRouteService.reverseTransfer(
-        settlement.razorpayTransferId,
-        undefined, // reverse 100%
-        `Cross-brand exchange from Seller ${order.sellerId} to Seller ${newProduct.sellerId}`
-      );
-
-      await prisma.settlement.update({
-        where: { id: settlement.id },
-        data: {
-          transferStatus: "REVERSED",
-          status: "CANCELLED",
-          failureReason: `Exchanged for Product from another brand (Seller #${newProduct.sellerId}). Payout shifted to new seller.`,
-        } as any,
-      });
-    }
+    // Full reversal of this order's held transfer, at most once (only reported REVERSED on success).
+    clawbackResult = await reverseOrderTransferOnce(
+      settlement,
+      oldPrice,
+      oldPrice,
+      `Cross-brand exchange from Seller ${order.sellerId} to Seller ${newProduct.sellerId}`
+    );
 
     // 2. Alert Old Seller of clawback
     await prisma.notification.create({
@@ -692,14 +733,15 @@ export const createExchange = asyncHandler(async (req: Request, res: Response) =
       };
     } else if (delta < 0) {
       const refundPaise = Math.round(Math.abs(delta) * 100);
-      if (settlement?.razorpayPaymentId) {
+      if (exchangePaymentId) {
         customerRefundResult = await razorpayService.refundPayment(
-          settlement.razorpayPaymentId,
+          exchangePaymentId,
           refundPaise,
           {
             orderNumber: order.orderNumber,
             reason: `Cross-brand exchange downgrade refund: ${Math.abs(delta)} INR`,
-          }
+          },
+          `exc_${ret.id}`
         );
       }
 

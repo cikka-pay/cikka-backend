@@ -1,5 +1,5 @@
 import { Router } from "express";
-import { requireSellerAuth } from "../middleware/auth.middleware";
+import { requireSellerAuth, requireUserAuth } from "../middleware/auth.middleware";
 import authRoutes from "./auth.routes";
 import userAuthRoutes from "./user-auth.routes";
 import billpayRoutes from "./billpay.routes";
@@ -83,11 +83,12 @@ router.use("/rewards", rewardsRoutes);
 router.use("/shipway", shipwayRoutes);
 
 
-// Public Return Request Endpoint (Customer App / Postman)
+// Customer return / exchange requests (mobile app). They trigger refunds and payout
+// reversals, so a signed-in user is required.
 import { createReturn, createExchange } from "../controllers/returns.controller";
-router.post("/returns/request", createReturn);
-router.post("/returns/create", createReturn);
-router.post("/returns/exchange", createExchange);
+router.post("/returns/request", requireUserAuth, createReturn);
+router.post("/returns/create", requireUserAuth, createReturn);
+router.post("/returns/exchange", requireUserAuth, createExchange);
 
 // Public Cikka Mall Catalog (Product exploration & single-loop exchanges)
 import { listMallCatalogProducts } from "../controllers/products.controller";
