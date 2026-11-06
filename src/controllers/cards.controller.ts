@@ -7,10 +7,8 @@ import { asyncHandler } from "../utils/asyncHandler";
  * Fetch all active saved tokenized credit cards for the user (RBI CoF compliant)
  */
 export const getSavedCardsHandler = asyncHandler(async (req: Request, res: Response) => {
-  const phone = (req.query.phone as string) || (req.query.userPhone as string) || "9876549812";
-  const userId = (req.query.userId as string) || (req as any).user?.id;
-
-  const cards = await razorpayTokenService.getSavedCards(phone, userId);
+  // Only the signed-in user's cards; phone/userId query params are no longer honoured.
+  const cards = await razorpayTokenService.getSavedCards(req.user!.id);
 
   res.status(200).json({
     success: true,
@@ -37,32 +35,34 @@ export const getSavedCardsHandler = asyncHandler(async (req: Request, res: Respo
  */
 export const saveCardTokenHandler = asyncHandler(async (req: Request, res: Response) => {
   const {
-    bankName = "HDFC Bank",
-    cardNetwork = "Visa",
+    bankName,
+    cardNetwork,
     cardType = "credit",
     last4,
-    cardholderName = "Sujal Sharma",
-    expiryMonth = "08",
-    expiryYear = "28",
-    phone = "9876549812",
+    cardholderName,
+    expiryMonth,
+    expiryYear,
     isDefault = false,
   } = req.body;
 
-  if (!last4 || last4.length < 4) {
+  if (!last4 || String(last4).length < 4) {
     res.status(400).json({
       success: false,
       error: "Last 4 digits of card are required for tokenization record",
     });
     return;
   }
+  if (!bankName || !cardNetwork) {
+    res.status(400).json({ success: false, error: "bankName and cardNetwork are required" });
+    return;
+  }
 
   const savedCard = await razorpayTokenService.saveCardToken({
-    phone,
-    userId: (req as any).user?.id,
+    userId: req.user!.id,
     bankName,
     cardNetwork,
     cardType,
-    last4: last4.slice(-4),
+    last4: String(last4).slice(-4),
     cardholderName,
     expiryMonth,
     expiryYear,
@@ -91,7 +91,11 @@ export const saveCardTokenHandler = asyncHandler(async (req: Request, res: Respo
 export const deleteCardTokenHandler = asyncHandler(async (req: Request, res: Response) => {
   const { id } = req.params;
 
-  await razorpayTokenService.deleteCardToken(id);
+  const revoked = await razorpayTokenService.deleteCardToken(id, req.user!.id);
+  if (!revoked) {
+    res.status(404).json({ success: false, error: "Card not found" });
+    return;
+  }
 
   res.status(200).json({
     success: true,

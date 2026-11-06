@@ -4,11 +4,12 @@ import {
   saveCardTokenHandler,
   deleteCardTokenHandler,
 } from "../controllers/cards.controller";
-import { optionalUserAuth } from "../middleware/auth.middleware";
+import { requireUserAuth } from "../middleware/auth.middleware";
 
 const router = Router();
 
-router.use(optionalUserAuth);
+// Saved cards are personal: a signed-in mobile user is required and only their cards are visible.
+router.use(requireUserAuth);
 
 // GET saved tokenized cards
 router.get("/saved", getSavedCardsHandler);
