@@ -127,6 +127,8 @@ back to stub data on error — it returns 502.
 - [ ] Commission per bill paid, and how it is settled.
 - [ ] Reconciliation report or API for our transactions.
 - [ ] Refund timelines for complaints; per-category payment limits (e.g. credit card).
+- [ ] Exact `categoryName` values Create link accepts (their webhook sample shows `Loan-Repayment`). The app maps its tiles in `cikka-app/src/constants/billpayCategories.ts`.
+- [ ] BBPS logo asset and branding guidelines for our "Pay bills" entry.
 
 ## Open questions (internal)
 
