@@ -4,7 +4,6 @@ import express from "express";
 import cors from "cors";
 import morgan from "morgan";
 import routes from "./routes/index";
-import setuRoutes from "./routes/setu.routes";
 import { errorHandler } from "./middleware/error.middleware";
 
 const app = express();
@@ -50,9 +49,6 @@ if (!fs.existsSync(tmpUploadsDir)) {
 }
 app.use("/uploads", express.static(tmpUploadsDir));
 app.use("/uploads", express.static(path.resolve(process.cwd(), "uploads")));
-
-// Direct Setu endpoint matching POST {ourBaseURL}/setu/v1/*
-app.use("/setu/v1", setuRoutes);
 
 // API v1 routes
 app.use("/api", routes);

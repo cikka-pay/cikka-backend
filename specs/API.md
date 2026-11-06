@@ -185,6 +185,56 @@ curl -X POST http://localhost:4000/api/products \
 
 ---
 
+### 12. BBPS Bill Pay via Setu (`/bbps`, `/webhooks/setu/billpay`)
+
+Spec: `specs/002-setu-bbps-billpay.md`. Bill payment happens on Setu's pre-built screens;
+Cikka never touches the money. "User" means a mobile-app user JWT (not a seller token).
+
+| Method | Endpoint | Auth | Description |
+|---|---|---|---|
+| POST | `/bbps/session` | User | Create a one-time Setu BillPay link for the caller |
+| GET | `/bbps/history` | User | Caller's last 50 bill payments, newest first |
+| GET | `/bbps/history/:id` | User | One of the caller's bill payments (404 if not theirs) |
+| POST | `/webhooks/setu/billpay` | `X-BILL-WEBHOOK-API-KEY` | Setu BillPay events (called by Setu only) |
+
+**`POST /bbps/session`** — body optional: `categoryName?` (string), `billerId?` (string),
+`redirectTo?` (`"transactions"` \| `"disputes"`).
+
+```json
+{ "success": true, "link": "https://...setu.co/...", "sessionId": "..." }
+```
+
+Errors: `400` validation / `PHONE_NOT_VERIFIED` / `INVALID_PHONE`, `401` no JWT,
+`404` `USER_NOT_FOUND`, `502` `SETU_UNAVAILABLE` (real mode never returns a fake link).
+Error body: `{ "success": false, "error": "...", "code": "PHONE_NOT_VERIFIED", "traceId"?: "..." }`.
+
+**`GET /bbps/history`** → `{ "success": true, "history": [BillpayHistoryItem] }`;
+**`GET /bbps/history/:id`** → `{ "success": true, "payment": BillpayHistoryItem }`.
+
+```json
+{
+  "id": "uuid", "setuOrderId": "...", "bbpsTxnId": "...", "refId": "...",
+  "billerId": "BESCOM000KAR01", "billerName": "BESCOM", "category": "Electricity",
+  "mobileNumber": "9876543210", "billAmount": "601.00", "amountPaid": "601.00",
+  "status": "SUCCESS", "paidOn": "2026-11-05T08:33:27.000Z",
+  "errorCode": null, "errorMessage": null, "disputeRefId": null, "disputeStatus": null,
+  "createdAt": "...", "updatedAt": "..."
+}
+```
+
+Money fields are strings with 2 decimals; nullable fields are `null` when Setu didn't send them.
+
+**`POST /webhooks/setu/billpay`** — JSON body with `event` (required) plus Setu's string fields
+(`status`, `txnId`, `orderId`, `refId`, `sessionId`, `customerId`, `mobileNumber`, `billerId`,
+`billerName`, `billerCategory`, `billAmount`, `amountPaid`, `paidOn`, `error`; disputes add
+`referenceId`, `issueType`, `txnDate`). Responses: `200 {"status":"acknowledged"}`,
+`200 {"status":"duplicate"}` for a re-delivery, `400` bad body / missing `event`,
+`401` wrong/missing key (or no key configured), `500 {"status":"error"}` when processing failed
+(Setu retries). Status is forward-only: a late `bill_payment_failure` never overwrites
+`SUCCESS` or `REFUNDED`.
+
+---
+
 ## Error Responses
 
 All API errors follow a standard envelope:
@@ -207,3 +257,4 @@ HTTP status codes are used appropriately (e.g. 400 for bad requests, 401 for una
 | `ProductStatus` | DRAFT, ACTIVE, INACTIVE, OUT_OF_STOCK |
 | `SettlementStatus`| PENDING, PAID |
 | `ReturnStatus` | REQUESTED, APPROVED, REJECTED, RECEIVED, REFUNDED |
+| `BbpsTxnStatus` | PENDING, SUCCESS, FAILED, REFUNDED |

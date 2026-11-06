@@ -16,25 +16,10 @@ export const AUTH_ERRORS = {
   USER_NOT_FOUND: "User profile not found",
 } as const;
 
-export const SETU_ERRORS = {
-  MISSING_REF_ID: "Missing required field: uniquePaymentRefID",
-  MISSING_REFUND_ID: "Missing required field: uniquePaymentRefID or refundRefID",
-  INVALID_CREDENTIALS: "Invalid Setu authentication credentials",
-  UNAUTHORIZED_IP: (ip: string) => `IP ${ip} not authorized for Setu webhook calls`,
-} as const;
-
-export const BBPS_ERRORS = {
-  BILLER_NOT_FOUND: "Selected BBPS biller not found",
-  BILLER_ID_REQUIRED: "Biller ID is required",
-  CUSTOMER_PARAMS_REQUIRED: "Customer account parameters are required",
-  BILL_NOT_FOUND: "No active bill found for the provided customer details",
-  BILL_FETCH_FAILED: "Failed to fetch bill details from Setu BBPS Gateway",
-  PAYMENT_INITIATION_FAILED: "Failed to initiate BBPS payment order",
-  INVALID_PAYMENT_AMOUNT: "Payment amount must be greater than zero",
-  INVALID_CUSTOMER_PARAMS: "Invalid or missing biller customer parameters",
-  PAYMENT_FAILED: "Bill payment processing failed at BBPS gateway",
-  TRANSACTION_NOT_FOUND: "BBPS transaction refID not found",
-  REFUND_FAILED: "BBPS refund processing failed",
+export const BILLPAY_ERRORS = {
+  PHONE_NOT_VERIFIED: "Verify your mobile number before paying bills",
+  INVALID_PHONE: "Your profile does not have a valid 10-digit mobile number",
+  SETU_UNAVAILABLE: "Bill payment service is unavailable right now. Please try again.",
 } as const;
 
 export const INSTANTPAY_ERRORS = {

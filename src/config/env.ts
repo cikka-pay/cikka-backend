@@ -25,22 +25,14 @@ export const config = {
   externalServicesMode: EXTERNAL_SERVICES_MODE,
   isRealExternalServices: EXTERNAL_SERVICES_MODE === "real",
 
-  // Setu gateway config
-  setuBaseUrl: process.env.SETU_BASE_URL || "https://uat.setu.co",
-  setuClientId: process.env.SETU_CLIENT_ID,
-  setuSecret: process.env.SETU_SECRET,
-  setuProductInstanceId: process.env.SETU_PRODUCT_INSTANCE_ID,
-  setuBasicAuthUser: process.env.SETU_BASIC_AUTH_USER || "setu_user",
-  setuBasicAuthPass: process.env.SETU_BASIC_AUTH_PASS || "setu_secret_pass",
-  setuBearerToken: process.env.SETU_BEARER_TOKEN,
-  setuAllowedIps: process.env.SETU_ALLOWED_IPS ? process.env.SETU_ALLOWED_IPS.split(",").map((ip) => ip.trim()) : [],
-
-  // Setu BBPS Whitelabel & Custom Payment config
-  setuBbpsSchemeId: process.env.SETU_BBPS_SCHEME_ID || "setu_bbps_scheme_id",
-  setuBbpsSecret: process.env.SETU_BBPS_SECRET || "setu_bbps_secret",
-  setuBbpsProductInstanceId: process.env.SETU_BBPS_PRODUCT_INSTANCE_ID || "setu_bbps_instance",
-  setuBbpsBaseUrl: process.env.SETU_BBPS_BASE_URL || "https://kms.setu.co/api/v2",
-  setuCheckStatusUrl: process.env.SETU_CHECK_STATUS_URL || "http://localhost:4000/setu/v1/checkStatus",
+  // Setu BillPay pre-built screens (spec 002). Hosts: sandbox https://sandbox-coudc.setu.co,
+  // QA https://qa-coudc.setu.co, prod https://coudc.setu.co.
+  setuBillpayBaseUrl: (process.env.SETU_BILLPAY_BASE_URL || "https://sandbox-coudc.setu.co").replace(/\/+$/, ""),
+  setuBillpayClientId: process.env.SETU_BILLPAY_CLIENT_ID,
+  setuBillpaySecret: process.env.SETU_BILLPAY_SECRET,
+  setuBillpayPartnerId: process.env.SETU_BILLPAY_PARTNER_ID,
+  setuBillpayOrgId: process.env.SETU_BILLPAY_ORG_ID,
+  setuBillpayWebhookApiKey: process.env.SETU_BILLPAY_WEBHOOK_API_KEY,
 
   // InstantPay Identity & Verification Config
   instantpayBaseUrl: process.env.INSTANTPAY_BASE_URL || "https://sandbox.instantpay.in/v1",
