@@ -3,68 +3,26 @@ import { asyncHandler } from "../utils/asyncHandler";
 import { prisma } from "../config/prisma";
 import { Prisma, ReturnStatus, NotificationType } from "../generated/prisma/client";
 import { shipwayService } from "../services/shipway.service";
-import { razorpayRouteService } from "../services/razorpayRoute.service";
 import { razorpayService } from "../services/razorpay.service";
-
-/** Razorpay order id behind an order number (`order_X` or `order_X-<n>` for multi-item carts). */
-function baseRazorpayOrderId(orderNumber: string): string {
-  return orderNumber.replace(/-\d+$/, "");
-}
-
-/** The settlement written for this order at fulfilment (never "the seller's latest one"). */
-function findOrderSettlement(order: { id: string; orderNumber: string; sellerId: string }) {
-  return prisma.settlement.findFirst({
-    where: {
-      sellerId: order.sellerId,
-      OR: [{ orderId: order.id }, { orderNumber: order.orderNumber }],
-    },
-    orderBy: { createdAt: "desc" },
-  });
-}
-
-/** Payment id to refund: from the order's settlement, else from its Razorpay checkout record. */
-async function findOrderPaymentId(
-  order: { orderNumber: string },
-  settlement: { razorpayPaymentId: string | null } | null
-): Promise<string | null> {
-  if (settlement?.razorpayPaymentId) return settlement.razorpayPaymentId;
-  const checkout = await prisma.razorpayCheckout.findUnique({
-    where: { razorpayOrderId: baseRazorpayOrderId(order.orderNumber) },
-  });
-  return checkout?.razorpayPaymentId ?? null;
-}
+import { orderOwnerId } from "../services/mallPricing.service";
+import {
+  findOrderSettlement,
+  findOrderPaymentId,
+  reverseOrderTransferOnce,
+  checkExchangeEligibility,
+  eligibilityResponse,
+  executeExchange,
+  ExchangeError,
+} from "../services/returns.service";
 
 /**
- * Reverse the seller's held transfer for this order exactly once: the settlement is claimed
- * ON_HOLD → REVERSING first, so concurrent or repeated calls cannot reverse twice.
- * A full refund reverses the whole transfer; a partial one reverses at most the refund.
+ * Orders may only be returned / exchanged by the buyer who owns them (Order.userId, else the
+ * user recorded on the Razorpay checkout). Returns an error message, or null when allowed.
  */
-async function reverseOrderTransferOnce(
-  settlement: { id: string; razorpayTransferId: string | null; netPayable: any } | null,
-  refundAmount: number,
-  orderTotal: number,
-  reason: string
-) {
-  if (!settlement?.razorpayTransferId) return null;
-  const claim = await prisma.settlement.updateMany({
-    where: { id: settlement.id, transferStatus: "ON_HOLD" },
-    data: { transferStatus: "REVERSING" } as any,
-  });
-  if (claim.count === 0) return { success: false, skipped: true, message: "Transfer already reversed or released" };
-
-  const fullReversal = refundAmount >= orderTotal;
-  const reversePaise = fullReversal
-    ? undefined
-    : Math.min(Math.round(refundAmount * 100), Math.round(Number(settlement.netPayable) * 100));
-
-  const result = await razorpayRouteService.reverseTransfer(settlement.razorpayTransferId, reversePaise, reason);
-  await prisma.settlement.update({
-    where: { id: settlement.id },
-    data: result.success
-      ? ({ transferStatus: "REVERSED", failureReason: reason } as any) // SettlementStatus has no CANCELLED; REVERSED marks it
-      : ({ transferStatus: "ON_HOLD", failureReason: `Reversal failed: ${result.error}` } as any),
-  });
-  return result;
+async function checkOrderOwnership(order: { userId?: string | null; orderNumber: string }, userId?: string): Promise<string | null> {
+  const owner = await orderOwnerId(order);
+  if (owner && owner !== userId) return "This order belongs to another account";
+  return null;
 }
 
 /**
@@ -77,18 +35,6 @@ function serverRefundAmount(requested: unknown, orderTotal: number): number {
     return orderTotal;
   }
   return Math.min(Number(n.toFixed(2)), orderTotal);
-}
-
-/**
- * Orders placed through a Razorpay checkout recorded with a user may only be returned by that
- * user. Returns an error message, or null when allowed.
- */
-async function checkOrderOwnership(orderNumber: string, userId?: string): Promise<string | null> {
-  const checkout = await prisma.razorpayCheckout.findUnique({
-    where: { razorpayOrderId: baseRazorpayOrderId(orderNumber) },
-  });
-  if (checkout?.userId && checkout.userId !== userId) return "This order belongs to another account";
-  return null;
 }
 
 export const listReturns = asyncHandler(async (req: Request, res: Response) => {
@@ -290,7 +236,7 @@ export const createReturn = asyncHandler(async (req: Request, res: Response) => 
     return;
   }
 
-  const ownershipError = await checkOrderOwnership(order.orderNumber, req.user?.id);
+  const ownershipError = await checkOrderOwnership(order, req.user?.id);
   if (ownershipError) {
     res.status(403).json({ error: ownershipError });
     return;
@@ -438,13 +384,27 @@ export const createReturn = asyncHandler(async (req: Request, res: Response) => 
 });
 
 /**
+ * GET|POST /api/returns/exchange/eligibility
+ * Pre-check before the app takes any payment for an exchange (spec 003 §10).
+ * Query/body: orderId | orderNumber, newProductId, newVariantId?
+ */
+export const exchangeEligibility = asyncHandler(async (req: Request, res: Response) => {
+  const src = { ...(req.query as any), ...(req.body || {}) };
+  const result = await checkExchangeEligibility(req.user!.id, {
+    orderId: src.orderId ?? src.order_id,
+    orderNumber: src.orderNumber ?? src.order_number,
+    newProductId: src.newProductId ?? src.new_product_id,
+    newVariantId: src.newVariantId ?? src.new_variant_id,
+  });
+  res.status(200).json({ success: true, ...eligibilityResponse(result) });
+});
+
+/**
  * POST /api/returns/exchange
- * Automated Exchange Handler (Zero seller approval required!)
- * Handles:
- * 1. Same-Seller vs Cross-Seller brand routing
- * 2. New Price > Old Price (charge customer delta; route delta to same seller or shift total to new seller)
- * 3. New Price < Old Price (instant refund delta to customer; adjust down or shift to new seller)
- * 4. New Price == Old Price (size/color swap)
+ * Automated exchange (zero seller approval). Eligibility is checked first; an upgrade
+ * (new price > old) must be paid through checkout with `exchange: { orderId }`, which files
+ * the exchange during fulfilment. A repeat call for an exchange already filed by checkout
+ * answers 200 with `already_processed: true`.
  */
 export const createExchange = asyncHandler(async (req: Request, res: Response) => {
   const { orderId, orderNumber, productId, newProductId, newVariantId, reason } = req.body;
@@ -458,346 +418,56 @@ export const createExchange = asyncHandler(async (req: Request, res: Response) =
     return;
   }
 
-  const include = { items: { include: { product: true } }, seller: { include: { onboarding: true } } } as const;
-  const order = orderId
-    ? await prisma.order.findUnique({ where: { id: orderId }, include })
-    : await prisma.order.findUnique({ where: { orderNumber }, include });
-
-  if (!order) {
-    res.status(404).json({ error: "Original order not found for exchange" });
-    return;
-  }
-
-  const ownershipError = await checkOrderOwnership(order.orderNumber, req.user?.id);
-  if (ownershipError) {
-    res.status(403).json({ error: ownershipError });
-    return;
-  }
-
-  // An order can be exchanged once; repeating the call must not refund or claw back again.
-  const exchangeClaim = await prisma.order.updateMany({
-    where: { id: order.id, status: { notIn: ["EXCHANGE", "RETURNED", "CANCELLED"] as any } },
-    data: { status: "EXCHANGE" as any },
-  });
-  if (exchangeClaim.count === 0) {
-    res.status(409).json({ success: false, error: "This order has already been exchanged, returned or cancelled" });
-    return;
-  }
-
-  const newProduct = await prisma.product.findUnique({
-    where: { id: newProductId },
-    include: { variants: true },
-  });
-
-  if (!newProduct) {
-    res.status(404).json({ error: "Replacement product not found in catalog" });
-    return;
-  }
-
-  let origProdId = productId;
-  if (!origProdId && order.items && order.items.length > 0) {
-    origProdId = order.items[0].productId;
-  }
-  if (!origProdId) {
-    origProdId = newProduct.id;
-  }
-
-  const oldPrice = Number(order.totalAmount);
-  const newPrice = Number(newProduct.price);
-  const delta = newPrice - oldPrice;
-  const isSameSeller = order.sellerId === newProduct.sellerId;
-
-  // 1. Create Return record auto-approved for exchange
-  const ret = await prisma.return.create({
-    data: {
-      orderId: order.id,
-      productId: origProdId,
-      reason: `EXCHANGE: ${reason || "Exchange request"} (Exchanged for: ${newProduct.name})`,
-      refundAmount: delta < 0 ? Math.abs(delta) : 0,
-      status: ReturnStatus.APPROVED,
-    },
-    include: { order: true, product: true },
-  });
-
-  // 1b. Order status was already moved to EXCHANGE by the claim above.
-
-  // 2. Trigger Shipway Reverse Courier for old parcel
-  let reverseDetails: any = null;
   try {
-    const pickupAddress = order.seller?.onboarding?.pickupAddress as any;
-    reverseDetails = await shipwayService.createReversePickup({
-      returnId: ret.id,
-      orderId: order.orderNumber,
-      customerName: order.customerName,
-      customerPhone: "9876543210",
-      customerAddress: `Customer Residence, ${order.customerCity || "City"}`,
-      customerCity: order.customerCity || "Mumbai",
-      customerState: "Maharashtra",
-      customerPincode: "400001",
-      warehousePincode: pickupAddress?.pincode || "122008",
-      warehouseCity: pickupAddress?.city || "Gurugram",
-      productName: ret.product?.name || "Original Item",
-      productSku: ret.product?.sku,
-      refundAmount: delta < 0 ? Math.abs(delta) : 0,
+    const result = await executeExchange({
+      userId: req.user?.id ?? null,
+      orderId,
+      orderNumber,
+      newProductId: String(newProductId),
+      newVariantId,
+      productId,
+      reason,
     });
-  } catch (shipErr: any) {
-    console.warn("[Exchange Shipway Notice]:", shipErr.message);
-  }
-
-  // 3. Locate this order's settlement (still on hold) and the payment to refund against
-  const orderSettlement = await findOrderSettlement(order);
-  const settlement = orderSettlement?.transferStatus === "ON_HOLD" ? orderSettlement : null;
-  const exchangePaymentId = await findOrderPaymentId(order, orderSettlement);
-
-  let clawbackResult: any = null;
-  let customerRefundResult: any = null;
-  let routingSummary: any = null;
-
-  // =========================================================================
-  // BRANCH A: SAME SELLER EXCHANGE
-  // =========================================================================
-  if (isSameSeller) {
-    const extendedHold = new Date(Date.now() + 7 * 86400000);
-
-    if (delta > 0) {
-      // UPGRADE: User must pay extra delta
-      routingSummary = {
-        type: "SAME_SELLER_UPGRADE",
-        oldPrice,
-        newPrice,
-        customerDifferenceDue: delta,
-        action: "CUSTOMER_CHARGE_REQUIRED",
-        message: `Customer must pay remaining ₹${delta.toFixed(2)}. Extra funds will route to Seller #${order.sellerId}. Payout hold extended by T+7.`,
-      };
-
-      if (settlement) {
-        await prisma.settlement.update({
-          where: { id: settlement.id },
-          data: {
-            holdUntil: extendedHold,
-            payoutDate: extendedHold,
-            failureReason: `Exchange upgrade in-progress. Extra ₹${delta.toFixed(2)} to be added upon customer payment.`,
-          } as any,
-        });
-      }
-    } else if (delta < 0) {
-      // DOWNGRADE: Customer gets instant refund of delta
-      const refundPaise = Math.round(Math.abs(delta) * 100);
-      if (exchangePaymentId) {
-        customerRefundResult = await razorpayService.refundPayment(
-          exchangePaymentId,
-          refundPaise,
-          {
-            orderNumber: order.orderNumber,
-            reason: `Exchange downgrade refund: ${Math.abs(delta)} INR`,
-          },
-          `exc_${ret.id}`
-        );
-      }
-
-      routingSummary = {
-        type: "SAME_SELLER_DOWNGRADE",
-        oldPrice,
-        newPrice,
-        customerRefundAmount: Math.abs(delta),
-        action: "INSTANT_REFUND_EXECUTED",
-        message: `Instant refund of ₹${Math.abs(delta).toFixed(2)} sent to customer. Seller payout reduced and hold extended by T+7.`,
-      };
-
-      if (settlement) {
-        await prisma.settlement.update({
-          where: { id: settlement.id },
-          data: {
-            netPayable: Math.max(0, Number(settlement.netPayable) - Math.abs(delta)),
-            holdUntil: extendedHold,
-            payoutDate: extendedHold,
-          } as any,
-        });
-      }
-    } else {
-      // SIZE / COLOR EQUAL VALUE SWAP
-      routingSummary = {
-        type: "SAME_SELLER_EQUAL_SWAP",
-        oldPrice,
-        newPrice,
-        delta: 0,
-        action: "HOLD_EXTENDED",
-        message: "Size/variant exchange. No price difference. Payout hold extended by T+7 for replacement delivery.",
-      };
-
-      if (settlement) {
-        await prisma.settlement.update({
-          where: { id: settlement.id },
-          data: { holdUntil: extendedHold, payoutDate: extendedHold } as any,
-        });
+    res.status(201).json({
+      success: true,
+      autoApproved: true,
+      message: "Exchange request approved and processed automatically without seller approval delay.",
+      data: result.ret,
+      reverseDetails: result.reverseDetails,
+      routingSummary: result.routingSummary,
+      clawbackResult: result.clawbackResult,
+      customerRefundResult: result.customerRefundResult,
+    });
+  } catch (err) {
+    if (!(err instanceof ExchangeError)) throw err;
+    // Already filed by the exchange checkout for this user: idempotent success for the app.
+    if (err.code === "EXCHANGE_NOT_ELIGIBLE") {
+      const filed = await findExchangeFiledByCheckout(req.user?.id ?? null, orderId, orderNumber, String(newProductId));
+      if (filed) {
+        res.status(200).json({ success: true, already_processed: true, message: "Exchange already filed with your payment.", data: filed });
+        return;
       }
     }
-
-    // In-app alert to same seller
-    await prisma.notification.create({
-      data: {
-        sellerId: order.sellerId,
-        type: NotificationType.ORDER,
-        title: `Exchange Request Auto-Approved: #${order.orderNumber}`,
-        body: `Customer requested exchange for ${newProduct.name}. Reverse AWB: ${reverseDetails?.reverseAwb || "Generated"}. Return & replacement shipping fees (₹129.80 total) adjusted from your settlement. Prepare replacement parcel.`,
-        metadata: {
-          orderNumber: order.orderNumber,
-          isExchange: true,
-          isSameSeller: true,
-          delta,
-          shippingAdjusted: 129.80,
-        },
-      },
-    }).catch(() => {});
+    res.status(err.status).json({ success: false, error: err.message, code: err.code, ...(err.details || {}) });
   }
-  // =========================================================================
-  // BRANCH B: DIFFERENT SELLER (Cross-Brand Exchange)
-  // Shift original payout from Seller A to Seller B; charge overall shipping from Seller B.
-  // =========================================================================
-  else {
-    // 1. Claw back 100% of held payout from Seller A (Old Seller)
-    // Full reversal of this order's held transfer, at most once (only reported REVERSED on success).
-    clawbackResult = await reverseOrderTransferOnce(
-      settlement,
-      oldPrice,
-      oldPrice,
-      `Cross-brand exchange from Seller ${order.sellerId} to Seller ${newProduct.sellerId}`
-    );
-
-    // 2. Alert Old Seller of clawback
-    await prisma.notification.create({
-      data: {
-        sellerId: order.sellerId,
-        type: NotificationType.SETTLEMENT,
-        title: `Exchange Reversal: Order #${order.orderNumber}`,
-        body: `Customer exchanged item for another brand. Original payout was clawed back to escrow. Reverse parcel is en route back to your warehouse.`,
-        metadata: {
-          orderNumber: order.orderNumber,
-          crossBrandExchange: true,
-        },
-      },
-    }).catch(() => {});
-
-    // 3. Overall Shipping Charges (both reverse pickup of old item + forward delivery of replacement item)
-    // are charged from the NEW SELLER (Seller B)
-    const overallShippingChargedToNewSeller = 129.80; // ₹64.90 reverse + ₹64.90 forward
-    const newBase = Number((newPrice / 1.18).toFixed(2));
-    const newCommission = Number((newBase * 0.22).toFixed(2));
-    const netSellerBPayout = Math.max(0, newPrice - newCommission - overallShippingChargedToNewSeller);
-
-    // Create new settlement record for Seller B with overall shipping deducted
-    await prisma.settlement.create({
-      data: {
-        sellerId: newProduct.sellerId,
-        periodStart: new Date(),
-        periodEnd: new Date(),
-        category: "Cross-Brand Exchange Order",
-        grossSales: newPrice,
-        basePrice: newBase,
-        commissionAmount: newCommission,
-        shippingFee: 110, // 55 x 2
-        shippingTotal: overallShippingChargedToNewSeller, // 64.90 x 2
-        netPayable: netSellerBPayout,
-        status: "PENDING",
-        transferStatus: "ON_HOLD",
-        holdUntil: new Date(Date.now() + 7 * 86400000),
-        payoutDate: new Date(Date.now() + 7 * 86400000),
-        failureReason: `New sale gained via cross-brand exchange. Overall logistics (₹129.80: reverse pickup of old item + forward replacement) adjusted from new seller.`,
-        ledgerBreakdown: {
-          originalOrderNumber: order.orderNumber,
-          oldSellerId: order.sellerId,
-          newSellerId: newProduct.sellerId,
-          reverseShippingCharged: 64.90,
-          forwardShippingCharged: 64.90,
-          totalShippingAdjusted: overallShippingChargedToNewSeller,
-          netPayable: netSellerBPayout,
-        } as any,
-      } as any,
-    }).catch((err: any) => {
-      console.warn("[Cross-Seller Settlement Notice]:", err.message);
-    });
-
-    // 4. Handle delta with customer and new seller setup
-    if (delta > 0) {
-      routingSummary = {
-        type: "CROSS_SELLER_UPGRADE",
-        oldSellerId: order.sellerId,
-        newSellerId: newProduct.sellerId,
-        oldPrice,
-        newPrice,
-        customerDifferenceDue: delta,
-        totalNewSellerPayout: netSellerBPayout,
-        overallShippingChargedToNewSeller,
-        action: "CHARGE_CUSTOMER_DELTA_AND_TRANSFER_TO_NEW_SELLER",
-        message: `Payout reversed from Seller A. Customer charged ₹${delta.toFixed(2)}. Entire ₹${newPrice.toFixed(2)} shifts to Seller B (minus ₹129.80 overall exchange shipping).`,
-      };
-    } else if (delta < 0) {
-      const refundPaise = Math.round(Math.abs(delta) * 100);
-      if (exchangePaymentId) {
-        customerRefundResult = await razorpayService.refundPayment(
-          exchangePaymentId,
-          refundPaise,
-          {
-            orderNumber: order.orderNumber,
-            reason: `Cross-brand exchange downgrade refund: ${Math.abs(delta)} INR`,
-          },
-          `exc_${ret.id}`
-        );
-      }
-
-      routingSummary = {
-        type: "CROSS_SELLER_DOWNGRADE",
-        oldSellerId: order.sellerId,
-        newSellerId: newProduct.sellerId,
-        oldPrice,
-        newPrice,
-        customerRefundAmount: Math.abs(delta),
-        totalNewSellerPayout: netSellerBPayout,
-        overallShippingChargedToNewSeller,
-        action: "REFUND_DELTA_AND_TRANSFER_LOWER_VALUE_TO_NEW_SELLER",
-        message: `Payout reversed from Seller A. Instant refund of ₹${Math.abs(delta).toFixed(2)} sent to customer. New payout of ₹${netSellerBPayout.toFixed(2)} (minus ₹129.80 overall exchange shipping) assigned to Seller B.`,
-      };
-    } else {
-      routingSummary = {
-        type: "CROSS_SELLER_EQUAL_SWAP",
-        oldSellerId: order.sellerId,
-        newSellerId: newProduct.sellerId,
-        oldPrice,
-        newPrice,
-        totalNewSellerPayout: netSellerBPayout,
-        overallShippingChargedToNewSeller,
-        action: "TRANSFER_ORIGINAL_VALUE_TO_NEW_SELLER",
-        message: `Payout reversed from Seller A. ₹${oldPrice.toFixed(2)} shifts to Seller B (minus ₹129.80 overall exchange shipping: net ₹${netSellerBPayout.toFixed(2)}).`,
-      };
-    }
-
-    // 5. Alert New Seller of incoming exchange order with shipping charge detail
-    await prisma.notification.create({
-      data: {
-        sellerId: newProduct.sellerId,
-        type: NotificationType.ORDER,
-        title: `New Exchange Order Received: ${newProduct.name}`,
-        body: `Customer selected your product in a cross-brand exchange (Order #${order.orderNumber}). Overall exchange shipping (₹129.80: reverse pickup of old item + forward dispatch) adjusted from your settlement. Net payout: ₹${netSellerBPayout.toFixed(2)}.`,
-        metadata: {
-          orderNumber: order.orderNumber,
-          newProductId: newProduct.id,
-          newPrice,
-          overallShippingCharged: overallShippingChargedToNewSeller,
-          netPayout: netSellerBPayout,
-        },
-      },
-    }).catch(() => {});
-  }
-
-  res.status(201).json({
-    success: true,
-    autoApproved: true,
-    message: "Exchange request approved and processed automatically without seller approval delay.",
-    data: ret,
-    reverseDetails,
-    routingSummary,
-    clawbackResult,
-    customerRefundResult,
-  });
 });
 
+/** The exchange a FULFILLED exchange checkout already filed for this user/order/product. */
+async function findExchangeFiledByCheckout(userId: string | null, orderId?: string, orderNumber?: string, newProductId?: string) {
+  if (!userId) return null;
+  const order = orderId
+    ? await prisma.order.findUnique({ where: { id: String(orderId) } })
+    : await prisma.order.findUnique({ where: { orderNumber: String(orderNumber) } });
+  if (!order || order.status !== "EXCHANGE") return null;
+  const checkout = await prisma.razorpayCheckout.findFirst({
+    where: {
+      userId,
+      status: "FULFILLED",
+      snapshot: { path: ["pricing", "exchange", "orderId"], equals: order.id },
+    },
+  });
+  if (!checkout) return null;
+  const lines = ((checkout.snapshot as any)?.pricing?.lines || []) as Array<{ productId: string }>;
+  if (newProductId && !lines.some((l) => l.productId === newProductId)) return null;
+  return (checkout.result as any)?.exchange ?? { order_number: order.orderNumber };
+}

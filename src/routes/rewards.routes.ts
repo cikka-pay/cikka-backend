@@ -6,16 +6,16 @@ import {
   verifyCardOtpForRewards,
   getUserRewardBalance,
 } from "../controllers/rewards.controller";
-import { optionalUserAuth } from "../middleware/auth.middleware";
+import { optionalUserAuth, requireUserAuth } from "../middleware/auth.middleware";
 
 const router = Router();
 
 // Allow authenticated users or guests with points session
 router.use(optionalUserAuth);
 
-// CI Points Balance inquiry
-router.get("/balance", getUserRewardBalance);
-router.get("/user/balance", getUserRewardBalance);
+// CI Points balance: the signed-in user's own ledger balance only (no ?phone= lookups)
+router.get("/balance", requireUserAuth, getUserRewardBalance);
+router.get("/user/balance", requireUserAuth, getUserRewardBalance);
 
 // Step 1: Initiate redemption & create Razorpay order for ₹11.79 customer platform fee (or ₹61.79 express)
 router.post("/initiate-redemption", initiateRedemption);

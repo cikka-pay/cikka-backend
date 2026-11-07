@@ -39,6 +39,11 @@ router.get("/sellers/:id/products", adminOnboarding.getSellerProducts);
 router.patch("/products/:id/approval", adminOnboarding.updateProductApproval);
 router.patch("/products/:id/price-approval", adminOnboarding.updateProductPriceApproval);
 
+// Razorpay checkout recovery (spec 003 §5): stuck / failed fulfilments
+import * as adminCheckouts from "../controllers/admin-checkouts.controller";
+router.get("/checkouts", adminCheckouts.listCheckouts);
+router.post("/checkouts/:razorpayOrderId/resume", adminCheckouts.resumeCheckout);
+
 // Hubble Money Rewards Net for Website Admin
 router.get("/hubble", async (_req, res) => {
   try {

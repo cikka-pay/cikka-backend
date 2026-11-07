@@ -5,8 +5,7 @@ import { razorpayRouteService } from "../services/razorpayRoute.service";
 import { disburseSettlement } from "../services/settlement.service";
 import { config } from "../config/env";
 import { razorpayCheckoutService, PaymentVerificationError } from "../services/razorpayCheckout.service";
-import { fulfilMallCheckout } from "./payment.controller";
-import { fulfilRewardsCheckout } from "./rewards.controller";
+import { fulfilMallCheckout, fulfilRewardsCheckout } from "../services/checkoutFulfilment.service";
 
 /**
  * payment.captured / order.paid: fulfil the order if the app never called verify.
@@ -35,12 +34,12 @@ async function handleCapturedPaymentEvent(payload: any): Promise<string> {
   }
 
   const snap = ((checkout.snapshot as any) || {}) as Record<string, any>;
-  if (checkout.purpose === "MALL" && !(Array.isArray(snap.items) && snap.items.length > 0)) {
+  if (checkout.purpose === "MALL" && !snap.pricing && !(Array.isArray(snap.items) && snap.items.length > 0)) {
     // Order created without a cart (current app create-order call): wait for verify-payment.
     await razorpayCheckoutService.markPaidAwaitingDetails(orderId, paymentId, "PAID_AWAITING_CART");
     return "deferred: no cart recorded";
   }
-  if (checkout.purpose === "REWARDS" && !(snap.delivery_address && snap.pincode)) {
+  if (checkout.purpose === "REWARDS" && !(snap.reward && snap.delivery_address && snap.pincode)) {
     await razorpayCheckoutService.markPaidAwaitingDetails(orderId, paymentId, "PAID_AWAITING_ADDRESS");
     return "deferred: no delivery address recorded";
   }
@@ -55,10 +54,47 @@ async function handleCapturedPaymentEvent(payload: any): Promise<string> {
     via: "WEBHOOK",
     fulfil: (row) =>
       row.purpose === "REWARDS"
-        ? fulfilRewardsCheckout(row, paymentId, amountPaise, {}, row.userId)
+        ? fulfilRewardsCheckout(row, paymentId, amountPaise)
         : fulfilMallCheckout(row, paymentId, amountPaise),
   });
   return outcome.state.toLowerCase();
+}
+
+/**
+ * settlement.processed (Route): a linked account's settlement `setl_*` reached its bank.
+ * The payload carries only { id, amount, utr } and the event's `account_id` — no transfer
+ * ids — so the transfers it paid out are fetched with GET /v1/transfers?recipient_settlement_id
+ * and only the Settlement rows for those transfers (and that account) are marked PAID.
+ * A fetch failure throws, so the webhook answers 500 and Razorpay redelivers.
+ */
+export async function handleSettlementProcessed(accountId: string | undefined, entity: any): Promise<string> {
+  const settlementId: string | undefined = entity?.id;
+  if (!settlementId) return "ignored: no settlement id";
+  const utr: string | undefined = entity?.utr || undefined;
+
+  const transfers = await razorpayRouteService.fetchTransfersForSettlement(settlementId);
+  const transferIds = transfers
+    .filter((t) => !accountId || !t.recipient || t.recipient === accountId)
+    .map((t) => t.id);
+  if (transferIds.length === 0) return `no matching transfers for ${settlementId}`;
+
+  const updated = await prisma.settlement.updateMany({
+    where: {
+      razorpayTransferId: { in: transferIds },
+      status: { in: ["PENDING", "PAID"] },
+      ...(accountId
+        ? { seller: { OR: [{ razorpayAccountId: accountId }, { onboarding: { razorpayAccountId: accountId } }] } }
+        : {}),
+    },
+    data: {
+      status: "PAID",
+      transferStatus: "SETTLED",
+      utr,
+      recipientSettlementId: settlementId,
+      disbursedAt: new Date(),
+    },
+  });
+  return `marked ${updated.count} of ${transferIds.length} transfers paid (${settlementId})`;
 }
 
 /**
@@ -107,9 +143,10 @@ export const handleRouteWebhook = asyncHandler(async (req: Request, res: Respons
       case "transfers.failed": {
         const transferId = payload.transfer?.entity?.id;
         if (transferId) {
+          // A failed transfer pays nothing: the settlement is no longer payable (FAILED).
           await prisma.settlement.updateMany({
-            where: { razorpayTransferId: transferId },
-            data: { transferStatus: "FAILED", failureReason: "Razorpay reported the transfer as failed" } as any,
+            where: { razorpayTransferId: transferId, status: { in: ["PENDING", "PAID"] } },
+            data: { status: "FAILED", transferStatus: "FAILED", failureReason: "Razorpay reported the transfer as failed" },
           });
         }
         break;
@@ -121,38 +158,20 @@ export const handleRouteWebhook = asyncHandler(async (req: Request, res: Respons
         const utr = transfer?.recipient_settlement_id || transfer?.utr;
 
         if (transferId) {
+          // Never resurrect a reversed / failed settlement; on_hold transfers stay PENDING.
           await prisma.settlement.updateMany({
-            where: { razorpayTransferId: transferId },
-            data: {
-              status: transfer.on_hold ? "PENDING" : "PAID",
-              transferStatus: transfer.on_hold ? "ON_HOLD" : "SETTLED",
-              utr: utr || undefined,
-            } as any,
+            where: { razorpayTransferId: transferId, status: "PENDING", transferStatus: { notIn: ["REVERSING", "REVERSED"] } },
+            data: transfer.on_hold
+              ? { transferStatus: "ON_HOLD" }
+              : { status: "PAID", transferStatus: "SETTLED", utr: utr || undefined },
           });
         }
         break;
       }
 
       case "settlement.processed": {
-        const settlementEntity = payload.settlement?.entity;
-        const utr = settlementEntity?.utr || settlementEntity?.bank_reference;
-        const accountId = req.body?.account_id;
-
-        console.log(`[Razorpay Route Webhook] Bank Settlement processed for account ${accountId}, UTR: ${utr}`);
-        if (accountId) {
-          await prisma.settlement.updateMany({
-            where: {
-              seller: { razorpayAccountId: accountId },
-              transferStatus: "ON_HOLD",
-            },
-            data: {
-              status: "PAID",
-              transferStatus: "SETTLED",
-              utr: utr || undefined,
-              disbursedAt: new Date(),
-            } as any,
-          });
-        }
+        const status = await handleSettlementProcessed(req.body?.account_id, payload.settlement?.entity);
+        console.log(`[Razorpay Webhook] settlement.processed: ${status}`);
         break;
       }
 
@@ -161,12 +180,21 @@ export const handleRouteWebhook = asyncHandler(async (req: Request, res: Respons
         const transferId = reversal?.transfer_id;
 
         if (transferId) {
+          // Full reversal (or reversal of whatever was left): never payable again.
           await prisma.settlement.updateMany({
-            where: { razorpayTransferId: transferId },
-            data: {
-              transferStatus: "REVERSED",
-            } as any,
+            where: { razorpayTransferId: transferId, status: { in: ["PENDING", "PAID"] } },
+            data: { status: "REVERSED", transferStatus: "REVERSED" },
           });
+        }
+        break;
+      }
+
+      case "product.route.activated": {
+        // Route product activated for a linked account (account id is the event's account_id).
+        const accountId = req.body?.account_id || payload.merchant_product?.entity?.merchant_id;
+        if (accountId) {
+          await prisma.seller.updateMany({ where: { razorpayAccountId: accountId }, data: { razorpayAccountStatus: "ACTIVATED" } });
+          await prisma.sellerOnboarding.updateMany({ where: { razorpayAccountId: accountId }, data: { razorpayAccountStatus: "ACTIVATED" } });
         }
         break;
       }
@@ -308,6 +336,7 @@ export const processEligibleSettlementsHandler = asyncHandler(async (req: Reques
   const now = new Date();
   const eligibleSettlements = await prisma.settlement.findMany({
     where: {
+      status: "PENDING",
       transferStatus: "ON_HOLD",
       holdUntil: { lte: now },
       razorpayTransferId: { not: null },
