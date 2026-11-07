@@ -1,4 +1,5 @@
 import { prisma } from "../config/prisma";
+import { config } from "../config/env";
 import { razorpayRouteService } from "./razorpayRoute.service";
 import {
   calculateSettlementBreakdown,
@@ -268,6 +269,10 @@ export async function disburseSettlement(
     throw new Error(`Settlement or Seller with ID ${identifier} not found.`);
   }
 
+  if (settlement.status === "REVERSED" || settlement.status === "FAILED") {
+    throw new Error(`Settlement ${settlement.id} is ${settlement.status} and cannot be disbursed.`);
+  }
+
   if (settlement.status === "PAID" && (settlement as any).transferStatus === "SETTLED" && !options?.forceEarlyRelease) {
     return {
       success: true,
@@ -319,7 +324,11 @@ export async function disburseSettlement(
   const profile = await getSellerSettlementProfile(seller.id, settlement.category);
 
   let netPayable = Number(settlement.netPayable);
+  if (netPayable <= 0 && config.isProduction) {
+    throw new Error(`Settlement ${settlement.id} has nothing payable.`);
+  }
   if (netPayable <= 0) {
+    // Non-production demo only: a sample ₹1,000 settlement.
     // If netPayable was 0 (e.g. sample test without prior orders), compute for ₹1,000 standard reference using seller profile
     const sampleBreakdown = calculateSettlementBreakdown(1000, profile.customConfig);
     netPayable = sampleBreakdown.sellerNetSettlement;
@@ -354,7 +363,12 @@ export async function disburseSettlement(
   }
 
   const amountInPaise = Math.round(netPayable * 100);
-  const paymentId = options?.paymentId || (settlement as any).razorpayPaymentId || `pay_sim_${Date.now()}`;
+  const realPaymentId = options?.paymentId || settlement.razorpayPaymentId;
+  if (!realPaymentId && config.isProduction) {
+    // A Route transfer must come out of a real captured customer payment.
+    throw new Error(`Settlement ${settlement.id} has no customer payment to transfer from.`);
+  }
+  const paymentId = realPaymentId || `pay_sim_${Date.now()}`;
 
   // If already transferred with hold and user wants early release
   const existingTransferId = (settlement as any).razorpayTransferId;
