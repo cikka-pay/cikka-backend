@@ -15,6 +15,20 @@ const fake = vi.hoisted(() => {
 
   const matchStatus = (row: Row, status: any) =>
     status === undefined || (typeof status === "object" ? status.in.includes(row.status) : row.status === status);
+  const matchLease = (row: Row, lease: any) =>
+    lease === undefined ||
+    (lease === null ? row.leaseExpiresAt == null : row.leaseExpiresAt != null && row.leaseExpiresAt < lease.lt);
+  const matchWhere = (row: Row, where: any): boolean =>
+    row.razorpayOrderId === where.razorpayOrderId &&
+    matchStatus(row, where.status) &&
+    matchLease(row, where.leaseExpiresAt) &&
+    (where.stage === undefined || row.stage === where.stage) &&
+    (!where.OR || where.OR.some((c: any) => matchStatus(row, c.status) && matchLease(row, c.leaseExpiresAt)));
+  const applyData = (row: Row, data: any) => {
+    for (const [k, v] of Object.entries(data)) {
+      row[k] = v && typeof v === "object" && "increment" in (v as any) ? (row[k] || 0) + (v as any).increment : v;
+    }
+  };
 
   const razorpayCheckout = {
     create: async ({ data }: any) => {
@@ -34,8 +48,8 @@ const fake = vi.hoisted(() => {
     updateMany: async ({ where, data }: any) => {
       let count = 0;
       for (const row of state.checkouts) {
-        if (row.razorpayOrderId === where.razorpayOrderId && matchStatus(row, where.status)) {
-          Object.assign(row, data);
+        if (matchWhere(row, where)) {
+          applyData(row, data);
           count += 1;
         }
       }
@@ -44,7 +58,7 @@ const fake = vi.hoisted(() => {
     update: async ({ where, data }: any) => {
       const row = state.checkouts.find((c) => c.razorpayOrderId === where.razorpayOrderId);
       if (!row) throw new Error("not found");
-      Object.assign(row, data);
+      applyData(row, data);
       return row;
     },
   };
@@ -458,8 +472,8 @@ describe("Razorpay Route admin endpoints", () => {
   it("no longer exposes admin actions under /api/webhooks/razorpay", async () => {
     const token = signAdminToken({ id: "admin-1", email: "ops@cikka.in", role: "SUPER_ADMIN" });
     const res = await request(app).post("/api/webhooks/razorpay/process-eligible").set("Authorization", `Bearer ${token}`).send({});
-    // Not routed: falls through to the seller-auth gate for unknown /api paths.
-    expect(res.status).toBe(401);
+    // Not routed: unknown /api paths are 404 (no seller-auth catch-all any more).
+    expect(res.status).toBe(404);
     expect(res.body.disbursedCount).toBeUndefined();
   });
 });
@@ -474,8 +488,8 @@ describe("Saved cards", () => {
 describe("Removed simulators", () => {
   it.each(["/api/payment/process-custom", "/api/payment/process-custom-payment"])("%s is gone", async (url) => {
     const res = await request(app).post(url).send({ amount: 100 });
-    // Not routed any more: unknown /api paths fall through to the seller-auth gate.
-    expect(res.status).toBe(401);
+    // Not routed any more: unknown /api paths are 404.
+    expect(res.status).toBe(404);
     expect(res.body.razorpay_signature).toBeUndefined();
   });
 });
