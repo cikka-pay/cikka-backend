@@ -5,35 +5,21 @@ import cors from "cors";
 import morgan from "morgan";
 import routes from "./routes/index";
 import { errorHandler } from "./middleware/error.middleware";
+import { buildCorsOptions } from "./config/cors";
+import { config } from "./config/env";
 
 const app = express();
-
-const envOrigins = (process.env.CORS_ORIGIN || "http://localhost:5173").split(",").map(o => o.trim());
 
 app.use((_req, res, next) => {
   res.setHeader("ngrok-skip-browser-warning", "true");
   next();
 });
 
-app.use(cors({
-  origin: (origin, callback) => {
-    if (!origin) return callback(null, true);
-    if (
-      envOrigins.includes(origin) ||
-      envOrigins.includes('*') ||
-      origin.includes('localhost') ||
-      origin.includes('127.0.0.1') ||
-      origin.includes('10.') ||
-      origin.includes('192.168.') ||
-      origin.includes('ngrok') ||
-      origin.includes('exp.direct')
-    ) {
-      return callback(null, true);
-    }
-    return callback(null, true);
-  },
-  credentials: true,
-}));
+// CORS allowlist from CORS_ORIGIN (see config/cors.ts). Read per request so a test or a
+// config reload sees the current env.
+app.use((req, res, next) =>
+  cors(buildCorsOptions({ corsOrigin: process.env.CORS_ORIGIN ?? config.corsOrigin, isProduction: config.isProduction }))(req, res, next)
+);
 app.use(
   express.json({
     limit: "50mb",
