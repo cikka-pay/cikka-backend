@@ -9,7 +9,28 @@
  */
 
 import { prisma } from "../config/prisma";
-import { WalletTxType } from "../generated/prisma/client";
+import { Prisma, WalletTxType } from "../generated/prisma/client";
+
+/** Interactive-transaction client (prisma.$transaction callback argument). */
+export type Tx = Prisma.TransactionClient;
+
+/** A debit that would take a balance below zero. */
+export class InsufficientBalanceError extends Error {
+  constructor(public balance: "POINTS" | "CASH", message: string) {
+    super(message);
+    this.name = "InsufficientBalanceError";
+  }
+}
+
+function duplicateResult(existing: { id: string; balanceAfterPoints: number; balanceAfterPaise: number }): LedgerResult {
+  return {
+    ledgerEntryId: existing.id,
+    walletId: "",
+    balanceAfterPoints: existing.balanceAfterPoints,
+    balanceAfterPaise: existing.balanceAfterPaise,
+    duplicate: true,
+  };
+}
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -151,13 +172,28 @@ export const walletService = {
    * Apply a double-entry credit or debit.
    *
    * Safety guarantees:
-   *   - Runs inside a serializable DB transaction.
+   *   - Runs inside a DB transaction with the wallet row locked (SELECT … FOR UPDATE).
+   *   - Mirrors the new balance onto User.ciPoints / User.cashbackBalance (deprecated).
    *   - Idempotency: if `idempotencyKey` is already present, returns the
    *     existing ledger entry without modifying the wallet (no double-credit).
    *   - Prevents negative balances for debit operations by checking BEFORE
    *     the transaction commits.
    */
   async applyEntry(input: LedgerEntryInput): Promise<LedgerResult> {
+    // Idempotency fast path, outside the transaction
+    if (input.idempotencyKey) {
+      const existing = await prisma.loyaltyLedger.findUnique({ where: { idempotencyKey: input.idempotencyKey } });
+      if (existing) return duplicateResult(existing);
+    }
+    return prisma.$transaction((tx) => this.applyEntryTx(tx, input));
+  },
+
+  /**
+   * Apply a ledger entry inside a caller's transaction (e.g. mall/rewards fulfilment, so the
+   * points/cash debit commits or rolls back together with the order rows).
+   * Throws InsufficientBalanceError when a debit would go negative.
+   */
+  async applyEntryTx(tx: Tx, input: LedgerEntryInput): Promise<LedgerResult> {
     const {
       userId,
       txType,
@@ -171,123 +207,90 @@ export const walletService = {
       expiresAt,
     } = input;
 
-    // Validate — exactly one dimension must be non-zero
     if (pointsDelta === 0 && cashPaiseDelta === 0) {
       throw new Error("WalletService: Both pointsDelta and cashPaiseDelta are zero — nothing to apply.");
     }
-
-    // 1. Idempotency check (fast-path, outside transaction)
-    if (idempotencyKey) {
-      const existing = await prisma.loyaltyLedger.findUnique({
-        where: { idempotencyKey },
-      });
-      if (existing) {
-        return {
-          ledgerEntryId: existing.id,
-          walletId: "",
-          balanceAfterPoints: existing.balanceAfterPoints,
-          balanceAfterPaise: existing.balanceAfterPaise,
-          duplicate: true,
-        };
-      }
+    if (!Number.isInteger(pointsDelta) || !Number.isInteger(cashPaiseDelta)) {
+      throw new Error("WalletService: deltas must be integers (points, paise).");
     }
 
-    // 2. Run the double-entry inside a transaction
-    const result = await prisma.$transaction(async (tx) => {
-      // 2a. Ensure user exists so foreign key is always satisfied
-      await tx.user.upsert({
-        where: { id: userId },
-        create: {
-          id: userId,
-          phone: `+91${userId.replace(/\D/g, '').padEnd(10, '0').slice(0, 10)}`,
-          phoneVerified: true,
-        },
-        update: {},
-      }).catch(() => {});
+    if (idempotencyKey) {
+      const existing = await tx.loyaltyLedger.findUnique({ where: { idempotencyKey } });
+      if (existing) return duplicateResult(existing);
+    }
 
-      // 2b. Upsert wallet and lock the row
-      const wallet = await tx.userWallet.upsert({
-        where: { userId },
-        create: {
-          userId,
-          ciPoints: 0,
-          cashPaise: 0,
-          version: 0,
-        },
-        update: {}, // Just locks the row; we'll update it below
-      });
+    // The user must exist: balances belong to real accounts only (no placeholder users).
+    const user = await tx.user.findUnique({ where: { id: userId }, select: { id: true } });
+    if (!user) throw new Error(`WalletService: user ${userId} not found`);
 
-      // 2b. Guard against negative balances on debits
-      if (pointsDelta < 0) {
-        const newPoints = wallet.ciPoints + pointsDelta;
-        if (newPoints < 0) {
-          throw new Error(
-            `Insufficient CI Points. Current: ${wallet.ciPoints}, Attempted debit: ${Math.abs(pointsDelta)}`
-          );
-        }
-      }
-      if (cashPaiseDelta < 0) {
-        const newCash = wallet.cashPaise + cashPaiseDelta;
-        if (newCash < 0) {
-          throw new Error(
-            `Insufficient cash balance. Current: ₹${(wallet.cashPaise / 100).toFixed(2)}, Attempted debit: ₹${(Math.abs(cashPaiseDelta) / 100).toFixed(2)}`
-          );
-        }
-      }
+    // Row lock on the wallet so concurrent debits serialise (SELECT … FOR UPDATE).
+    await tx.userWallet.upsert({
+      where: { userId },
+      create: { userId, ciPoints: 0, cashPaise: 0, version: 0 },
+      update: {},
+    });
+    await tx.$queryRaw`SELECT "id" FROM "user_wallets" WHERE "userId" = ${userId} FOR UPDATE`;
+    const wallet = await tx.userWallet.findUniqueOrThrow({ where: { userId } });
 
-      // 2c. Compute new balances
-      const newCiPoints = wallet.ciPoints + pointsDelta;
-      const newCashPaise = wallet.cashPaise + cashPaiseDelta;
+    const newCiPoints = wallet.ciPoints + pointsDelta;
+    const newCashPaise = wallet.cashPaise + cashPaiseDelta;
+    if (pointsDelta < 0 && newCiPoints < 0) {
+      throw new InsufficientBalanceError(
+        "POINTS",
+        `Insufficient CI Points. Current: ${wallet.ciPoints}, Attempted debit: ${Math.abs(pointsDelta)}`
+      );
+    }
+    if (cashPaiseDelta < 0 && newCashPaise < 0) {
+      throw new InsufficientBalanceError(
+        "CASH",
+        `Insufficient cash balance. Current: ₹${(wallet.cashPaise / 100).toFixed(2)}, Attempted debit: ₹${(Math.abs(cashPaiseDelta) / 100).toFixed(2)}`
+      );
+    }
 
-      // 2d. Build lifetime analytics deltas
-      const isEarn = isEarnType(txType);
-      const isRedeem = isRedeemType(txType);
+    const isEarn = isEarnType(txType);
+    const isRedeem = isRedeemType(txType);
 
-      const lifetimePointsEarnDelta = isEarn && pointsDelta > 0 ? pointsDelta : 0;
-      const lifetimePointsRedeemDelta = isRedeem && pointsDelta < 0 ? Math.abs(pointsDelta) : 0;
-      const lifetimePaiseEarnDelta = isEarn && cashPaiseDelta > 0 ? cashPaiseDelta : 0;
-      const lifetimePaiseRedeemDelta = isRedeem && cashPaiseDelta < 0 ? Math.abs(cashPaiseDelta) : 0;
+    const updatedWallet = await tx.userWallet.update({
+      where: { userId },
+      data: {
+        ciPoints: newCiPoints,
+        cashPaise: newCashPaise,
+        lifetimeEarnedPoints: { increment: isEarn && pointsDelta > 0 ? pointsDelta : 0 },
+        lifetimeRedeemedPoints: { increment: isRedeem && pointsDelta < 0 ? -pointsDelta : 0 },
+        lifetimeEarnedPaise: { increment: isEarn && cashPaiseDelta > 0 ? cashPaiseDelta : 0 },
+        lifetimeRedeemedPaise: { increment: isRedeem && cashPaiseDelta < 0 ? -cashPaiseDelta : 0 },
+        version: { increment: 1 },
+      },
+    });
 
-      // 2e. Update the wallet atomically with optimistic-lock increment
-      const updatedWallet = await tx.userWallet.update({
-        where: { userId, version: wallet.version },
-        data: {
-          ciPoints: newCiPoints,
-          cashPaise: newCashPaise,
-          lifetimeEarnedPoints: { increment: lifetimePointsEarnDelta },
-          lifetimeRedeemedPoints: { increment: lifetimePointsRedeemDelta },
-          lifetimeEarnedPaise: { increment: lifetimePaiseEarnDelta },
-          lifetimeRedeemedPaise: { increment: lifetimePaiseRedeemDelta },
-          version: { increment: 1 },
-        },
-      });
+    // Keep the deprecated User mirrors in step with the ledger (same transaction).
+    await tx.user.update({
+      where: { id: userId },
+      data: { ciPoints: newCiPoints, cashbackBalance: (newCashPaise / 100).toFixed(2) },
+    });
 
-      // 2f. Append the immutable ledger entry
-      const entry = await tx.loyaltyLedger.create({
-        data: {
-          userId,
-          txType,
-          pointsDelta,
-          cashPaiseDelta,
-          balanceAfterPoints: newCiPoints,
-          balanceAfterPaise: newCashPaise,
-          orderId,
-          redemptionId,
-          razorpayPaymentId,
-          description,
-          idempotencyKey,
-          expiresAt,
-        },
-      });
-
-      return { entry, wallet: updatedWallet };
+    const entry = await tx.loyaltyLedger.create({
+      data: {
+        userId,
+        txType,
+        pointsDelta,
+        cashPaiseDelta,
+        balanceAfterPoints: newCiPoints,
+        balanceAfterPaise: newCashPaise,
+        orderId,
+        redemptionId,
+        razorpayPaymentId,
+        description,
+        idempotencyKey,
+        expiresAt,
+      },
     });
 
     return {
-      ledgerEntryId: result.entry.id,
-      walletId: result.wallet.id,
-      balanceAfterPoints: result.wallet.ciPoints,
-      balanceAfterPaise: result.wallet.cashPaise,
+      ledgerEntryId: entry.id,
+      walletId: updatedWallet.id,
+      balanceAfterPoints: updatedWallet.ciPoints,
+      balanceAfterPaise: updatedWallet.cashPaise,
     };
   },
 
