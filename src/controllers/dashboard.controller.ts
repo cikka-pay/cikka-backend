@@ -16,15 +16,12 @@ export const getSettlementBreakdown = asyncHandler(async (req, res) => {
     res.status(401).json({ error: AUTH_ERRORS.UNAUTHORIZED });
     return;
   }
-  const rawPeriod = (req.query.period as string) || "this_week";
-  let period: "this_week" | "last_week" | "this_month" = "this_week";
-  if (rawPeriod === "last_week") {
-    period = "last_week";
-  } else if (rawPeriod === "this_month" || rawPeriod === "month") {
-    period = "this_month";
-  } else {
-    period = "this_week";
-  }
+  // Accepts the documented week|month plus the this_week|last_week|this_month aliases, and
+  // echoes the value the client sent; anything else falls back to this_week.
+  const PERIODS = ["this_week", "last_week", "this_month", "week", "month"] as const;
+  type Period = (typeof PERIODS)[number];
+  const rawPeriod = req.query.period as string;
+  const period: Period = (PERIODS as readonly string[]).includes(rawPeriod) ? (rawPeriod as Period) : "this_week";
   const breakdown = await dashboardService.getSettlementBreakdown(req.seller.id, period, req.seller.role);
   res.json(breakdown);
 });
