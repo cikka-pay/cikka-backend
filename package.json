@@ -2,6 +2,9 @@
   "name": "cikka-dashboard-backend",
   "version": "1.0.0",
   "private": true,
+  "engines": {
+    "node": "22.x"
+  },
   "scripts": {
     "setup": "bash scripts/setup.sh",
     "dev": "tsx watch src/server.ts",

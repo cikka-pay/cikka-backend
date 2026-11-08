@@ -12,3 +12,6 @@ uploads/
 # Postman
 .postman/
 postman/
+
+# Test coverage reports
+coverage/
