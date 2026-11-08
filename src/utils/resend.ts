@@ -104,6 +104,20 @@ export async function sendResendMail(options: {
       return { success: false, error: err };
     }
 
+    // Without a key Resend can only answer 401; don't make the call (tests, CI, local dev).
+    if (!apiKey) {
+      const err = "RESEND_API_KEY is not set; email not sent";
+      console.warn(`[Resend Skipped] ${err} (to ${options.to}, template ${templateName})`);
+      logEmailDispatch({
+        to: options.to,
+        subject: options.subject,
+        template: templateName,
+        status: "FAILED",
+        error: err,
+      });
+      return { success: false, error: err };
+    }
+
     const response = await fetch("https://api.resend.com/emails", {
       method: "POST",
       headers: {
