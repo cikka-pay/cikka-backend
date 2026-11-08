@@ -20,11 +20,11 @@ datasource db {
 // ============================================================
 
 enum OnboardingStatus {
-  INCOMPLETE   // Still filling steps
-  SUBMITTED    // Submitted for review
+  INCOMPLETE // Still filling steps
+  SUBMITTED // Submitted for review
   UNDER_REVIEW // Signzy/manual review in progress
-  VERIFIED     // Fully approved
-  REJECTED     // Rejected by ops
+  VERIFIED // Fully approved
+  REJECTED // Rejected by ops
 }
 
 enum OrderStatus {
@@ -38,8 +38,10 @@ enum OrderStatus {
 }
 
 enum SettlementStatus {
-  PENDING
-  PAID
+  PENDING // payable, not yet released to the seller
+  PAID // released / settled to the seller's bank
+  REVERSED // transfer fully reversed (return, cancellation, cross-brand exchange); never payable
+  FAILED // transfer failed at Razorpay; never payable until re-created by ops
 }
 
 enum ReturnStatus {
@@ -67,18 +69,18 @@ enum NotificationType {
 }
 
 enum WalletTxType {
-  EARN_ORDER          // CI Points earned on purchase
-  EARN_SIGNUP         // CI Points bonus on first sign-up
-  EARN_REFERRAL       // CI Points for referring a friend
-  EARN_CASHBACK       // ₹5 cashback credited as cash balance
-  EARN_ADMIN          // Manual admin credit (adjustments / promos)
-  REDEEM_REWARD       // CI Points spent at Rewards Store
-  DEBIT_EXPIRY        // CI Points expired (non-cash)
-  DEBIT_REFUND        // CI Points reversed on order return
-  DEBIT_ADMIN         // Manual admin debit (fraud reversal)
-  CASHBACK_REDEEM     // Cash balance applied to an order
-  EARN_BBPS           // CI Points earned on a BBPS bill payment (behind BBPS_REWARDS_ENABLED)
-  DEBIT_BBPS          // CI Points reversed when a BBPS bill payment is refunded
+  EARN_ORDER // CI Points earned on purchase
+  EARN_SIGNUP // CI Points bonus on first sign-up
+  EARN_REFERRAL // CI Points for referring a friend
+  EARN_CASHBACK // ₹5 cashback credited as cash balance
+  EARN_ADMIN // Manual admin credit (adjustments / promos)
+  REDEEM_REWARD // CI Points spent at Rewards Store
+  DEBIT_EXPIRY // CI Points expired (non-cash)
+  DEBIT_REFUND // CI Points reversed on order return
+  DEBIT_ADMIN // Manual admin debit (fraud reversal)
+  CASHBACK_REDEEM // Cash balance applied to an order
+  EARN_BBPS // CI Points earned on a BBPS bill payment (behind BBPS_REWARDS_ENABLED)
+  DEBIT_BBPS // CI Points reversed when a BBPS bill payment is refunded
 }
 
 // Lifecycle of a BBPS bill payment made on Setu's pre-built screens.
@@ -115,17 +117,17 @@ enum SettlementCycle {
 // ============================================================
 
 model Seller {
-  id              String            @id @default(uuid())
-  phone           String            @unique  // Full E.164 key e.g. +919876543210
-  countryCode     String            @default("91")  // Numeric country code, e.g. "91"
-  phoneNumber     String?           // 10-digit number only, e.g. "9876543210"
-  phoneVerified   Boolean           @default(false)
-  email           String?           @unique
-  emailVerified   Boolean           @default(false)
-  passwordHash    String?           // Set in signup step 5; null for OTP-only sessions
+  id               String           @id @default(uuid())
+  phone            String           @unique // Full E.164 key e.g. +919876543210
+  countryCode      String           @default("91") // Numeric country code, e.g. "91"
+  phoneNumber      String? // 10-digit number only, e.g. "9876543210"
+  phoneVerified    Boolean          @default(false)
+  email            String?          @unique
+  emailVerified    Boolean          @default(false)
+  passwordHash     String? // Set in signup step 5; null for OTP-only sessions
   // businessName kept for backward compat; also stored in onboarding
-  businessName    String            @default("")
-  kycVerified     Boolean           @default(false)
+  businessName     String           @default("")
+  kycVerified      Boolean          @default(false)
   onboardingStatus OnboardingStatus @default(INCOMPLETE)
 
   // Signup OTP state (phone)
@@ -142,17 +144,17 @@ model Seller {
   resetOtpExpiresAt DateTime?
 
   // Razorpay Route Sub-merchant Linked Account
-  razorpayAccountId     String?           @unique
-  razorpayAccountStatus String?           @default("NOT_CREATED")
+  razorpayAccountId     String? @unique
+  razorpayAccountStatus String? @default("NOT_CREATED")
 
   // Return SLA Compliance & Strike System (1/3, 2/3, 3/3 final)
-  warningCount          Int               @default(0) // 1/3 warning, 2/3 warning, 3/3 final suspension
-  isSuspended           Boolean           @default(false)
-  suspendedAt           DateTime?
-  suspensionReason      String?
+  warningCount     Int       @default(0) // 1/3 warning, 2/3 warning, 3/3 final suspension
+  isSuspended      Boolean   @default(false)
+  suspendedAt      DateTime?
+  suspensionReason String?
 
   // Special Seller Program (offers 2X doubled cashback rewards on Cikka Mall)
-  isSpecialSeller       Boolean           @default(false)
+  isSpecialSeller Boolean @default(false)
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -186,27 +188,27 @@ model SellerOnboarding {
   businessType     BusinessType?
   yearEstablished  Int?
   website          String?
-  businessCategory String?    // Electronics | Fashion | Cosmetics | etc.
-  description      String?    // @db.Text
+  businessCategory String? // Electronics | Fashion | Cosmetics | etc.
+  description      String? // @db.Text
 
   // ---------- Step 2: Legal / KYB ----------
-  gstNumber    String?
-  gstVerified  Boolean @default(false)
-  gstData      Json?   // Raw stub/API response cached
+  gstNumber   String?
+  gstVerified Boolean @default(false)
+  gstData     Json? // Raw stub/API response cached
 
-  panNumber    String?
-  panVerified  Boolean @default(false)
-  panData      Json?
+  panNumber   String?
+  panVerified Boolean @default(false)
+  panData     Json?
 
-  cinNumber    String?
-  cinVerified  Boolean @default(false)
-  cinData      Json?
+  cinNumber   String?
+  cinVerified Boolean @default(false)
+  cinData     Json?
 
-  msmeNumber   String?  // Optional
+  msmeNumber String? // Optional
 
   // ---------- Step 3: Authorized Signatory ----------
   signatoryName            String?
-  signatoryTitle           String?  // Director | Owner | Authorized Signatory | Managing Partner
+  signatoryTitle           String? // Director | Owner | Authorized Signatory | Managing Partner
   signatoryPersonalPan     String?
   signatoryAadhaar         String?
   signatoryAadhaarVerified Boolean @default(false)
@@ -219,34 +221,34 @@ model SellerOnboarding {
   bankAccountNumber String?
   bankIfsc          String?
   bankVerified      Boolean @default(false)
-  bankData          Json?   // Penny drop response
+  bankData          Json? // Penny drop response
 
   // ---------- Step 5: Brand & Logistics ----------
-  logoUrl           String?
-  productCategories Json?    // String[] e.g. ["Skincare","Makeup"]
-  returnPolicy      String?  // No Returns | 7-Day | 15-Day | 30-Day | Exchange Only
-  settlementCycle   SettlementCycle @default(T_PLUS_7)
-  avgOrderValue     Decimal?  @db.Decimal(10, 2)
-  monthlySalesTarget Decimal? @db.Decimal(12, 2)
-  fulfillmentType   FulfillmentType @default(THREE_PL)
+  logoUrl            String?
+  productCategories  Json? // String[] e.g. ["Skincare","Makeup"]
+  returnPolicy       String? // No Returns | 7-Day | 15-Day | 30-Day | Exchange Only
+  settlementCycle    SettlementCycle @default(T_PLUS_7)
+  avgOrderValue      Decimal?        @db.Decimal(10, 2)
+  monthlySalesTarget Decimal?        @db.Decimal(12, 2)
+  fulfillmentType    FulfillmentType @default(THREE_PL)
 
   // Pickup address stored as structured JSON
-  pickupAddress     Json?    // { line1, city, state, pincode }
+  pickupAddress Json? // { line1, city, state, pincode }
 
   // ---------- Step 6: Agreements ----------
-  merchantAgreementAccepted  Boolean   @default(false)
-  commissionAcknowledged     Boolean   @default(false)
-  returnPolicyAcknowledged   Boolean   @default(false)
-  authenticityAcknowledged   Boolean   @default(false)
-  digitalSignature           String?   // Typed name
-  agreementAcceptedAt        DateTime?
+  merchantAgreementAccepted Boolean   @default(false)
+  commissionAcknowledged    Boolean   @default(false)
+  returnPolicyAcknowledged  Boolean   @default(false)
+  authenticityAcknowledged  Boolean   @default(false)
+  digitalSignature          String? // Typed name
+  agreementAcceptedAt       DateTime?
 
   // ---------- Application tracking & Verification Notes ----------
-  applicationId     String?   @unique  // CKA-YYYY-NNNNN (sequential)
+  applicationId     String?   @unique // CKA-YYYY-NNNNN (sequential)
   submittedAt       DateTime?
-  missingDocuments  Json?     // Array of missing document alerts: [{ key, title, reason, requestedAt, resolved }]
-  verificationNotes String?   // Admin internal review notes
-  reviewedBy        String?   // Admin identifier who reviewed
+  missingDocuments  Json? // Array of missing document alerts: [{ key, title, reason, requestedAt, resolved }]
+  verificationNotes String? // Admin internal review notes
+  reviewedBy        String? // Admin identifier who reviewed
   reviewedAt        DateTime?
 
   // Step completion tracking (1–6)
@@ -254,7 +256,7 @@ model SellerOnboarding {
 
   // Razorpay Route Linked Account
   razorpayAccountId     String?
-  razorpayAccountStatus String?   @default("NOT_CREATED")
+  razorpayAccountStatus String? @default("NOT_CREATED")
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -267,19 +269,19 @@ model SellerOnboarding {
 // ============================================================
 
 model SellerSettings {
-  id              String          @id @default(uuid())
-  sellerId        String          @unique
-  seller          Seller          @relation(fields: [sellerId], references: [id], onDelete: Cascade)
+  id       String @id @default(uuid())
+  sellerId String @unique
+  seller   Seller @relation(fields: [sellerId], references: [id], onDelete: Cascade)
 
   settlementCycle SettlementCycle @default(T_PLUS_7)
   returnPolicy    String          @default("7-Day Return Window")
   fulfillmentType FulfillmentType @default(THREE_PL)
-  lowStockDefault Int             @default(5)  // Default low-stock threshold for new products
+  lowStockDefault Int             @default(5) // Default low-stock threshold for new products
 
   // Notification preferences
-  notifyLowStock      Boolean @default(true)
-  notifyNewOrder      Boolean @default(true)
-  notifySettlement    Boolean @default(true)
+  notifyLowStock   Boolean @default(true)
+  notifyNewOrder   Boolean @default(true)
+  notifySettlement Boolean @default(true)
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -292,54 +294,54 @@ model SellerSettings {
 // ============================================================
 
 model Product {
-  id                String        @id @default(uuid())
-  sellerId          String
-  seller            Seller        @relation(fields: [sellerId], references: [id])
+  id       String @id @default(uuid())
+  sellerId String
+  seller   Seller @relation(fields: [sellerId], references: [id])
 
-  name              String
-  brandName         String?       // Brand name as shown in the Add Product UI
-  sku               String        @unique
-  category          String?
-  description       String?       // @db.Text
+  name        String
+  brandName   String? // Brand name as shown in the Add Product UI
+  sku         String  @unique
+  category    String?
+  description String? // @db.Text
 
   // Pricing
-  mrp               Decimal?      @db.Decimal(10, 2)   // Original / Maximum Retail Price
-  price             Decimal       @db.Decimal(10, 2)   // Selling price on Cikka
-  gstSlab           Int           @default(12)          // 0 | 5 | 12 | 18 | 28
+  mrp     Decimal? @db.Decimal(10, 2) // Original / Maximum Retail Price
+  price   Decimal  @db.Decimal(10, 2) // Selling price on Cikka
+  gstSlab Int      @default(12) // 0 | 5 | 12 | 18 | 28
 
   // Pending Price Request from Seller
-  pendingPrice      Decimal?      @db.Decimal(10, 2)   // Requested selling price awaiting admin approval
-  pendingMrp        Decimal?      @db.Decimal(10, 2)   // Requested MRP awaiting admin approval
-  priceRequestedAt  DateTime?                          // Timestamp when seller requested price update
+  pendingPrice     Decimal?  @db.Decimal(10, 2) // Requested selling price awaiting admin approval
+  pendingMrp       Decimal?  @db.Decimal(10, 2) // Requested MRP awaiting admin approval
+  priceRequestedAt DateTime? // Timestamp when seller requested price update
 
   // Loyalty
-  loyaltyPoints     Int           @default(0)
+  loyaltyPoints Int @default(0)
 
   // Inventory
-  stockQty          Int           @default(0)
-  lowStockThreshold Int           @default(5)
+  stockQty          Int @default(0)
+  lowStockThreshold Int @default(5)
 
   // Shipping
-  weightGrams       Int?
-  dimLengthCm       Decimal?      @db.Decimal(6, 1)
-  dimWidthCm        Decimal?      @db.Decimal(6, 1)
-  dimHeightCm       Decimal?      @db.Decimal(6, 1)
-  fulfillmentType   FulfillmentType @default(THREE_PL)
-  dispatchDays      String        @default("same")      // same | 1-2 | 3-5
+  weightGrams     Int?
+  dimLengthCm     Decimal?        @db.Decimal(6, 1)
+  dimWidthCm      Decimal?        @db.Decimal(6, 1)
+  dimHeightCm     Decimal?        @db.Decimal(6, 1)
+  fulfillmentType FulfillmentType @default(THREE_PL)
+  dispatchDays    String          @default("same") // same | 1-2 | 3-5
 
   // Media
-  imageUrls         Json?         // String[] — first is thumbnail
-  videoUrl          String?
+  imageUrls Json? // String[] — first is thumbnail
+  videoUrl  String?
 
-  status            ProductStatus @default(DRAFT)
+  status ProductStatus @default(DRAFT)
 
-  createdAt         DateTime      @default(now())
-  updatedAt         DateTime      @updatedAt
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 
   // Relations
-  orderItems  OrderItem[]
-  returns     Return[]
-  variants    ProductVariant[]
+  orderItems OrderItem[]
+  returns    Return[]
+  variants   ProductVariant[]
 
   @@index([sellerId])
   @@index([sellerId, status])
@@ -353,17 +355,17 @@ model Product {
 // ============================================================
 
 model ProductVariant {
-  id         String   @id @default(uuid())
-  productId  String
-  product    Product  @relation(fields: [productId], references: [id], onDelete: Cascade)
+  id        String  @id @default(uuid())
+  productId String
+  product   Product @relation(fields: [productId], references: [id], onDelete: Cascade)
 
-  typeName   String   // Color | Size | Storage | Material | Custom
-  value      String   // Red | Large | 128GB | etc.
-  stockQty   Int      @default(0)
-  price      Decimal? @db.Decimal(10, 2)  // null = inherit from Product.price
+  typeName String // Color | Size | Storage | Material | Custom
+  value    String // Red | Large | 128GB | etc.
+  stockQty Int      @default(0)
+  price    Decimal? @db.Decimal(10, 2) // null = inherit from Product.price
 
-  createdAt  DateTime @default(now())
-  updatedAt  DateTime @updatedAt
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 
   @@unique([productId, typeName, value])
   @@index([productId])
@@ -375,31 +377,36 @@ model ProductVariant {
 // ============================================================
 
 model Order {
-  id           String      @id @default(uuid())
-  sellerId     String
-  seller       Seller      @relation(fields: [sellerId], references: [id])
+  id       String @id @default(uuid())
+  sellerId String
+  seller   Seller @relation(fields: [sellerId], references: [id])
 
-  orderNumber     String      @unique
-  customerName    String
-  customerCity    String?
-  status          OrderStatus @default(PENDING)
-  totalAmount     Decimal     @db.Decimal(10, 2)
+  orderNumber  String      @unique
+  // Mobile app buyer who paid for this order (set at fulfilment from the authenticated
+  // checkout). Null for orders created before spec 003 and for seller-created test orders.
+  userId       String?
+  user         User?       @relation(fields: [userId], references: [id], onDelete: SetNull)
+  customerName String
+  customerCity String?
+  status       OrderStatus @default(PENDING)
+  totalAmount  Decimal     @db.Decimal(10, 2)
 
   // Shipping / fulfilment tracking — set when status moves to SHIPPED
-  trackingNumber  String?
-  courier         String?     // Courier partner name e.g. "Delhivery", "Blue Dart"
-  deliveredAt     DateTime?   // Timestamp when package reached the customer (triggers T+7 hold countdown)
+  trackingNumber String?
+  courier        String? // Courier partner name e.g. "Delhivery", "Blue Dart"
+  deliveredAt    DateTime? // Timestamp when package reached the customer (triggers T+7 hold countdown)
 
-  createdAt    DateTime    @default(now())
-  updatedAt    DateTime    @updatedAt
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 
   // Relations
-  items        OrderItem[]
-  returns      Return[]
-  settlements  Settlement[]
+  items       OrderItem[]
+  returns     Return[]
+  settlements Settlement[]
 
   @@index([sellerId, createdAt])
   @@index([sellerId, status])
+  @@index([userId, createdAt])
   @@map("orders")
 }
 
@@ -416,7 +423,7 @@ model OrderItem {
 
   quantity  Int
   unitPrice Decimal @db.Decimal(10, 2)
-  variantId String?  // Optional — points to the chosen variant
+  variantId String? // Optional — points to the chosen variant
 
   @@index([orderId])
   @@index([productId])
@@ -429,86 +436,88 @@ model OrderItem {
 // ============================================================
 
 model Settlement {
-  id                String           @id @default(uuid())
-  sellerId          String
-  seller            Seller           @relation(fields: [sellerId], references: [id])
+  id       String @id @default(uuid())
+  sellerId String
+  seller   Seller @relation(fields: [sellerId], references: [id])
 
-  periodStart       DateTime
-  periodEnd         DateTime
-  category          String           @default("General")
+  periodStart DateTime
+  periodEnd   DateTime
+  category    String   @default("General")
 
   // 1. Order Input
-  grossSales        Decimal          @db.Decimal(10, 2)  // Gross Product Value (GST-inclusive)
-  basePrice         Decimal?         @default(0.00) @db.Decimal(10, 2)  // Base Product Value (Gross ÷ 1.18)
-  gstOnSale         Decimal?         @default(0.00) @db.Decimal(10, 2)  // Product GST (Gross - Base)
+  grossSales Decimal  @db.Decimal(10, 2) // Gross Product Value (GST-inclusive)
+  basePrice  Decimal? @default(0.00) @db.Decimal(10, 2) // Base Product Value (Gross ÷ 1.18)
+  gstOnSale  Decimal? @default(0.00) @db.Decimal(10, 2) // Product GST (Gross - Base)
 
   // 2. Commission (22% on Base)
-  commissionRate    Decimal          @default(22.00) @db.Decimal(5, 2)
-  commissionAmount  Decimal          @db.Decimal(10, 2)
-  gstOnCommission   Decimal?         @default(0.00) @db.Decimal(10, 2)  // 18% GST on Commission
-  commissionTotal   Decimal?         @default(0.00) @db.Decimal(10, 2)  // Commission + GST
+  commissionRate   Decimal  @default(22.00) @db.Decimal(5, 2)
+  commissionAmount Decimal  @db.Decimal(10, 2)
+  gstOnCommission  Decimal? @default(0.00) @db.Decimal(10, 2) // 18% GST on Commission
+  commissionTotal  Decimal? @default(0.00) @db.Decimal(10, 2) // Commission + GST
 
   // 3. Shipping (Fixed ₹55 + ₹9.90 GST = ₹64.90)
-  shippingFee       Decimal?         @default(55.00) @db.Decimal(10, 2)
-  shippingGst       Decimal?         @default(9.90) @db.Decimal(10, 2)
-  shippingTotal     Decimal?         @default(64.90) @db.Decimal(10, 2)
+  shippingFee   Decimal? @default(55.00) @db.Decimal(10, 2)
+  shippingGst   Decimal? @default(9.90) @db.Decimal(10, 2)
+  shippingTotal Decimal? @default(64.90) @db.Decimal(10, 2)
 
   // 4. Seller Platform Fee (Fixed ₹15 + ₹2.70 GST = ₹17.70)
-  sellerPlatformFee    Decimal?      @default(15.00) @db.Decimal(10, 2)
-  sellerPlatformFeeGst Decimal?      @default(2.70) @db.Decimal(10, 2)
-  sellerPlatformTotal  Decimal?      @default(17.70) @db.Decimal(10, 2)
+  sellerPlatformFee    Decimal? @default(15.00) @db.Decimal(10, 2)
+  sellerPlatformFeeGst Decimal? @default(2.70) @db.Decimal(10, 2)
+  sellerPlatformTotal  Decimal? @default(17.70) @db.Decimal(10, 2)
 
   // 5. Statutory Taxes
-  tdsAmount         Decimal?         @default(0.00) @db.Decimal(10, 2)  // 0.1% TDS on Gross
-  tcsAmount         Decimal?         @default(0.00) @db.Decimal(10, 2)  // 0.5% TCS on Base
-  statutoryTaxes    Decimal?         @default(0.00) @db.Decimal(10, 2)  // TDS + TCS
+  tdsAmount      Decimal? @default(0.00) @db.Decimal(10, 2) // 0.1% TDS on Gross
+  tcsAmount      Decimal? @default(0.00) @db.Decimal(10, 2) // 0.5% TCS on Base
+  statutoryTaxes Decimal? @default(0.00) @db.Decimal(10, 2) // TDS + TCS
 
   // 6. Success Fee (2% on Gross + 18% GST = 2.36% on Gross)
-  successFeeAmount  Decimal?         @default(0.00) @db.Decimal(10, 2)
-  successFeeGst     Decimal?         @default(0.00) @db.Decimal(10, 2)
-  successFeeTotal   Decimal?         @default(0.00) @db.Decimal(10, 2)
+  successFeeAmount Decimal? @default(0.00) @db.Decimal(10, 2)
+  successFeeGst    Decimal? @default(0.00) @db.Decimal(10, 2)
+  successFeeTotal  Decimal? @default(0.00) @db.Decimal(10, 2)
 
   // 7. Customer Platform Fee (₹9.99 + ₹1.80 GST = ₹11.79)
-  customerPlatformFee    Decimal?    @default(9.99) @db.Decimal(10, 2)
-  customerPlatformFeeGst Decimal?    @default(1.80) @db.Decimal(10, 2)
-  customerPlatformTotal  Decimal?    @default(11.79) @db.Decimal(10, 2)
-  customerTotalPayment   Decimal?    @default(0.00) @db.Decimal(10, 2)
+  customerPlatformFee    Decimal? @default(9.99) @db.Decimal(10, 2)
+  customerPlatformFeeGst Decimal? @default(1.80) @db.Decimal(10, 2)
+  customerPlatformTotal  Decimal? @default(11.79) @db.Decimal(10, 2)
+  customerTotalPayment   Decimal? @default(0.00) @db.Decimal(10, 2)
 
   // 8. Cikka Revenue Accounting (BEFORE GST) & GST Liability
-  cikkaFeeRevenue    Decimal?        @default(0.00) @db.Decimal(10, 2)  // Commission + Seller Platform + Success Fee + Customer Platform
-  cikkaGstCollected  Decimal?        @default(0.00) @db.Decimal(10, 2)  // Total GST on all Cikka fees
+  cikkaFeeRevenue   Decimal? @default(0.00) @db.Decimal(10, 2) // Commission + Seller Platform + Success Fee + Customer Platform
+  cikkaGstCollected Decimal? @default(0.00) @db.Decimal(10, 2) // Total GST on all Cikka fees
 
   // 9. Seller Settlement Payout (from Base Product Value)
   totalDeductions   Decimal?         @default(0.00) @db.Decimal(10, 2)
-  shippingGstAmount Decimal          @default(0.00) @db.Decimal(10, 2)  // Legacy backward-compat field
-  netPayable        Decimal          @db.Decimal(10, 2)  // seller_net_settlement
+  shippingGstAmount Decimal          @default(0.00) @db.Decimal(10, 2) // Legacy backward-compat field
+  netPayable        Decimal          @db.Decimal(10, 2) // seller_net_settlement
   status            SettlementStatus @default(PENDING)
   payoutDate        DateTime?
 
   // 10. Complete Deterministic JSON Ledger Snapshot
-  ledgerBreakdown   Json?
+  ledgerBreakdown Json?
 
   // 11. Razorpay Route Marketplace Split & T+7 Settlement Disbursal Tracking
-  orderId            String?
-  order              Order?           @relation(fields: [orderId], references: [id])
-  orderNumber        String?          // Directly matches Order.orderNumber
-  razorpayTransferId String?          @unique
-  razorpayPaymentId  String?
-  decentroTxnId     String?          // Backward compat
-  holdUntil          DateTime?        // Exact T+7 auto-release timestamp
-  transferStatus     String?          @default("PENDING") // PENDING | ON_HOLD | SETTLED | REVERSED | FAILED
-  utr               String?
-  failureReason     String?
-  disbursedAt       DateTime?
+  orderId               String?
+  order                 Order?    @relation(fields: [orderId], references: [id])
+  orderNumber           String? // Directly matches Order.orderNumber
+  razorpayTransferId    String?   @unique
+  razorpayPaymentId     String?
+  recipientSettlementId String? // Razorpay `setl_*` from settlement.processed (linked account bank settlement)
+  decentroTxnId         String? // Backward compat
+  holdUntil             DateTime? // Exact T+7 auto-release timestamp
+  transferStatus        String?   @default("PENDING") // PENDING | ON_HOLD | SETTLED | REVERSED | FAILED
+  utr                   String?
+  failureReason         String?
+  disbursedAt           DateTime?
 
-  createdAt         DateTime         @default(now())
-  updatedAt         DateTime         @updatedAt
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 
   @@index([sellerId, periodStart])
   @@index([sellerId, status])
   @@index([orderId])
   @@index([orderNumber])
   @@index([razorpayTransferId])
+  @@index([recipientSettlementId])
   @@map("settlements")
 }
 
@@ -517,18 +526,18 @@ model Settlement {
 // ============================================================
 
 model Return {
-  id           String       @id @default(uuid())
-  orderId      String
-  order        Order        @relation(fields: [orderId], references: [id])
-  productId    String
-  product      Product      @relation(fields: [productId], references: [id])
+  id        String  @id @default(uuid())
+  orderId   String
+  order     Order   @relation(fields: [orderId], references: [id])
+  productId String
+  product   Product @relation(fields: [productId], references: [id])
 
   reason       String?
   status       ReturnStatus @default(REQUESTED)
   refundAmount Decimal      @db.Decimal(10, 2)
 
-  createdAt    DateTime     @default(now())
-  updatedAt    DateTime     @updatedAt
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 
   @@index([orderId])
   @@index([productId])
@@ -540,17 +549,17 @@ model Return {
 // ============================================================
 
 model Notification {
-  id       String           @id @default(uuid())
+  id       String @id @default(uuid())
   sellerId String
-  seller   Seller           @relation(fields: [sellerId], references: [id], onDelete: Cascade)
+  seller   Seller @relation(fields: [sellerId], references: [id], onDelete: Cascade)
 
   type     NotificationType
   title    String
   body     String
   read     Boolean          @default(false)
-  metadata Json?            // Extra context: { orderId, productId, etc. }
+  metadata Json? // Extra context: { orderId, productId, etc. }
 
-  createdAt DateTime        @default(now())
+  createdAt DateTime @default(now())
 
   @@index([sellerId, read])
   @@index([sellerId, createdAt])
@@ -563,8 +572,8 @@ model Notification {
 // ============================================================
 
 model ApplicationSequence {
-  id       Int @id @default(1)
-  lastSeq  Int @default(0)
+  id      Int @id @default(1)
+  lastSeq Int @default(0)
 
   @@map("application_sequence")
 }
@@ -574,35 +583,40 @@ model ApplicationSequence {
 // ============================================================
 
 model User {
-  id            String   @id @default(uuid())
-  phone         String   @unique
+  id            String  @id @default(uuid())
+  phone         String  @unique
   name          String?
-  email         String?  @unique
-  phoneVerified Boolean  @default(false)
+  email         String? @unique
+  phoneVerified Boolean @default(false)
   panNumber     String?
-  panVerified   Boolean  @default(false)
+  panVerified   Boolean @default(false)
   profilePic    String?
 
-  // Cikka Vault & Wallet Balances
-  ciPoints        Int      @default(100000)
-  cashbackBalance Decimal  @default(0.00) @db.Decimal(10, 2)
+  // DEPRECATED read-only mirrors of UserWallet (the ledger is the source of truth, see
+  // wallet.service). Written only by wallet.service inside the same transaction as the ledger.
+  ciPoints        Int     @default(0)
+  cashbackBalance Decimal @default(0.00) @db.Decimal(10, 2)
 
-  addresses     UserAddress[]
-  savedCards    UserSavedCard[]
-  wallet        UserWallet?
-  ledgerEntries LoyaltyLedger[]
+  // Razorpay Customer used for saved cards (tokens live at Razorpay, see spec 003 §9)
+  razorpayCustomerId String? @unique
+
+  addresses        UserAddress[]
+  savedCards       UserSavedCard[]
+  wallet           UserWallet?
+  ledgerEntries    LoyaltyLedger[]
   bbpsTransactions BbpsTransaction[]
+  orders           Order[]
 
-  createdAt     DateTime @default(now())
-  updatedAt     DateTime @updatedAt
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 
   @@map("users")
 }
 
 model UserAddress {
-  id        String   @id @default(uuid())
+  id        String  @id @default(uuid())
   userId    String?
-  user      User?    @relation(fields: [userId], references: [id], onDelete: Cascade)
+  user      User?   @relation(fields: [userId], references: [id], onDelete: Cascade)
   name      String
   phone     String
   houseNo   String?
@@ -611,7 +625,7 @@ model UserAddress {
   city      String
   state     String?
   pincode   String
-  isDefault Boolean  @default(true)
+  isDefault Boolean @default(true)
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -622,35 +636,33 @@ model UserAddress {
 }
 
 model UserSavedCard {
-  id                 String   @id @default(uuid())
-  userId             String?
-  user               User?    @relation(fields: [userId], references: [id], onDelete: Cascade)
-  phone              String?
+  id     String  @id @default(uuid())
+  userId String?
+  user   User?   @relation(fields: [userId], references: [id], onDelete: Cascade)
+  phone  String?
 
   razorpayCustomerId String?
-  razorpayTokenId    String   @unique
+  razorpayTokenId    String  @unique
 
-  bankName           String   // HDFC Bank, ICICI Bank, SBI, etc.
-  cardNetwork        String   // Visa, Mastercard, RuPay, Amex
-  cardType           String   @default("credit") // credit | debit
-  last4              String   // e.g. "4821"
-  cardholderName     String?
-  expiryMonth        String?  // "05"
-  expiryYear         String?  // "28"
+  bankName       String // HDFC Bank, ICICI Bank, SBI, etc.
+  cardNetwork    String // Visa, Mastercard, RuPay, Amex
+  cardType       String  @default("credit") // credit | debit
+  last4          String // e.g. "4821"
+  cardholderName String?
+  expiryMonth    String? // "05"
+  expiryYear     String? // "28"
 
-  isDefault          Boolean  @default(false)
-  status             String   @default("ACTIVE") // ACTIVE | REVOKED
+  isDefault Boolean @default(false)
+  status    String  @default("ACTIVE") // ACTIVE | REVOKED
 
-  createdAt          DateTime @default(now())
-  updatedAt          DateTime @updatedAt
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 
   @@index([userId])
   @@index([phone])
   @@index([razorpayTokenId])
   @@map("user_saved_cards")
 }
-
-
 
 // ============================================================
 // RAZORPAY CHECKOUT — one row per Razorpay order we create.
@@ -663,20 +675,25 @@ model UserSavedCard {
 model RazorpayCheckout {
   id                String    @id @default(uuid())
   razorpayOrderId   String    @unique
-  purpose           String    // MALL | REWARDS
-  userId            String?   // authenticated mobile user at order creation
-  amountPaise       Int       // amount the Razorpay order was created for
+  purpose           String // MALL | REWARDS
+  userId            String? // authenticated mobile user at order creation
+  amountPaise       Int // amount the Razorpay order was created for
   currency          String    @default("INR")
-  status            String    @default("CREATED") // CREATED | PROCESSING | FULFILLED | FAILED
+  status            String    @default("CREATED") // CREATED | PROCESSING | FULFILLED | FAILED | REFUNDED
+  // Processing lease: a PROCESSING row whose lease has expired (crash mid-fulfilment) can be
+  // claimed again by a webhook redelivery, a client retry or the admin resume endpoint.
+  leaseExpiresAt    DateTime?
+  attempts          Int       @default(0)
+  stage             String? // null → DB_COMMITTED (orders written) → COMPLETED (transfers attempted)
   razorpayPaymentId String?   @unique
-  snapshot          Json?     // cart + shipping details captured at order creation
-  result            Json?     // fulfilment response, replayed to duplicate callers
-  fulfilledVia      String?   // VERIFY | CARD_OTP | WEBHOOK
+  snapshot          Json? // cart + shipping details captured at order creation
+  result            Json? // fulfilment response, replayed to duplicate callers
+  fulfilledVia      String? // VERIFY | CARD_OTP | WEBHOOK | ADMIN
   fulfilledAt       DateTime?
   lastError         String?
 
-  createdAt         DateTime  @default(now())
-  updatedAt         DateTime  @updatedAt
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 
   @@index([userId])
   @@index([status])
@@ -689,16 +706,16 @@ model RazorpayCheckout {
 // ============================================================
 
 model PaymentTransaction {
-  id                 String   @id @default(uuid())
-  uniquePaymentRefID String   @unique // Dedup key provided by Setu
+  id                 String  @id @default(uuid())
+  uniquePaymentRefID String  @unique // Dedup key provided by Setu
   userId             String?
   orderId            String?
-  amount             Decimal  @db.Decimal(10, 2)
-  status             String   // SUCCESS | FAILED | PENDING | REFUNDED
+  amount             Decimal @db.Decimal(10, 2)
+  status             String // SUCCESS | FAILED | PENDING | REFUNDED
   rawPayload         Json?
 
-  createdAt          DateTime @default(now())
-  updatedAt          DateTime @updatedAt
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 
   @@index([uniquePaymentRefID])
   @@index([userId])
@@ -767,17 +784,17 @@ model BbpsWebhookEvent {
 // ============================================================
 
 model BbpsBiller {
-  id              String   @id @default(uuid())
-  billerId        String   @unique // e.g. "BESCOM000KAR01", "HDFCCARD00001"
-  billerName      String
-  category        String   // ELECTRICITY | CREDIT_CARD | WATER | GAS | DTH | MOBILE_POSTPAID | BROADBAND
-  logoUrl         String?
-  coverageArea    String?
-  paramsSchema    Json     // Array of required input field keys [{ name: "accountNumber", label: "Account Number", regex: "..." }]
-  isActive        Boolean  @default(true)
+  id           String  @id @default(uuid())
+  billerId     String  @unique // e.g. "BESCOM000KAR01", "HDFCCARD00001"
+  billerName   String
+  category     String // ELECTRICITY | CREDIT_CARD | WATER | GAS | DTH | MOBILE_POSTPAID | BROADBAND
+  logoUrl      String?
+  coverageArea String?
+  paramsSchema Json // Array of required input field keys [{ name: "accountNumber", label: "Account Number", regex: "..." }]
+  isActive     Boolean @default(true)
 
-  createdAt       DateTime @default(now())
-  updatedAt       DateTime @updatedAt
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 
   @@index([category])
   @@map("bbps_billers")
@@ -788,18 +805,18 @@ model BbpsBiller {
 // ============================================================
 
 model BbpsBillFetch {
-  id              String   @id @default(uuid())
-  userId          String
-  billerId        String
-  customerParams  Json     // Map of entered params e.g. { accountNumber: "123456789" }
-  billNumber      String?
-  billAmount      Decimal  @db.Decimal(10, 2)
-  dueDate         DateTime?
-  customerName    String?
-  status          String   @default("FETCHED") // FETCHED | PAID | EXPIRED
+  id             String    @id @default(uuid())
+  userId         String
+  billerId       String
+  customerParams Json // Map of entered params e.g. { accountNumber: "123456789" }
+  billNumber     String?
+  billAmount     Decimal   @db.Decimal(10, 2)
+  dueDate        DateTime?
+  customerName   String?
+  status         String    @default("FETCHED") // FETCHED | PAID | EXPIRED
 
-  createdAt       DateTime @default(now())
-  updatedAt       DateTime @updatedAt
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 
   @@index([userId])
   @@index([billerId])
@@ -811,19 +828,19 @@ model BbpsBillFetch {
 // ============================================================
 
 model BbpsBillPayment {
-  id                 String   @id @default(uuid())
+  id                 String  @id @default(uuid())
   userId             String
   billFetchId        String?
   billerId           String
-  amount             Decimal  @db.Decimal(10, 2)
-  paymentMode        String   @default("UPI") // UPI | DEBIT_CARD | CREDIT_CARD | NET_BANKING
+  amount             Decimal @db.Decimal(10, 2)
+  paymentMode        String  @default("UPI") // UPI | DEBIT_CARD | CREDIT_CARD | NET_BANKING
   setuPaymentLink    String?
   setuQrCode         String?
-  uniquePaymentRefID String?  @unique // Setu payment reference key
-  status             String   @default("INITIATED") // INITIATED | SUCCESS | FAILED | PENDING | REFUNDED
+  uniquePaymentRefID String? @unique // Setu payment reference key
+  status             String  @default("INITIATED") // INITIATED | SUCCESS | FAILED | PENDING | REFUNDED
 
-  createdAt          DateTime @default(now())
-  updatedAt          DateTime @updatedAt
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 
   @@index([userId])
   @@index([uniquePaymentRefID])
@@ -835,17 +852,17 @@ model BbpsBillPayment {
 // ============================================================
 
 model PanVerificationRecord {
-  id             String   @id @default(uuid())
+  id             String  @id @default(uuid())
   userId         String?
   pan            String
   registeredName String?
-  category       String?  // INDIVIDUAL | COMPANY | FIRM | HUF | TRUST | GOVT
-  status         String   // VALID | INVALID | FAILED
-  provider       String   @default("INSTANTPAY")
+  category       String? // INDIVIDUAL | COMPANY | FIRM | HUF | TRUST | GOVT
+  status         String // VALID | INVALID | FAILED
+  provider       String  @default("INSTANTPAY")
   rawResponse    Json?
 
-  createdAt      DateTime @default(now())
-  updatedAt      DateTime @updatedAt
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 
   @@index([pan])
   @@index([userId])
@@ -857,21 +874,21 @@ model PanVerificationRecord {
 // ============================================================
 
 model GstinVerificationRecord {
-  id             String   @id @default(uuid())
-  sellerId       String?
-  userId         String?
-  gstin          String
-  legalName      String?  // Legal Name of Business (lgnm)
-  tradeName      String?  // Trade Name (tradeNam)
-  status         String   // Active | Suspended | Canceled | INVALID | FAILED
-  businessType   String?  // Proprietorship | Pvt Ltd | LLP | Partnership
-  state          String?  // State Name (stj)
-  address        Json?    // Primary Address object (pradr)
-  provider       String   @default("INSTANTPAY")
-  rawResponse    Json?
+  id           String  @id @default(uuid())
+  sellerId     String?
+  userId       String?
+  gstin        String
+  legalName    String? // Legal Name of Business (lgnm)
+  tradeName    String? // Trade Name (tradeNam)
+  status       String // Active | Suspended | Canceled | INVALID | FAILED
+  businessType String? // Proprietorship | Pvt Ltd | LLP | Partnership
+  state        String? // State Name (stj)
+  address      Json? // Primary Address object (pradr)
+  provider     String  @default("INSTANTPAY")
+  rawResponse  Json?
 
-  createdAt      DateTime @default(now())
-  updatedAt      DateTime @updatedAt
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 
   @@index([gstin])
   @@index([sellerId])
@@ -884,19 +901,19 @@ model GstinVerificationRecord {
 // ============================================================
 
 model CinVerificationRecord {
-  id             String   @id @default(uuid())
-  sellerId       String?
-  userId         String?
-  cin            String
-  companyName    String?  // Company Name
-  companyStatus  String?  // Active | Inactive | Strike Off
-  companyType    String?  // Private Limited | Public | LLP
-  state          String?  // RoC State
-  provider       String   @default("INSTANTPAY")
-  rawResponse    Json?
+  id            String  @id @default(uuid())
+  sellerId      String?
+  userId        String?
+  cin           String
+  companyName   String? // Company Name
+  companyStatus String? // Active | Inactive | Strike Off
+  companyType   String? // Private Limited | Public | LLP
+  state         String? // RoC State
+  provider      String  @default("INSTANTPAY")
+  rawResponse   Json?
 
-  createdAt      DateTime @default(now())
-  updatedAt      DateTime @updatedAt
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 
   @@index([cin])
   @@index([sellerId])
@@ -909,21 +926,21 @@ model CinVerificationRecord {
 // ============================================================
 
 model AadhaarVerificationRecord {
-  id                 String   @id @default(uuid())
-  sellerId           String?
-  userId             String?
-  aadhaarNumber      String   // Masked Aadhaar number
-  aadhaarHolderName  String?  // Name on Aadhaar
-  state              String?  // Address / State (optional1)
-  ageBand            String?  // Age Band e.g. 20-30 (optional2)
-  gender             String?  // Gender e.g. M / F (optional3)
-  maskedMobile       String?  // Masked Mobile e.g. *******547 (optional4)
-  status             String?  // VALID | INVALID | PENDING
-  valid              Boolean  @default(false)
-  rawResponse        Json?
+  id                String  @id @default(uuid())
+  sellerId          String?
+  userId            String?
+  aadhaarNumber     String // Masked Aadhaar number
+  aadhaarHolderName String? // Name on Aadhaar
+  state             String? // Address / State (optional1)
+  ageBand           String? // Age Band e.g. 20-30 (optional2)
+  gender            String? // Gender e.g. M / F (optional3)
+  maskedMobile      String? // Masked Mobile e.g. *******547 (optional4)
+  status            String? // VALID | INVALID | PENDING
+  valid             Boolean @default(false)
+  rawResponse       Json?
 
-  createdAt          DateTime @default(now())
-  updatedAt          DateTime @updatedAt
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 
   @@index([aadhaarNumber])
   @@index([sellerId])
@@ -936,20 +953,20 @@ model AadhaarVerificationRecord {
 // ============================================================
 
 model VpaVerificationRecord {
-  id                 String   @id @default(uuid())
-  sellerId           String?
-  userId             String?
-  vpa                String   // Payee VPA / UPI ID
-  accountHolderName  String?  // Name returned by bank
-  ifsc               String?  // Bank IFSC code
-  accountType        String?  // SAVINGS | CURRENT
-  nameMatchPercent   Float?   // Name match percentage
-  status             String?  // VALID | INVALID | PENDING
-  valid              Boolean  @default(false)
-  rawResponse        Json?
+  id                String  @id @default(uuid())
+  sellerId          String?
+  userId            String?
+  vpa               String // Payee VPA / UPI ID
+  accountHolderName String? // Name returned by bank
+  ifsc              String? // Bank IFSC code
+  accountType       String? // SAVINGS | CURRENT
+  nameMatchPercent  Float? // Name match percentage
+  status            String? // VALID | INVALID | PENDING
+  valid             Boolean @default(false)
+  rawResponse       Json?
 
-  createdAt          DateTime @default(now())
-  updatedAt          DateTime @updatedAt
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 
   @@index([vpa])
   @@index([sellerId])
@@ -962,23 +979,23 @@ model VpaVerificationRecord {
 // ============================================================
 
 model BankAccountVerificationRecord {
-  id                 String   @id @default(uuid())
-  sellerId           String?
-  userId             String?
-  maskedAccountNumber String  // Masked Bank Account Number (e.g. XXXXXX1234)
-  accountNumberHash  String?  // SHA-256 hash for deduplication/lookup
-  bankIfsc           String   // Bank IFSC Code
-  accountHolderName  String?  // Name returned by bank via Penny Drop
-  txnReferenceId     String?  // IMPS / Bank Transaction Ref ID
-  accountType        String?  // SAVINGS | CURRENT
-  nameMatchPercent   Float?   // Name match percentage
-  isPennyDrop        Boolean  @default(true)
-  status             String?  // VALID | INVALID | PENDING
-  valid              Boolean  @default(false)
-  rawResponse        Json?
+  id                  String  @id @default(uuid())
+  sellerId            String?
+  userId              String?
+  maskedAccountNumber String // Masked Bank Account Number (e.g. XXXXXX1234)
+  accountNumberHash   String? // SHA-256 hash for deduplication/lookup
+  bankIfsc            String // Bank IFSC Code
+  accountHolderName   String? // Name returned by bank via Penny Drop
+  txnReferenceId      String? // IMPS / Bank Transaction Ref ID
+  accountType         String? // SAVINGS | CURRENT
+  nameMatchPercent    Float? // Name match percentage
+  isPennyDrop         Boolean @default(true)
+  status              String? // VALID | INVALID | PENDING
+  valid               Boolean @default(false)
+  rawResponse         Json?
 
-  createdAt          DateTime @default(now())
-  updatedAt          DateTime @updatedAt
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 
   @@index([maskedAccountNumber])
   @@index([bankIfsc])
@@ -992,15 +1009,15 @@ model BankAccountVerificationRecord {
 // ============================================================
 
 model AdminUser {
-  id           String   @id @default(uuid())
-  email        String   @unique
+  id           String  @id @default(uuid())
+  email        String  @unique
   passwordHash String
   name         String
-  role         String   @default("COMPLIANCE_OFFICER") // SUPER_ADMIN | ONBOARDING_VERIFIER | COMPLIANCE_OFFICER
-  isActive     Boolean  @default(true)
+  role         String  @default("COMPLIANCE_OFFICER") // SUPER_ADMIN | ONBOARDING_VERIFIER | COMPLIANCE_OFFICER
+  isActive     Boolean @default(true)
 
-  createdAt    DateTime @default(now())
-  updatedAt    DateTime @updatedAt
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 
   @@map("admin_users")
 }
@@ -1010,18 +1027,18 @@ model AdminUser {
 // ============================================================
 
 model SellerCommissionConfig {
-  id                 String          @id @default(uuid())
-  sellerId           String          @unique
-  seller             Seller          @relation(fields: [sellerId], references: [id], onDelete: Cascade)
+  id       String @id @default(uuid())
+  sellerId String @unique
+  seller   Seller @relation(fields: [sellerId], references: [id], onDelete: Cascade)
 
-  flatOrderFee       Decimal         @default(15.00) @db.Decimal(10, 2)
-  categoryCommissions Json           // JSON object e.g. { "Fashion": 12.5, "Cosmetics": 10, "Electronics": 8 }
-  settlementCycle    SettlementCycle @default(T_PLUS_7)
-  effectiveFrom      DateTime        @default(now())
-  notes              String?
+  flatOrderFee        Decimal         @default(15.00) @db.Decimal(10, 2)
+  categoryCommissions Json // JSON object e.g. { "Fashion": 12.5, "Cosmetics": 10, "Electronics": 8 }
+  settlementCycle     SettlementCycle @default(T_PLUS_7)
+  effectiveFrom       DateTime        @default(now())
+  notes               String?
 
-  createdAt          DateTime        @default(now())
-  updatedAt          DateTime        @updatedAt
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 
   @@map("seller_commission_configs")
 }
@@ -1031,18 +1048,18 @@ model SellerCommissionConfig {
 // ============================================================
 
 model SellerAgreementConfig {
-  id            String    @id @default(uuid())
-  sellerId      String    @unique
-  seller        Seller    @relation(fields: [sellerId], references: [id], onDelete: Cascade)
+  id       String @id @default(uuid())
+  sellerId String @unique
+  seller   Seller @relation(fields: [sellerId], references: [id], onDelete: Cascade)
 
-  customText    String?   // Custom agreement contract text / Markdown
-  customClauses Json?     // Customized clauses array: [{ title, content, isMandatory }]
+  customText    String? // Custom agreement contract text / Markdown
+  customClauses Json? // Customized clauses array: [{ title, content, isMandatory }]
   version       String    @default("1.0")
   status        String    @default("ACTIVE") // DRAFT | SENT | ACCEPTED | REJECTED | ACTIVE
   signedAt      DateTime?
 
-  createdAt     DateTime  @default(now())
-  updatedAt     DateTime  @updatedAt
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 
   @@map("seller_agreement_configs")
 }
@@ -1052,24 +1069,24 @@ model SellerAgreementConfig {
 // ============================================================
 
 model TeamMember {
-  id          String   @id @default(uuid())
-  sellerId    String
-  seller      Seller   @relation(fields: [sellerId], references: [id], onDelete: Cascade)
-  
-  name        String
-  phone       String
-  email       String?
-  role        String   // ADMIN | EXECUTIVE | VIEWER
-  status      String   @default("INVITED") // INVITED | ACTIVE
+  id       String @id @default(uuid())
+  sellerId String
+  seller   Seller @relation(fields: [sellerId], references: [id], onDelete: Cascade)
+
+  name              String
+  phone             String
+  email             String?
+  role              String // ADMIN | EXECUTIVE | VIEWER
+  status            String  @default("INVITED") // INVITED | ACTIVE
   canViewFinancials Boolean @default(false)
-  
+
   // OTP state for inviting/login
   phoneOtpCode      String?
   phoneOtpExpiresAt DateTime?
 
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
-  
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
   @@unique([sellerId, phone])
   @@map("team_members")
 }
@@ -1081,26 +1098,26 @@ model TeamMember {
 // ============================================================
 
 model UserWallet {
-  id           String   @id @default(uuid())
-  userId       String   @unique
-  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  id     String @id @default(uuid())
+  userId String @unique
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   // CI Points (integer, 1 point = ₹1 face-value in Rewards Store)
-  ciPoints     Int      @default(0)
+  ciPoints Int @default(0)
 
   // Cash balance in paise (₹1 = 100 paise) — ₹5 cashback events go here
-  cashPaise    Int      @default(0)
+  cashPaise Int @default(0)
 
   // Lifetime earned / redeemed totals for analytics (denormalised, read-only)
-  lifetimeEarnedPoints  Int @default(0)
+  lifetimeEarnedPoints   Int @default(0)
   lifetimeRedeemedPoints Int @default(0)
-  lifetimeEarnedPaise   Int @default(0)
-  lifetimeRedeemedPaise Int @default(0)
+  lifetimeEarnedPaise    Int @default(0)
+  lifetimeRedeemedPaise  Int @default(0)
 
-  version      Int      @default(0)   // Optimistic-lock counter
+  version Int @default(0) // Optimistic-lock counter
 
-  createdAt    DateTime @default(now())
-  updatedAt    DateTime @updatedAt
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 
   @@map("user_wallets")
 }
@@ -1113,34 +1130,34 @@ model UserWallet {
 // ============================================================
 
 model LoyaltyLedger {
-  id              String        @id @default(uuid())
-  userId          String
-  user            User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+  id     String @id @default(uuid())
+  userId String
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
 
-  txType          WalletTxType
+  txType WalletTxType
 
   // One of these is non-zero per entry (points XOR cash)
-  pointsDelta     Int           @default(0)   // +ve credit / -ve debit
-  cashPaiseDelta  Int           @default(0)   // +ve credit / -ve debit
+  pointsDelta    Int @default(0) // +ve credit / -ve debit
+  cashPaiseDelta Int @default(0) // +ve credit / -ve debit
 
   // Running balance AFTER this entry was applied (snapshot)
-  balanceAfterPoints  Int
-  balanceAfterPaise   Int
+  balanceAfterPoints Int
+  balanceAfterPaise  Int
 
   // Business context — at least one should be set
-  orderId         String?       // Source order (purchase / return)
-  redemptionId    String?       // Rewards store redemption
-  razorpayPaymentId String?     // Payment reference
-  description     String?       // Human-readable note
+  orderId           String? // Source order (purchase / return)
+  redemptionId      String? // Rewards store redemption
+  razorpayPaymentId String? // Payment reference
+  description       String? // Human-readable note
 
   // Prevents re-applying the same business event (idempotency)
   // Format: `<txType>:<sourceId>` e.g. `EARN_ORDER:ORD-12345`
-  idempotencyKey  String?       @unique
+  idempotencyKey String? @unique
 
   // Optional expiry for points (null = never expires)
-  expiresAt       DateTime?
+  expiresAt DateTime?
 
-  createdAt       DateTime      @default(now())
+  createdAt DateTime @default(now())
 
   @@index([userId, createdAt])
   @@index([userId, txType])

@@ -1,51 +1,32 @@
 import crypto from "crypto";
 import { Request, Response } from "express";
 import { razorpayService, STUB_PAYMENT_PREFIX } from "../services/razorpay.service";
-import { razorpayRouteService } from "../services/razorpayRoute.service";
 import {
   razorpayCheckoutService,
   PaymentVerificationError,
   RazorpayCheckoutRow,
   FulfilmentOutcome,
 } from "../services/razorpayCheckout.service";
-import { calculateSettlementBreakdown } from "../services/settlementCalculator.service";
-import { getSellerSettlementProfile } from "../services/settlement.service";
+import {
+  PricedCart,
+  PricingError,
+  checkExchangeOrder,
+  parsePricingRequest,
+  priceCart,
+  toPricingSnapshot,
+  toQuoteResponse,
+  verifyQuote,
+} from "../services/mallPricing.service";
+import { fulfilMallCheckout, pickShipping } from "../services/checkoutFulfilment.service";
+import { savedCardsService } from "../services/razorpayToken.service";
 import { asyncHandler } from "../utils/asyncHandler";
-import { prisma } from "../config/prisma";
-import { isRazorpayStubMode } from "../config/env";
-import { OrderStatus, NotificationType } from "../generated/prisma/client";
-import { RewardsCalcService } from "../services/rewardsCalc.service";
-
-/** Cart + shipping fields we snapshot at order creation and fulfil from later. */
-const MALL_SNAPSHOT_FIELDS = [
-  "customer_name",
-  "customer_email",
-  "customer_phone",
-  "delivery_address",
-  "pincode",
-  "city",
-  "carrier_name",
-  "originPincode",
-  "delivery_option",
-  "is_express",
-  "is_special_seller",
-] as const;
-
-function pickMallSnapshot(body: any): Record<string, unknown> {
-  const snapshot: Record<string, unknown> = {};
-  for (const key of MALL_SNAPSHOT_FIELDS) {
-    if (body?.[key] !== undefined && body?.[key] !== null && body?.[key] !== "") snapshot[key] = body[key];
-  }
-  const items = body?.items || body?.cartItems;
-  if (Array.isArray(items) && items.length > 0) snapshot.items = items;
-  return snapshot;
-}
+import { config, isRazorpayStubMode } from "../config/env";
 
 /** Razorpay notes: at most 15 string key/value pairs. */
 function sanitizeNotes(notes: unknown): Record<string, string> {
   const out: Record<string, string> = {};
   if (!notes || typeof notes !== "object" || Array.isArray(notes)) return out;
-  for (const [k, v] of Object.entries(notes as Record<string, unknown>).slice(0, 14)) {
+  for (const [k, v] of Object.entries(notes as Record<string, unknown>).slice(0, 10)) {
     if (v === undefined || v === null || typeof v === "object") continue;
     out[String(k).slice(0, 255)] = String(v).slice(0, 255);
   }
@@ -60,101 +41,136 @@ function sendVerificationError(res: Response, err: unknown): boolean {
   return false;
 }
 
-/**
- * POST /api/payment/create-order
- * Create a Razorpay order for a Cikka Mall purchase and record it (amount + optional cart and
- * shipping snapshot) so the payment can be fulfilled from the webhook as well as from verify.
- * `amount` is in paise (unchanged request shape); `items`/shipping fields are optional extras.
- */
-export const createOrder = asyncHandler(async (req: Request, res: Response) => {
-  const { amount, currency, receipt, notes } = req.body;
-  const amountPaise = Number(amount);
+export function sendPricingError(res: Response, err: unknown): boolean {
+  if (err instanceof PricingError) {
+    res.status(err.status).json({ success: false, error: err.message, code: err.code, ...(err.details || {}) });
+    return true;
+  }
+  return false;
+}
 
-  if (amount === undefined || amount === null || !Number.isFinite(amountPaise) || amountPaise < 100) {
-    res.status(400).json({
-      success: false,
-      error: "Amount in paise is required and must be a valid number (minimum 100)",
-    });
-    return;
+/**
+ * Price the request body on the server and check it against what the client believes it is
+ * paying. Returns the cart, or null after answering the request (4xx).
+ *  - `quote_id` (optional): must verify against the recomputed cart.
+ *  - client amount (optional; `amountUnit` says whether `amount` is paise or rupees): must
+ *    equal the server total — otherwise 409 PRICE_CHANGED with a fresh quote.
+ */
+async function priceCheckoutRequest(req: Request, res: Response, amountUnit: "paise" | "rupees"): Promise<PricedCart | null> {
+  const userId = req.user?.id ?? null;
+  let cart: PricedCart;
+  try {
+    cart = await priceCart(parsePricingRequest(req.body), userId);
+  } catch (err) {
+    if (sendPricingError(res, err)) return null;
+    throw err;
   }
 
+  const priceChanged = (reason: string) =>
+    res.status(409).json({
+      success: false,
+      code: "PRICE_CHANGED",
+      error: `${reason} Please review the updated total.`,
+      quote: toQuoteResponse(cart, userId),
+    });
+
+  const quoteId = req.body?.quote_id ?? req.body?.quoteId;
+  if (quoteId) {
+    const problem = verifyQuote(String(quoteId), cart, userId);
+    if (problem) {
+      priceChanged(problem);
+      return null;
+    }
+  }
+
+  const { amount, amount_in_paise } = req.body || {};
+  let clientPaise: number | null = null;
+  if (amount_in_paise !== undefined && amount_in_paise !== null && amount_in_paise !== "") {
+    clientPaise = Math.round(Number(amount_in_paise));
+  } else if (amount !== undefined && amount !== null && amount !== "") {
+    clientPaise = Math.round(Number(amount) * (amountUnit === "rupees" ? 100 : 1));
+  }
+  if (clientPaise !== null && clientPaise !== cart.totalPaise) {
+    priceChanged(`The total is ₹${(cart.totalPaise / 100).toFixed(2)}, not ₹${(clientPaise / 100).toFixed(2)}.`);
+    return null;
+  }
+
+  if (cart.totalPaise === 0) {
+    res.status(400).json({
+      success: false,
+      code: "NO_PAYMENT_REQUIRED",
+      error: "Nothing to pay for this order. Exchanges with no difference go through /api/returns/exchange.",
+      quote: toQuoteResponse(cart, userId),
+    });
+    return null;
+  }
+  if (cart.totalPaise < 100) {
+    res.status(400).json({ success: false, code: "AMOUNT_TOO_SMALL", error: "The minimum payable amount is ₹1.00." });
+    return null;
+  }
+  return cart;
+}
+
+function requireBuyerInProduction(req: Request, res: Response): boolean {
+  if (config.isProduction && !req.user?.id) {
+    res.status(401).json({ success: false, code: "AUTH_REQUIRED", error: "Please sign in to place an order." });
+    return false;
+  }
+  return true;
+}
+
+function checkoutSnapshot(cart: PricedCart, body: any) {
+  return { pricing: toPricingSnapshot(cart), shipping: pickShipping(body) };
+}
+
+/**
+ * POST /api/payment/create-order
+ * Price the cart on the server (same function as POST /api/mall/quote), create the Razorpay
+ * order for that total and record the priced snapshot for fulfilment (verify or webhook).
+ * Client item prices are ignored; a client `amount` (paise) must equal the server total.
+ */
+export const createOrder = asyncHandler(async (req: Request, res: Response) => {
+  if (!requireBuyerInProduction(req, res)) return;
+  const cart = await priceCheckoutRequest(req, res, "paise");
+  if (!cart) return;
+
+  const userId = req.user?.id ?? null;
+  const customerId = userId ? await savedCardsService.customerIdFor(userId) : null;
   const { order } = await razorpayCheckoutService.createCheckout({
     purpose: "MALL",
-    amountPaise: Math.round(amountPaise),
-    currency,
-    receipt,
-    notes: sanitizeNotes(notes),
-    userId: req.user?.id,
-    snapshot: pickMallSnapshot(req.body),
+    amountPaise: cart.totalPaise,
+    currency: "INR",
+    receipt: req.body?.receipt,
+    notes: {
+      ...sanitizeNotes(req.body?.notes),
+      lines: String(cart.lines.length),
+      ...(cart.exchange ? { exchange_order: cart.exchange.orderNumber } : {}),
+    },
+    userId,
+    snapshot: checkoutSnapshot(cart, req.body),
   });
 
   res.status(200).json({
     success: true,
     message: "Razorpay order created successfully",
     ...order,
+    amount_in_paise: order.amount,
+    customer_id: customerId,
+    quote: toQuoteResponse(cart, userId),
   });
 });
 
-/**
- * Fulfil a confirmed mall payment. Cart and shipping come from the snapshot recorded at order
- * creation; for orders created without one (the app's current create-order call) they come from
- * the signature-verified verify request. The amount always comes from Razorpay.
- */
-export async function fulfilMallCheckout(
-  checkout: RazorpayCheckoutRow,
-  paymentId: string,
-  amountPaise: number,
-  requestBody?: any
-): Promise<any> {
-  const snap = ((checkout.snapshot as any) || {}) as Record<string, any>;
-  const body = requestBody || {};
-  const pick = (key: string) => (snap[key] !== undefined ? snap[key] : body[key]);
-  const items = Array.isArray(snap.items) && snap.items.length > 0 ? snap.items : body.items || body.cartItems;
-
-  if (!Array.isArray(items) || items.length === 0) {
-    throw new Error("No cart recorded for this order");
+/** Before capturing an authorized exchange payment, the exchange must still be allowed. */
+export async function mallBeforeCapture(checkout: RazorpayCheckoutRow | null) {
+  const exchange = (checkout?.snapshot as any)?.pricing?.exchange;
+  if (!exchange) return;
+  const check = await checkExchangeOrder(checkout!.userId, { orderId: exchange.orderId });
+  if (check.reasons.length > 0) {
+    throw new PaymentVerificationError(409, "EXCHANGE_NOT_ELIGIBLE", check.reasons[0].message);
   }
-
-  const deliveryOption = pick("delivery_option");
-  const processedOrders = await executeOrderFulfillmentPipeline({
-    razorpay_order_id: checkout.razorpayOrderId,
-    razorpay_payment_id: paymentId,
-    customer_name: pick("customer_name"),
-    customer_email: pick("customer_email"),
-    customer_phone: pick("customer_phone"),
-    delivery_address: pick("delivery_address"),
-    pincode: pick("pincode"),
-    city: pick("city"),
-    amount: amountPaise,
-    items,
-    carrier_name: pick("carrier_name"),
-    originPincode: pick("originPincode"),
-    delivery_option: deliveryOption,
-    is_express: Boolean(pick("is_express")) || deliveryOption === "express",
-  });
-
-  if (processedOrders.length === 0) {
-    throw new Error("No order could be created for this payment");
-  }
-
-  const totalRupees = amountPaise / 100;
-  const hasSpecialSeller = processedOrders.some((p: any) => p.is_special_seller);
-  const mallRewards = RewardsCalcService.calculateMallPurchaseRewards(totalRupees, hasSpecialSeller);
-
-  return {
-    payment_id: paymentId,
-    order_id: checkout.razorpayOrderId,
-    amount_paid_paise: amountPaise,
-    cashback_earned: mallRewards.cashbackEarned,
-    ci_points_earned: mallRewards.ciPointsEarned,
-    is_special_seller: mallRewards.isSpecialSeller,
-    cashback_multiplier: mallRewards.cashbackMultiplier,
-    rewards_status: mallRewards.status,
-    processed_orders: processedOrders,
-  };
 }
 
-/** Shape the verify/card-OTP response from a fulfilment outcome (same fields as before). */
+/** Shape the verify/card-OTP response from a fulfilment outcome. */
 function sendMallOutcome(res: Response, outcome: FulfilmentOutcome, orderId: string, paymentId: string, message: string) {
   if (outcome.state === "IN_PROGRESS") {
     res.status(202).json({
@@ -165,6 +181,17 @@ function sendMallOutcome(res: Response, outcome: FulfilmentOutcome, orderId: str
       payment_id: paymentId,
       order_id: orderId,
       processed_orders: [],
+    });
+    return;
+  }
+  if (outcome.state === "REJECTED") {
+    res.status(409).json({
+      success: false,
+      verified: true,
+      ...(outcome.result || {}),
+      error: `${outcome.result?.error || "Your order could not be placed."} Your payment has been refunded.`,
+      payment_id: paymentId,
+      order_id: orderId,
     });
     return;
   }
@@ -179,104 +206,49 @@ function sendMallOutcome(res: Response, outcome: FulfilmentOutcome, orderId: str
   });
 }
 
-/**
- * Helper to match or create a seller for a given pickup pincode
- */
-async function findOrCreateSeller(pickupPincode: string, categoryHint?: string): Promise<any> {
+/** Confirm a mall payment with Razorpay and fulfil it once; answers the HTTP request. */
+async function confirmAndFulfilMall(
+  req: Request,
+  res: Response,
+  orderId: string,
+  paymentId: string,
+  via: "VERIFY" | "CARD_OTP",
+  message: string
+) {
   try {
-    const allSellers = await prisma.seller.findMany({
-      include: { onboarding: true, commissionConfig: true },
+    const confirmed = await razorpayCheckoutService.confirmCapturedPayment({
+      orderId,
+      paymentId,
+      purpose: "MALL",
+      beforeCapture: mallBeforeCapture,
     });
-
-    if (allSellers.length > 0) {
-      for (const s of allSellers) {
-        const addr = s.onboarding?.pickupAddress as any;
-        if (addr && (addr.pincode === pickupPincode || addr.pin === pickupPincode)) {
-          return s;
-        }
-      }
-      if (pickupPincode === "122008") {
-        const s = allSellers.find((x) => x.businessName.toLowerCase().includes("nike"));
-        if (s) return s;
-      }
-      if (pickupPincode === "226005") {
-        const s = allSellers.find(
-          (x) =>
-            x.businessName.toLowerCase().includes("fabindia") ||
-            x.businessName.toLowerCase().includes("linen")
-        );
-        if (s) return s;
-      }
-      return allSellers[0];
+    if (confirmed.checkout?.userId && req.user?.id && confirmed.checkout.userId !== req.user.id) {
+      throw new PaymentVerificationError(403, "WRONG_USER", "This payment belongs to another account.");
     }
 
-    // Auto-create a verified flagship seller if DB is empty
-    const created = await prisma.seller.create({
-      data: {
-        phone: "9876543210",
-        email: "partner@cikka.club",
-        businessName: "Cikka Flagship Store",
-        kycVerified: true,
-        onboardingStatus: "COMPLETED" as any,
-      },
-      include: { onboarding: true },
+    const outcome = await razorpayCheckoutService.fulfilOnce({
+      orderId,
+      paymentId,
+      purpose: "MALL",
+      amountPaise: confirmed.amountPaise,
+      currency: confirmed.payment.currency,
+      userId: req.user?.id,
+      via,
+      fulfil: (checkout) => fulfilMallCheckout(checkout, paymentId, confirmed.amountPaise),
     });
-    return created;
-  } catch (err: any) {
-    console.warn(`[findOrCreateSeller Notice]: ${err.message}`);
-    return null;
-  }
-}
-
-/**
- * Helper to find or create a valid product for the seller to satisfy OrderItem relations
- */
-async function getOrCreateProductForSeller(
-  sellerId: string,
-  name: string,
-  price: number,
-  category: string
-): Promise<string> {
-  try {
-    const existing = await prisma.product.findFirst({
-      where: {
-        sellerId,
-        name: { contains: name.slice(0, 15), mode: "insensitive" },
-      },
-    });
-    if (existing) return existing.id;
-
-    const anyProd = await prisma.product.findFirst({ where: { sellerId } });
-    if (anyProd) return anyProd.id;
-
-    const created = await prisma.product.create({
-      data: {
-        sellerId,
-        name,
-        sku: `PRD-${Date.now().toString(36).toUpperCase()}`,
-        price: Number(price),
-        mrp: Number(price) * 1.25,
-        category,
-        stockQty: 99,
-        status: "ACTIVE" as any,
-      },
-    });
-    return created.id;
-  } catch (err: any) {
-    console.warn(`[getOrCreateProductForSeller Notice]: ${err.message}`);
-    const fallback = await prisma.product.findFirst();
-    if (fallback) return fallback.id;
+    sendMallOutcome(res, outcome, orderId, paymentId, message);
+  } catch (err) {
+    if (sendVerificationError(res, err)) return;
     throw err;
   }
 }
 
 /**
  * POST /api/payment/verify-payment
- * Verify a Standard Checkout payment and fulfil the order:
  * 1. HMAC-SHA256(order_id|payment_id, key_secret) signature check.
  * 2. Fetch the payment from Razorpay: must belong to the order, be captured (captured here if
- *    only authorized) and match the order amount. Client-sent `amount` is ignored.
- * 3. Fulfil at most once per Razorpay order (shared claim with verify-card-otp and the webhook).
+ *    only authorized) and match the order amount. Client-sent amount and cart are ignored.
+ * 3. Fulfil at most once per Razorpay order from the server-priced snapshot.
  */
 export const verifyPayment = asyncHandler(async (req: Request, res: Response) => {
   const { razorpay_order_id, razorpay_payment_id, razorpay_signature } = req.body;
@@ -295,448 +267,69 @@ export const verifyPayment = asyncHandler(async (req: Request, res: Response) =>
     String(razorpay_payment_id),
     String(razorpay_signature)
   );
-
   if (!isValid) {
-    res.status(400).json({
-      success: false,
-      verified: false,
-      error: "Invalid payment signature",
-    });
+    res.status(400).json({ success: false, verified: false, error: "Invalid payment signature" });
     return;
   }
 
-  try {
-    const confirmed = await razorpayCheckoutService.confirmCapturedPayment({
-      orderId: String(razorpay_order_id),
-      paymentId: String(razorpay_payment_id),
-      purpose: "MALL",
-    });
-
-    const outcome = await razorpayCheckoutService.fulfilOnce({
-      orderId: String(razorpay_order_id),
-      paymentId: String(razorpay_payment_id),
-      purpose: "MALL",
-      amountPaise: confirmed.amountPaise,
-      currency: confirmed.payment.currency,
-      userId: req.user?.id,
-      via: "VERIFY",
-      fulfil: (checkout) =>
-        fulfilMallCheckout(checkout, String(razorpay_payment_id), confirmed.amountPaise, req.body),
-    });
-
-    sendMallOutcome(
-      res,
-      outcome,
-      String(razorpay_order_id),
-      String(razorpay_payment_id),
-      "Payment verified successfully, orders created, and settlements scheduled on T+7 hold."
-    );
-  } catch (err) {
-    if (sendVerificationError(res, err)) return;
-    throw err;
-  }
+  await confirmAndFulfilMall(
+    req,
+    res,
+    String(razorpay_order_id),
+    String(razorpay_payment_id),
+    "VERIFY",
+    "Payment verified successfully, orders created, and settlements scheduled on T+7 hold."
+  );
 });
-
-export interface OrderFulfillmentParams {
-  razorpay_order_id: string;
-  razorpay_payment_id: string;
-  customer_name?: string;
-  customer_email?: string;
-  customer_phone?: string;
-  delivery_address?: string;
-  pincode?: string;
-  city?: string;
-  amount?: number | string;
-  items?: any[];
-  carrier_name?: string;
-  originPincode?: string;
-  delivery_option?: "standard" | "express";
-  is_express?: boolean;
-}
-
-/**
- * Reusable full-flow transaction orchestration pipeline:
- * 1. Generates itemized Orders in Prisma with valid OrderItem relations.
- * 2. Calculates deterministic settlement split (Commission, GST, Shipping, TDS, TCS, Success fee).
- * 3. Initiates Razorpay Route split transfer with strict T+7 settlement hold (on_hold: 1).
- * 4. Records deterministic Settlement and notifies sellers.
- * 5. Pushes shipments to Shipway Experience API with live AWBs.
- */
-export async function executeOrderFulfillmentPipeline(params: OrderFulfillmentParams): Promise<any[]> {
-  const {
-    razorpay_order_id,
-    razorpay_payment_id,
-    customer_name,
-    customer_email,
-    customer_phone,
-    delivery_address,
-    amount,
-    carrier_name,
-  } = params;
-
-  let rawItems = params.items;
-  if (!Array.isArray(rawItems) || rawItems.length === 0) {
-    const singlePrice = amount ? Number(amount) / 100 : 24999;
-    rawItems = [
-      {
-        id: "PRD-DEFAULT-1",
-        name: "Cikka Mall Curated Item",
-        price: singlePrice,
-        qty: 1,
-        originPincode: params.originPincode || "122008",
-      },
-    ];
-  }
-
-  const destPincode = params.pincode || "400001";
-  const customerCity = params.city || "Mumbai";
-  const processedOrders: any[] = [];
-
-  const isExpress =
-    params.delivery_option === "express" ||
-    params.is_express === true;
-
-  // Pre-resolve all items and merchants to identify distinct sellers in the cart
-  const itemResolvedList: Array<{
-    item: any;
-    name: string;
-    category: string;
-    itemPickupPincode: string;
-    itemCarrier: string;
-    itemPrice: number;
-    seller: any;
-    productId: string;
-  }> = [];
-
-  const distinctSellerIds = new Set<string>();
-
-  for (const item of rawItems) {
-    const name = item.name || item.productName || "Cikka Mall Product";
-    const isSneakers =
-      name.toLowerCase().includes("sneaker") ||
-      name.toLowerCase().includes("footwear") ||
-      name.toLowerCase().includes("nike");
-    const isLinen =
-      name.toLowerCase().includes("linen") || name.toLowerCase().includes("fabindia");
-
-    const category = isSneakers ? "Footwear" : isLinen ? "Apparel" : "Lifestyle";
-    const itemPickupPincode =
-      item.pickupPincode ||
-      item.originPincode ||
-      (isSneakers ? "122008" : isLinen ? "226005" : "122008");
-
-    const itemCarrier =
-      item.carrier ||
-      (isExpress
-        ? "Delhivery Express Air (24-48h)"
-        : isSneakers
-        ? "Xpressbees Express (0.5kg)"
-        : isLinen
-        ? "Delhivery Surface (0.5kg)"
-        : carrier_name || "Delhivery (0.5kg)");
-
-    const itemPrice =
-      Number(item.price) ||
-      (amount ? Number(amount) / (100 * rawItems.length) : 3499);
-
-    const seller = await findOrCreateSeller(itemPickupPincode, category);
-    if (!seller) {
-      throw new Error(`Unable to resolve merchant partner for pickup pincode ${itemPickupPincode}`);
-    }
-    distinctSellerIds.add(seller.id);
-
-    const productId = await getOrCreateProductForSeller(seller.id, name, itemPrice, category);
-
-    itemResolvedList.push({
-      item,
-      name,
-      category,
-      itemPickupPincode,
-      itemCarrier,
-      itemPrice,
-      seller,
-      productId,
-    });
-  }
-
-  // Determine Express Delivery Fee Split:
-  // Rule 1: Single order or multi-order SAME brand (distinctSellerIds.size <= 1):
-  //   User charged ₹50 -> Split ₹28 to seller, ₹22 to Cikka
-  // Rule 2: Multi-order DIFFERENT brands (distinctSellerIds.size > 1):
-  //   User charged ₹50 -> Split ₹0 to seller, whole ₹50 to Cikka; shipping cost of express delivery paid by seller
-  const isSameBrandExpress = isExpress && distinctSellerIds.size <= 1;
-
-  let itemIdx = 1;
-  for (const resolved of itemResolvedList) {
-    const { item, name, category, itemPickupPincode, itemCarrier, itemPrice, seller, productId } = resolved;
-    const isPrimarySubOrder = itemIdx === 1;
-
-    const itemOrderId =
-      rawItems.length > 1 ? `${razorpay_order_id}-${itemIdx}` : razorpay_order_id;
-
-    try {
-      // 3. Create Order & OrderItem in Prisma DB (PENDING seller packing)
-      const createdOrder = await prisma.order.upsert({
-        where: { orderNumber: itemOrderId },
-        update: {
-          totalAmount: Number(itemPrice),
-          trackingNumber: null,
-          courier: itemCarrier,
-          status: OrderStatus.PENDING,
-        },
-        create: {
-          sellerId: seller.id,
-          orderNumber: itemOrderId,
-          customerName: customer_name || "Cikka Mall Customer",
-          customerCity: `${customerCity} (${destPincode})`,
-          totalAmount: Number(itemPrice),
-          status: OrderStatus.PENDING,
-          trackingNumber: null,
-          courier: itemCarrier,
-          items: {
-            create: [
-              {
-                productId,
-                quantity: item.qty || 1,
-                unitPrice: Number(itemPrice),
-              },
-            ],
-          },
-        },
-        include: { items: true },
-      });
-
-      console.log(
-        `[Prisma DB Order Created] #${itemOrderId} (${name}, Origin: ${itemPickupPincode}) assigned to Seller #${seller.id} -> Status: PENDING (Ready to Pack)`
-      );
-
-      // 4. Resolve Seller Settlement Profile (Admin Commission & Settlement Cycle) with Express Split logic
-      const profile = await getSellerSettlementProfile(seller.id, category);
-      const breakdown = calculateSettlementBreakdown(
-        itemPrice,
-        profile.customConfig,
-        1,
-        {
-          isExpress,
-          isSameBrandExpress,
-          isPrimarySubOrder,
-        }
-      );
-
-      // 5. Ensure Seller Razorpay Route Linked Account exists
-      let rzpAccountId =
-        seller.razorpayAccountId || (seller.onboarding as any)?.razorpayAccountId;
-
-      if (!rzpAccountId) {
-        try {
-          const accRes = await razorpayRouteService.createLinkedAccount({
-            sellerId: seller.id,
-            businessName: seller.businessName || "Cikka Merchant Partner",
-            businessType: seller.onboarding?.businessType as any,
-            email: seller.email || "seller@cikka.club",
-            phone: seller.phone || "9876543210",
-            signatoryName: seller.onboarding?.signatoryName || undefined,
-            panNumber: seller.onboarding?.panNumber || undefined,
-            gstNumber: seller.onboarding?.gstNumber || undefined,
-            address: seller.onboarding?.pickupAddress as any,
-          });
-          if (accRes.accountId) {
-            rzpAccountId = accRes.accountId;
-          }
-        } catch (accErr: any) {
-          console.warn(`[Route Account Notice]: ${accErr.message}`);
-        }
-      }
-
-      // 6. Split Payment via Razorpay Route with dynamic hold matching seller's settlement cycle
-      const netSellerPayout = breakdown.sellerNetSettlement;
-      const netPaise = Math.round(netSellerPayout * 100);
-      let transferResult: any = null;
-
-      if (rzpAccountId && netPaise > 0) {
-        try {
-          transferResult = await razorpayRouteService.transferPaymentWithT7Hold({
-            paymentId: razorpay_payment_id,
-            sellerAccountId: rzpAccountId,
-            amountInPaise: netPaise,
-            holdDays: profile.holdDays,
-            notes: {
-              orderNumber: itemOrderId,
-              sellerId: seller.id,
-              category,
-              commissionRate: `${profile.commissionRate}%`,
-              flatOrderFee: `₹${profile.flatOrderFee}`,
-              settlementCycle: profile.settlementCycle,
-              grossSales: String(itemPrice),
-              netPayable: String(netSellerPayout),
-              isExpress: String(isExpress),
-              isSameBrandExpress: String(isSameBrandExpress),
-              expressDeliveryFee: String(breakdown.expressDeliveryFee || 0),
-              expressSellerShare: String(breakdown.expressSellerShare || 0),
-              expressCikkaShare: String(breakdown.expressCikkaShare || 0),
-            },
-          });
-        } catch (trfErr: any) {
-          console.warn(`[Route Transfer Notice]: ${trfErr.message}`);
-        }
-      }
-
-      // 7. Write complete deterministic Settlement record
-      const holdUntil =
-        transferResult?.holdUntil || new Date(Date.now() + profile.holdDays * 86400000);
-
-      const settlement = await prisma.settlement.create({
-        data: {
-          sellerId: seller.id,
-          orderId: createdOrder.id,
-          orderNumber: itemOrderId,
-          periodStart: new Date(),
-          periodEnd: new Date(),
-          category: category || "Cikka Mall Marketplace",
-          grossSales: breakdown.grossProductValue,
-          basePrice: breakdown.baseProductValue,
-          gstOnSale: breakdown.productGst,
-          commissionRate: breakdown.commissionRate,
-          commissionAmount: breakdown.commission,
-          commissionTotal: breakdown.commissionTotal,
-          shippingFee: breakdown.shipping,
-          shippingTotal: breakdown.shippingTotal,
-          sellerPlatformFee: breakdown.sellerPlatformFee,
-          sellerPlatformTotal: breakdown.sellerPlatformTotal,
-          tdsAmount: breakdown.tds,
-          tcsAmount: breakdown.tcs,
-          statutoryTaxes: breakdown.tds + breakdown.tcs,
-          successFeeAmount: breakdown.successFee,
-          successFeeTotal: breakdown.successFeeTotal,
-          customerPlatformFee: breakdown.customerPlatformFee,
-          customerPlatformTotal: breakdown.customerPlatformTotal,
-          customerTotalPayment: breakdown.customerTotalPayment,
-          cikkaFeeRevenue: breakdown.cikkaFeeRevenue,
-          cikkaGstCollected: breakdown.cikkaGstCollected,
-          totalDeductions: breakdown.totalSellerDeductions,
-          netPayable: breakdown.sellerNetSettlement,
-          status: "PENDING",
-          transferStatus: transferResult?.onHold ? "ON_HOLD" : "SETTLED",
-          razorpayTransferId: transferResult?.transferId,
-          razorpayPaymentId: razorpay_payment_id,
-          holdUntil,
-          payoutDate: holdUntil,
-          ledgerBreakdown: breakdown as any,
-        } as any,
-      });
-
-      // 8. In-App Notifications to Seller
-      await prisma.notification.create({
-        data: {
-          sellerId: seller.id,
-          type: NotificationType.ORDER,
-          title: `New Order: #${itemOrderId}`,
-          body: `New prepaid order for ${name} (₹${itemPrice.toFixed(2)}). Assigned to ${itemCarrier}. Please pack the order to generate shipping label.`,
-          metadata: {
-            orderNumber: itemOrderId,
-            courier: itemCarrier,
-          },
-        },
-      }).catch(() => {});
-
-      await prisma.notification.create({
-        data: {
-          sellerId: seller.id,
-          type: NotificationType.SETTLEMENT,
-          title: `T+${profile.holdDays} Payout Scheduled: ₹${netSellerPayout.toFixed(2)}`,
-          body: `Net settlement transferred to your Razorpay Linked Account on T+${profile.holdDays} hold. Auto-release scheduled for ${holdUntil.toLocaleDateString("en-IN")}.`,
-          metadata: {
-            orderNumber: itemOrderId,
-            transferId: transferResult?.transferId,
-            holdUntil: holdUntil.toISOString(),
-          },
-        },
-      }).catch(() => {});
-
-      processedOrders.push({
-        order_number: itemOrderId,
-        awb: null,
-        courier: itemCarrier,
-        seller_id: seller.id,
-        is_special_seller: Boolean(seller?.isSpecialSeller),
-        transfer_id: transferResult?.transferId,
-        settlement_id: settlement.id,
-        net_payable: netSellerPayout,
-      });
-    } catch (orderErr: any) {
-      console.error(`[Order Processing Error] #${itemOrderId}:`, orderErr.message);
-    }
-
-    itemIdx++;
-  }
-
-  return processedOrders;
-}
 
 /**
  * POST /api/payment/pay-with-card
- * Starts a saved-card checkout. The amount (`amount`, in rupees as the app sends it, or
- * `amount_in_paise`) is bound to a Razorpay order together with the cart/shipping snapshot.
+ * Saved-card checkout. Same server pricing as create-order (`amount` here is in rupees, or
+ * `amount_in_paise`; both optional, must match). The card is the signed-in user's Razorpay
+ * token; card details are never sent to us.
  *
- * Real mode: a card payment can only be authenticated by Razorpay (Standard Checkout, or S2S
- * which needs PCI-DSS). We therefore return the order with `requires_otp: false` and
- * `requires_checkout: true`; the app must complete payment in Razorpay Checkout and then call
- * verify-payment (or verify-card-otp) with the real payment id.
- *
- * Stub mode only: the old simulated 3DS flow, with a fake `pay_stub_*` payment id.
+ * Real mode: `requires_checkout: true` with `customer_id` + `token_id`; the app completes the
+ * payment in Razorpay Checkout and calls verify-payment (or verify-card-otp).
+ * Stub mode only: simulated 3DS flow with a fake `pay_stub_*` payment id.
  */
 export const payWithCard = asyncHandler(async (req: Request, res: Response) => {
-  const { card_id, token_id, amount, amount_in_paise, customer_phone } = req.body;
-
-  const cardIdentifier = card_id || token_id;
+  if (!requireBuyerInProduction(req, res)) return;
+  const cardIdentifier = req.body?.card_id || req.body?.token_id;
   if (!cardIdentifier) {
-    res.status(400).json({
-      success: false,
-      error: "Card ID or Token ID is required for tokenized checkout",
-    });
+    res.status(400).json({ success: false, error: "Card ID or Token ID is required for tokenized checkout" });
     return;
   }
 
-  const amountInPaise =
-    amount_in_paise !== undefined && amount_in_paise !== null
-      ? Math.round(Number(amount_in_paise))
-      : Math.round(Number(amount) * 100);
-  if (!Number.isFinite(amountInPaise) || amountInPaise < 100) {
-    res.status(400).json({ success: false, error: "A valid amount (minimum ₹1.00) is required" });
+  const userId = req.user?.id ?? null;
+  const savedCard = userId ? await savedCardsService.findUserCard(userId, String(cardIdentifier)) : null;
+  if (userId && !savedCard) {
+    res.status(404).json({ success: false, code: "CARD_NOT_FOUND", error: "That saved card was not found on your account." });
     return;
   }
 
-  // Saved cards are only ever looked up for the signed-in user.
-  const savedCard = req.user?.id
-    ? await prisma.userSavedCard.findFirst({
-        where: {
-          userId: req.user.id,
-          status: "ACTIVE",
-          OR: [{ id: String(cardIdentifier) }, { razorpayTokenId: String(cardIdentifier) }],
-        },
-      })
-    : null;
+  const cart = await priceCheckoutRequest(req, res, "rupees");
+  if (!cart) return;
 
+  const customerId = userId ? await savedCardsService.customerIdFor(userId) : null;
   const { order } = await razorpayCheckoutService.createCheckout({
     purpose: "MALL",
-    amountPaise: amountInPaise,
+    amountPaise: cart.totalPaise,
     currency: "INR",
     receipt: `cikka_card_${Date.now()}`,
     notes: { payment_type: "saved_card", card_last4: savedCard?.last4 || "" },
-    userId: req.user?.id,
-    snapshot: pickMallSnapshot(req.body),
+    userId,
+    snapshot: checkoutSnapshot(cart, req.body),
   });
 
-  const rawPhone = String(customer_phone || "").replace(/\D/g, "");
-  const phoneLast4 = rawPhone.length >= 4 ? rawPhone.slice(-4) : "";
-
+  const rawPhone = String(req.body?.customer_phone || "").replace(/\D/g, "");
   const cardInfo = {
-    bank_name: savedCard?.bankName || req.body.bank_name || "",
-    card_network: savedCard?.cardNetwork || req.body.card_network || "",
+    bank_name: savedCard?.bankName || "",
+    card_network: savedCard?.cardNetwork || "",
     card_type: savedCard?.cardType || "credit",
-    card_last4: savedCard?.last4 || req.body.last4 || "",
-    phone_last4: phoneLast4,
+    card_last4: savedCard?.last4 || "",
+    phone_last4: rawPhone.length >= 4 ? rawPhone.slice(-4) : "",
   };
+  const quote = toQuoteResponse(cart, userId);
 
   if (!isRazorpayStubMode()) {
     res.status(200).json({
@@ -747,9 +340,12 @@ export const payWithCard = asyncHandler(async (req: Request, res: Response) => {
       payment_id: null,
       key_id: order.key_id,
       currency: order.currency,
+      customer_id: customerId,
+      token_id: savedCard?.razorpayTokenId ?? null,
       ...cardInfo,
       amount: order.amount / 100,
       amount_in_paise: order.amount,
+      quote,
       message: "Complete the card payment in Razorpay Checkout, then verify it.",
     });
     return;
@@ -761,9 +357,12 @@ export const payWithCard = asyncHandler(async (req: Request, res: Response) => {
     requires_otp: true,
     order_id: order.order_id,
     payment_id: paymentId,
+    customer_id: customerId,
+    token_id: savedCard?.razorpayTokenId ?? null,
     ...cardInfo,
     amount: order.amount / 100,
     amount_in_paise: order.amount,
+    quote,
     acs_url: null,
     message: `[Stub] 3D Secure OTP simulated for card ending ${cardInfo.card_last4 || "****"}`,
   });
@@ -779,10 +378,7 @@ export const verifyCardOtp = asyncHandler(async (req: Request, res: Response) =>
   const { order_id, payment_id, otp } = req.body;
 
   if (!order_id || !payment_id) {
-    res.status(400).json({
-      success: false,
-      error: "Missing required fields: order_id and payment_id",
-    });
+    res.status(400).json({ success: false, error: "Missing required fields: order_id and payment_id" });
     return;
   }
 
@@ -796,33 +392,12 @@ export const verifyCardOtp = asyncHandler(async (req: Request, res: Response) =>
     return;
   }
 
-  try {
-    const confirmed = await razorpayCheckoutService.confirmCapturedPayment({
-      orderId: String(order_id),
-      paymentId: String(payment_id),
-      purpose: "MALL",
-    });
-
-    const outcome = await razorpayCheckoutService.fulfilOnce({
-      orderId: String(order_id),
-      paymentId: String(payment_id),
-      purpose: "MALL",
-      amountPaise: confirmed.amountPaise,
-      currency: confirmed.payment.currency,
-      userId: req.user?.id,
-      via: "CARD_OTP",
-      fulfil: (checkout) => fulfilMallCheckout(checkout, String(payment_id), confirmed.amountPaise, req.body),
-    });
-
-    sendMallOutcome(
-      res,
-      outcome,
-      String(order_id),
-      String(payment_id),
-      "Card payment verified. Order placed and fulfillment initiated."
-    );
-  } catch (err) {
-    if (sendVerificationError(res, err)) return;
-    throw err;
-  }
+  await confirmAndFulfilMall(
+    req,
+    res,
+    String(order_id),
+    String(payment_id),
+    "CARD_OTP",
+    "Card payment verified. Order placed and fulfillment initiated."
+  );
 });

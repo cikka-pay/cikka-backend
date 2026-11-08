@@ -1,5 +1,9 @@
 import { prisma } from "../config/prisma";
+import { OrderStatus, SettlementStatus } from "../generated/prisma/client";
 import { calculateSettlementBreakdown, SettlementFeeConfig } from "./settlementCalculator.service";
+
+// Returned / cancelled orders were refunded (their settlements are REVERSED): not sales.
+const NOT_SOLD: OrderStatus[] = ["RETURNED", "CANCELLED"];
 
 // Monday 00:00:00 of the week containing `date`.
 function startOfWeek(date: Date): Date {
@@ -19,7 +23,7 @@ function startOfMonth(date: Date): Date {
 
 async function sumOrderTotals(sellerId: string, from: Date, to: Date): Promise<number> {
   const result = await prisma.order.aggregate({
-    where: { sellerId, createdAt: { gte: from, lt: to } },
+    where: { sellerId, createdAt: { gte: from, lt: to }, status: { notIn: NOT_SOLD } },
     _sum: { totalAmount: true },
   });
   return Number(result._sum.totalAmount || 0);
@@ -37,7 +41,7 @@ export async function getSummary(sellerId: string, role: string = "ADMIN") {
         where: { sellerId, status: "PENDING" },
         _sum: { netPayable: true },
       }),
-      prisma.order.count({ where: { sellerId, createdAt: { gte: weekStart, lt: now } } }),
+      prisma.order.count({ where: { sellerId, createdAt: { gte: weekStart, lt: now }, status: { notIn: NOT_SOLD } } }),
       sumOrderTotals(sellerId, weekStart, now),
       sumOrderTotals(sellerId, lastWeekStart, weekStart),
       prisma.order.count({ where: { sellerId, status: "PENDING" } }),
@@ -124,13 +128,17 @@ export async function getSettlementBreakdown(
   }
 
   const createdAtFilter = to ? { gte: from, lt: to } : { gte: from };
+  // Reversed / failed settlements are never payable and never count towards sales or payouts.
+  const payable = { in: ["PENDING", "PAID"] as SettlementStatus[] };
   const settlementWhere = period === "last_week"
     ? {
         sellerId,
+        status: payable,
         periodStart: { gte: from, ...(to ? { lt: to } : {}) },
       }
     : {
         sellerId,
+        status: payable,
         OR: [
           { periodStart: { gte: from } },
           { status: "PENDING" as const },
@@ -148,14 +156,14 @@ export async function getSettlementBreakdown(
       },
     }),
     prisma.order.aggregate({
-      where: { sellerId, createdAt: createdAtFilter },
+      where: { sellerId, createdAt: createdAtFilter, status: { notIn: NOT_SOLD } },
       _sum: { totalAmount: true },
     }),
     prisma.order.count({
-      where: { sellerId, createdAt: createdAtFilter },
+      where: { sellerId, createdAt: createdAtFilter, status: { notIn: NOT_SOLD } },
     }),
     prisma.orderItem.aggregate({
-      where: { order: { sellerId, createdAt: createdAtFilter } },
+      where: { order: { sellerId, createdAt: createdAtFilter, status: { notIn: NOT_SOLD } } },
       _sum: { quantity: true },
     }),
     prisma.settlement.findFirst({

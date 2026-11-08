@@ -136,7 +136,11 @@ curl -X POST http://localhost:4000/api/products \
 
 | Method | Endpoint | Auth | Description |
 |---|---|---|---|
-| GET | `/settlements` | Yes | List settlement history |
+| GET | `/settlements` | Yes | List settlement history (`?status=ALL\|PENDING\|PAID\|REVERSED\|FAILED`) |
+| POST | `/settlements/withdraw`, `/settlements/:id/disburse` | Yes | **410 Gone** (spec 003): payouts are released automatically; ops use admin `POST /razorpay-route/disburse/:id` |
+
+Payout totals on the dashboard count only `PENDING`/`PAID` settlements; `REVERSED` and
+`FAILED` rows are never payable.
 
 ---
 
@@ -235,6 +239,127 @@ Money fields are strings with 2 decimals; nullable fields are `null` when Setu d
 
 ---
 
+### 13. Cikka Mall checkout, rewards, saved cards, buyer orders (spec 003)
+
+Auth column: **User** = mobile-app user JWT, **Opt** = user JWT optional, **Admin** = admin-panel JWT.
+All money is computed on the server from `Product` / `ProductVariant` rows; client prices and
+totals are never trusted. Amounts are rupees (2 dp) unless the field ends in `_paise`.
+
+| Method | Endpoint | Auth | Description |
+|---|---|---|---|
+| POST | `/mall/quote` | Opt | Server-priced cart breakdown + short-lived `quote_id` |
+| POST | `/payment/create-order` | Opt (User in production) | Price cart, create Razorpay order for the server total |
+| POST | `/payment/pay-with-card` | Opt (User in production) | Same pricing, for a saved card (token) |
+| POST | `/payment/verify-payment`, `/payment/verify-card-otp` | Opt | Confirm with Razorpay, fulfil once (200 / 202 processing / 409 rejected+refunded) |
+| GET | `/user/orders/my-orders` | User | The buyer's own orders (`?status=&limit=&cursor=`) |
+| GET | `/user/orders/:id` | User | One of the buyer's orders (id or order number), else 404 |
+| GET | `/rewards/balance` | User | The caller's ledger balance (`?phone=` ignored) |
+| POST | `/rewards/initiate-redemption`, `/rewards/pay-with-card` | User | Price reward from DB (`productId`), fee ₹11.79 / ₹61.79 |
+| POST | `/rewards/confirm-redemption`, `/rewards/verify-card-otp` | User | Confirm fee payment, burn points via ledger once |
+| GET | `/cards/saved` | User | Razorpay customer tokens of the caller (+ `customer_id`) |
+| POST | `/cards/save`, `/cards/tokenize` | User | **410** `CARD_SAVE_IN_CHECKOUT` (cards are saved in Razorpay Checkout) |
+| DELETE | `/cards/:id` | User | Delete one of the caller's tokens at Razorpay |
+| GET/POST | `/returns/exchange/eligibility` | User | Pre-check an exchange before taking payment |
+| POST | `/returns/exchange` | User | File an exchange (upgrade must be paid via checkout: 402 otherwise) |
+| POST | `/wallet/earn-points`, `/wallet/earn-cashback` | Admin | Manual credits (body `user_id`); no longer user-callable |
+| GET | `/admin/checkouts` | Admin | Stuck / failed checkouts (`?status=stuck` default) |
+| POST | `/admin/checkouts/:razorpayOrderId/resume` | Admin | Resume fulfilment or retry pending seller transfers |
+
+#### `POST /mall/quote`
+
+```json
+{
+  "items": [
+    { "productId": "4f1c…", "qty": 2 },
+    { "productId": "9a2e…", "variantId": "77d0…", "qty": 1 }
+  ],
+  "deliveryOption": "express",
+  "couponCode": null,
+  "useCashback": true,
+  "useCiPoints": false,
+  "exchange": null
+}
+```
+
+Aliases accepted: `items[].id` / `product_id`, `delivery_option`, `apply_cashback`, `exchange.orderNumber`.
+Any `price` / `amount` in the body is ignored.
+
+```json
+{
+  "success": true,
+  "quote_id": "q_eyJ2IjoxLCJo….3kQ…",
+  "quote_hash": "9d1f…",
+  "expires_at": "2026-11-07T10:10:00.000Z",
+  "currency": "INR",
+  "delivery_option": "express",
+  "lines": [
+    { "product_id": "4f1c…", "variant_id": null, "variant": null, "name": "Linen Shirt", "brand": "Linen Co",
+      "seller_id": "s-1", "qty": 2, "unit_price": 1499, "unit_price_paise": 149900, "mrp": 1999,
+      "line_total": 2998, "line_total_paise": 299800, "line_mrp_total": 3998, "mrp_savings": 1000 },
+    { "product_id": "9a2e…", "variant_id": "77d0…", "variant": "Size: M", "name": "Runner", "brand": "Shoe Co",
+      "seller_id": "s-2", "qty": 1, "unit_price": 849, "unit_price_paise": 84900, "mrp": null,
+      "line_total": 849, "line_total_paise": 84900, "line_mrp_total": 849, "mrp_savings": 0 }
+  ],
+  "subtotal": 3847, "subtotal_paise": 384700,
+  "mrp_total": 4847, "mrp_savings": 1000,
+  "discounts": { "coupon": 0, "cashback": 100, "ci_points": 0, "total": 100, "total_paise": 10000 },
+  "fees": { "express_delivery_fee": 50, "platform_fee": 0, "platform_fee_gst": 0, "platform_fee_total": 0 },
+  "exchange": null,
+  "cashback_balance": 100,
+  "total": 3797, "total_paise": 379700,
+  "requires_payment": true,
+  "notes": ["Cashback limited to your balance (₹100.00)."]
+}
+```
+
+Rules: unit price = variant price ?? product price; only `ACTIVE` products of sellers with an
+activated Route account; cashback = min(₹200, goods, ledger cash balance) (signed-in only);
+CI Points are not redeemable on mall orders; no coupons exist (`COUPON_INVALID`); express ₹50;
+no customer platform fee on mall orders; exchange `total = max(0, new price − original order
+total) + express`. Errors: `{ success:false, error, code, ...details }` with codes `EMPTY_CART`,
+`INVALID_QTY`, `UNKNOWN_PRODUCT` (404), `PRODUCT_UNAVAILABLE`, `VARIANT_MISMATCH`,
+`INSUFFICIENT_STOCK`, `SELLER_NOT_PAYABLE`, `COUPON_INVALID`, `AUTH_REQUIRED_FOR_CASHBACK` (401),
+`EXCHANGE_NOT_ELIGIBLE`, `EXCHANGE_SINGLE_ITEM`.
+
+#### `POST /payment/create-order`
+
+Body = quote body + shipping fields (`customer_name`, `customer_email`, `customer_phone`,
+`delivery_address`, `pincode`, `city`, `carrier_name`) + optional `quote_id`, `amount` (paise),
+`receipt`, `notes`. If `amount`/`amount_in_paise` or `quote_id` disagree with the server
+total → `409 PRICE_CHANGED { quote }`. Total 0 → `400 NO_PAYMENT_REQUIRED`; < ₹1 → `400 AMOUNT_TOO_SMALL`.
+Response: `{ success, order_id, amount (paise), amount_in_paise, currency, key_id, customer_id, quote }`.
+Pass `customer_id` to Razorpay Checkout so the buyer can save / reuse cards.
+
+#### `POST /payment/pay-with-card`
+
+Same body, plus `card_id` (our card id) or `token_id` (Razorpay token) of the caller's card
+(404 `CARD_NOT_FOUND` otherwise); `amount` here is rupees. Real mode:
+`{ requires_checkout: true, requires_otp: false, order_id, key_id, customer_id, token_id, bank_name,
+card_network, card_last4, amount, amount_in_paise, quote }`. Stub mode: simulated OTP session.
+
+#### Verify responses
+
+`200 { verified, processed_orders[{ order_number, seller_id, product_id, qty, unit_price, line_total,
+transfer_status, settlement_id, net_payable }], pricing, cashback_earned, ci_points_earned }`,
+`202 { processing: true }`, or `409 { verified: true, refunded: true, code, refund_id }` when the paid
+cart could not be fulfilled in full (out of stock, product withdrawn, exchange no longer allowed…)
+and the whole payment was refunded. `403 WRONG_USER` when another user's token verifies.
+
+#### `GET /returns/exchange/eligibility?orderNumber=&newProductId=&newVariantId=`
+
+`{ eligible, reasons[{code,message}], order_id, order_number, credit, new_product_id, new_price,
+amount_due, amount_due_paise, refund_due, requires_payment, same_seller }`. Reason codes:
+`ORDER_NOT_FOUND`, `NOT_YOUR_ORDER`, `ORDER_CLOSED`, `RETURN_IN_PROGRESS`, `WINDOW_CLOSED` (7 days after
+delivery), plus any quote error code for the replacement. Upgrades are paid with
+`create-order { items:[{productId}], exchange:{ orderNumber } }`; fulfilment files the exchange
+and a later `POST /returns/exchange` answers `200 { already_processed: true }`.
+
+#### `GET /rewards/balance`
+
+`{ success, phone, ci_points, cashback_balance, source: "ledger" }` for the caller only.
+
+---
+
 ## Error Responses
 
 All API errors follow a standard envelope:
@@ -245,6 +370,8 @@ All API errors follow a standard envelope:
 }
 ```
 HTTP status codes are used appropriately (e.g. 400 for bad requests, 401 for unauthorized, 404 for not found).
+Unknown `/api/*` paths return **404** (they used to return 401). Payment and pricing endpoints
+add a machine-readable `code` and `success: false`.
 
 ---
 
@@ -253,8 +380,9 @@ HTTP status codes are used appropriately (e.g. 400 for bad requests, 401 for una
 | Field | Values |
 |---|---|
 | `OnboardingStatus` | INCOMPLETE, SUBMITTED, UNDER_REVIEW, VERIFIED, REJECTED |
-| `OrderStatus` | PENDING, PACKED, SHIPPED, DELIVERED, CANCELLED, RETURNED |
+| `OrderStatus` | PENDING, PACKED, SHIPPED, DELIVERED, CANCELLED, RETURNED, EXCHANGE |
 | `ProductStatus` | DRAFT, ACTIVE, INACTIVE, OUT_OF_STOCK |
-| `SettlementStatus`| PENDING, PAID |
+| `SettlementStatus`| PENDING, PAID, REVERSED, FAILED |
+| `RazorpayCheckout.status` | CREATED, PROCESSING (leased), FULFILLED, FAILED, REFUNDED |
 | `ReturnStatus` | REQUESTED, APPROVED, REJECTED, RECEIVED, REFUNDED |
 | `BbpsTxnStatus` | PENDING, SUCCESS, FAILED, REFUNDED |

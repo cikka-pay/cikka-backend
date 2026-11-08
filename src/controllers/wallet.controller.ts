@@ -80,11 +80,11 @@ export const getWalletLedger = asyncHandler(async (req: Request, res: Response) 
 
 // ── POST /api/wallet/earn-points ─────────────────────────────────────────────
 /**
- * Credit CI Points for an order or event.
+ * ADMIN ONLY. Credit CI Points to `user_id` (manual adjustment / promo).
  * Requires a server-verified source — callers should supply an orderId or
  * idempotency key so the same purchase cannot be credited twice.
  *
- * Body: { points, tx_type?, order_id?, description?, idempotency_key? }
+ * Body: { user_id, points, tx_type?, order_id?, description?, idempotency_key? }
  */
 // Zod v4 dropped nativeEnum — use z.enum with explicit string literals
 const EARN_TX_TYPES = [
@@ -104,9 +104,10 @@ const EarnPointsSchema = z.object({
 });
 
 export const earnPoints = asyncHandler(async (req: Request, res: Response) => {
-  const userId = req.user?.id;
+  // Admin-only (wallet.routes): a user can never credit their own wallet.
+  const userId = req.admin ? String(req.body?.user_id || "") : "";
   if (!userId) {
-    res.status(401).json({ success: false, error: "Authentication required" });
+    res.status(400).json({ success: false, error: "user_id is required" });
     return;
   }
 
@@ -138,8 +139,8 @@ export const earnPoints = asyncHandler(async (req: Request, res: Response) => {
 
 // ── POST /api/wallet/earn-cashback ────────────────────────────────────────────
 /**
- * Credit ₹5 cashback (or any amount in paise) for an order.
- * Body: { amount_paise, order_id?, description?, idempotency_key? }
+ * ADMIN ONLY. Credit cashback (paise) to `user_id`.
+ * Body: { user_id, amount_paise, order_id?, description?, idempotency_key? }
  */
 const EarnCashbackSchema = z.object({
   amount_paise: z.number().int().positive(),
@@ -149,9 +150,10 @@ const EarnCashbackSchema = z.object({
 });
 
 export const earnCashback = asyncHandler(async (req: Request, res: Response) => {
-  const userId = req.user?.id;
+  // Admin-only (wallet.routes): a user can never credit their own wallet.
+  const userId = req.admin ? String(req.body?.user_id || "") : "";
   if (!userId) {
-    res.status(401).json({ success: false, error: "Authentication required" });
+    res.status(400).json({ success: false, error: "user_id is required" });
     return;
   }
 

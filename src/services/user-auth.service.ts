@@ -1,3 +1,5 @@
+import { walletService } from "./wallet.service";
+import { WalletTxType } from "../generated/prisma/client";
 import { config } from "../config/env";
 import { prisma } from "../config/prisma";
 import { AUTH_ERRORS } from "../constants/errors";
@@ -183,6 +185,7 @@ export async function verifyUserOtpService(phoneRaw: string, otp: string) {
     });
 
     isVerified = Boolean(dbUser.panVerified && dbUser.name && dbUser.name !== 'DEV BYPASS USER');
+    await grantSignupBonus(dbUser.id);
     updatedUser = {
       id: dbUser.id,
       phone: dbUser.phone,
@@ -206,6 +209,24 @@ export async function verifyUserOtpService(phoneRaw: string, otp: string) {
     isExistingUser,
     isVerified,
   };
+}
+
+/**
+ * One-time sign-up bonus (SIGNUP_BONUS_POINTS, default 0 = none), credited through the
+ * ledger with idempotency key EARN_SIGNUP:<userId>, so it is granted at most once per user
+ * however many times they verify an OTP. New users otherwise start with 0 CI Points.
+ */
+export async function grantSignupBonus(userId: string): Promise<void> {
+  const points = Math.floor(Number(process.env.SIGNUP_BONUS_POINTS || 0));
+  if (!Number.isFinite(points) || points <= 0) return;
+  try {
+    await walletService.creditPoints(userId, points, WalletTxType.EARN_SIGNUP, {
+      idempotencyKey: `EARN_SIGNUP:${userId}`,
+      description: "Welcome bonus",
+    });
+  } catch (err: any) {
+    console.warn(`[Signup Bonus Notice] ${userId}: ${err.message}`);
+  }
 }
 
 export async function getUserProfileService(userId: string) {

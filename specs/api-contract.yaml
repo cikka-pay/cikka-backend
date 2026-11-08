@@ -18,6 +18,161 @@ components:
       name: X-BILL-WEBHOOK-API-KEY
       description: Key emailed by Setu; compared against SETU_BILLPAY_WEBHOOK_API_KEY.
   schemas:
+    PricingError:
+      type: object
+      properties:
+        success: { type: boolean, const: false }
+        error: { type: string }
+        code:
+          type: string
+          enum: [EMPTY_CART, INVALID_QTY, UNKNOWN_PRODUCT, PRODUCT_UNAVAILABLE, VARIANT_MISMATCH, INSUFFICIENT_STOCK,
+                 SELLER_NOT_PAYABLE, COUPON_INVALID, AUTH_REQUIRED_FOR_CASHBACK, EXCHANGE_NOT_ELIGIBLE, EXCHANGE_SINGLE_ITEM,
+                 PRICE_CHANGED, NO_PAYMENT_REQUIRED, AMOUNT_TOO_SMALL, AUTH_REQUIRED]
+        quote: { $ref: "#/components/schemas/MallQuote" }
+    MallCartRequest:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          minItems: 1
+          items:
+            type: object
+            required: [productId, qty]
+            properties:
+              productId: { type: string, description: "Alias: id, product_id" }
+              variantId: { type: [string, "null"] }
+              qty: { type: integer, minimum: 1, maximum: 20 }
+        deliveryOption: { type: string, enum: [standard, express], description: "Alias: delivery_option" }
+        couponCode: { type: [string, "null"], description: "No server coupons exist: any value is rejected (COUPON_INVALID)" }
+        useCashback: { type: boolean, description: "Alias: apply_cashback. Needs a user JWT." }
+        useCiPoints: { type: boolean, description: "Accepted but CI Points are not redeemable on mall orders" }
+        exchange:
+          type: [object, "null"]
+          properties:
+            orderId: { type: string }
+            orderNumber: { type: string }
+    MallQuote:
+      type: object
+      properties:
+        quote_id: { type: string, description: "HMAC-signed, valid 10 minutes, bound to the user" }
+        quote_hash: { type: string }
+        expires_at: { type: string, format: date-time }
+        currency: { type: string, const: INR }
+        delivery_option: { type: string, enum: [standard, express] }
+        lines:
+          type: array
+          items:
+            type: object
+            properties:
+              product_id: { type: string }
+              variant_id: { type: [string, "null"] }
+              variant: { type: [string, "null"] }
+              name: { type: string }
+              brand: { type: [string, "null"] }
+              seller_id: { type: string }
+              qty: { type: integer }
+              unit_price: { type: number }
+              unit_price_paise: { type: integer }
+              mrp: { type: [number, "null"] }
+              line_total: { type: number }
+              line_total_paise: { type: integer }
+              line_mrp_total: { type: number }
+              mrp_savings: { type: number }
+        subtotal: { type: number }
+        subtotal_paise: { type: integer }
+        mrp_total: { type: number }
+        mrp_savings: { type: number }
+        discounts:
+          type: object
+          properties:
+            coupon: { type: number }
+            cashback: { type: number }
+            ci_points: { type: number }
+            total: { type: number }
+            total_paise: { type: integer }
+        fees:
+          type: object
+          properties:
+            express_delivery_fee: { type: number }
+            platform_fee: { type: number }
+            platform_fee_gst: { type: number }
+            platform_fee_total: { type: number }
+        exchange:
+          type: [object, "null"]
+          properties:
+            order_id: { type: string }
+            order_number: { type: string }
+            credit: { type: number }
+            refund_due: { type: number }
+        cashback_balance: { type: [number, "null"] }
+        total: { type: number }
+        total_paise: { type: integer }
+        requires_payment: { type: boolean }
+        notes: { type: array, items: { type: string } }
+    ExchangeEligibility:
+      type: object
+      properties:
+        success: { type: boolean }
+        eligible: { type: boolean }
+        reasons:
+          type: array
+          items:
+            type: object
+            properties:
+              code: { type: string }
+              message: { type: string }
+        order_id: { type: [string, "null"] }
+        order_number: { type: [string, "null"] }
+        credit: { type: number }
+        new_product_id: { type: [string, "null"] }
+        new_variant_id: { type: [string, "null"] }
+        new_price: { type: [number, "null"] }
+        amount_due: { type: number }
+        amount_due_paise: { type: integer }
+        refund_due: { type: number }
+        requires_payment: { type: boolean }
+        same_seller: { type: [boolean, "null"] }
+    UserOrder:
+      type: object
+      properties:
+        id: { type: string, description: Order number }
+        internalId: { type: string }
+        title: { type: string }
+        brand: { type: string }
+        image: { type: string }
+        price: { type: string }
+        totalAmount: { type: number }
+        date: { type: string, format: date-time }
+        status: { type: string }
+        statusText: { type: string }
+        statusSubtext: { type: string }
+        courier: { type: string }
+        trackingNumber: { type: string }
+        canCancel: { type: boolean }
+        items:
+          type: array
+          items:
+            type: object
+            properties:
+              id: { type: string }
+              productId: { type: string }
+              name: { type: string }
+              quantity: { type: integer }
+              unitPrice: { type: number }
+    SavedCard:
+      type: object
+      properties:
+        id: { type: string }
+        tokenId: { type: string, description: Razorpay token id (token_*) }
+        bankName: { type: string }
+        cardNetwork: { type: string }
+        cardType: { type: string }
+        last4: { type: string }
+        expiryMonth: { type: [string, "null"] }
+        expiryYear: { type: [string, "null"] }
+        isDefault: { type: boolean }
+        status: { type: string }
     ErrorResponse:
       type: object
       properties:
@@ -799,7 +954,7 @@ paths:
           name: status
           schema:
             type: string
-            enum: [ALL, PENDING, PAID]
+            enum: [ALL, PENDING, PAID, REVERSED, FAILED]
       responses:
         "200":
           description: Success
@@ -1143,3 +1298,243 @@ paths:
                   status:
                     type: string
                     const: error
+  /mall/quote:
+    post:
+      tags: [Mall]
+      summary: Server-priced cart breakdown (spec 003)
+      description: User JWT optional (required for useCashback and exchange). Client prices are ignored.
+      security: [{ BearerAuth: [] }, {}]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/MallCartRequest" }
+      responses:
+        "200":
+          description: Quote
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/MallQuote" }
+        "400": { description: Invalid cart / coupon, content: { application/json: { schema: { $ref: "#/components/schemas/PricingError" } } } }
+        "401": { description: Cashback needs sign-in, content: { application/json: { schema: { $ref: "#/components/schemas/PricingError" } } } }
+        "404": { description: Unknown product, content: { application/json: { schema: { $ref: "#/components/schemas/PricingError" } } } }
+        "409": { description: Unavailable product, stock, unpayable seller, exchange not eligible, content: { application/json: { schema: { $ref: "#/components/schemas/PricingError" } } } }
+  /payment/create-order:
+    post:
+      tags: [Mall]
+      summary: Create the Razorpay order for the server-priced cart
+      description: User JWT required in production. A client `amount` (paise) or `quote_id` must match the server total, else 409 PRICE_CHANGED.
+      security: [{ BearerAuth: [] }, {}]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              allOf:
+                - $ref: "#/components/schemas/MallCartRequest"
+                - type: object
+                  properties:
+                    quote_id: { type: string }
+                    amount: { type: integer, description: Optional, paise; must equal the server total }
+                    customer_name: { type: string }
+                    customer_email: { type: string }
+                    customer_phone: { type: string }
+                    delivery_address: { type: string }
+                    pincode: { type: string }
+                    city: { type: string }
+      responses:
+        "200":
+          description: Razorpay order
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success: { type: boolean }
+                  order_id: { type: string }
+                  amount: { type: integer, description: paise }
+                  amount_in_paise: { type: integer }
+                  currency: { type: string }
+                  key_id: { type: string }
+                  customer_id: { type: [string, "null"], description: Pass to Razorpay Checkout for saved cards }
+                  quote: { $ref: "#/components/schemas/MallQuote" }
+        "401": { description: Sign-in required (production) }
+        "409": { description: PRICE_CHANGED or cart error, content: { application/json: { schema: { $ref: "#/components/schemas/PricingError" } } } }
+  /payment/pay-with-card:
+    post:
+      tags: [Mall]
+      summary: Saved-card checkout with server pricing (amount in rupees, optional)
+      security: [{ BearerAuth: [] }, {}]
+      requestBody:
+        content:
+          application/json:
+            schema:
+              allOf:
+                - $ref: "#/components/schemas/MallCartRequest"
+                - type: object
+                  properties:
+                    card_id: { type: string }
+                    token_id: { type: string }
+                    amount: { type: number, description: rupees }
+                    amount_in_paise: { type: integer }
+      responses:
+        "200": { description: "requires_checkout (real) or requires_otp (stub); includes customer_id, token_id, quote" }
+        "404": { description: CARD_NOT_FOUND (not the caller's card) }
+        "409": { description: PRICE_CHANGED }
+  /payment/verify-payment:
+    post:
+      tags: [Mall]
+      summary: Verify signature, confirm capture with Razorpay, fulfil once
+      responses:
+        "200": { description: Fulfilled (or duplicate) }
+        "202": { description: Being fulfilled by another caller }
+        "403": { description: WRONG_USER }
+        "409": { description: "Rejected and fully refunded: { refunded: true, code, refund_id }" }
+  /user/orders/my-orders:
+    get:
+      tags: [Buyer]
+      summary: The signed-in buyer's orders (scoped by Order.userId)
+      parameters:
+        - { in: query, name: status, schema: { type: string } }
+        - { in: query, name: limit, schema: { type: integer, maximum: 100 } }
+        - { in: query, name: cursor, schema: { type: string } }
+      responses:
+        "200":
+          description: Orders
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success: { type: boolean }
+                  orders: { type: array, items: { $ref: "#/components/schemas/UserOrder" } }
+                  next_cursor: { type: [string, "null"] }
+        "401": { description: User JWT required }
+  /user/orders/{id}:
+    get:
+      tags: [Buyer]
+      summary: One of the buyer's orders (id or order number)
+      parameters:
+        - { in: path, name: id, required: true, schema: { type: string } }
+      responses:
+        "200": { description: "{ success, order: UserOrder }" }
+        "404": { description: Not found or not the caller's }
+  /rewards/balance:
+    get:
+      tags: [Rewards]
+      summary: The caller's ledger CI Points and cashback (phone query ignored)
+      responses:
+        "200":
+          description: Balance
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success: { type: boolean }
+                  phone: { type: [string, "null"] }
+                  ci_points: { type: integer }
+                  cashback_balance: { type: number }
+                  source: { type: string, const: ledger }
+        "401": { description: User JWT required }
+  /rewards/initiate-redemption:
+    post:
+      tags: [Rewards]
+      summary: Price a reward from the DB (points = round(price)) and create the fee order
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [productId]
+              properties:
+                productId: { type: string }
+                variantId: { type: string }
+                pointsRequired: { type: integer, description: Optional; must match the server value }
+                delivery_option: { type: string, enum: [standard, express] }
+      responses:
+        "200": { description: "{ order_id, amount (1179|6179 paise), points_required, product_value, customer_id, platform_fee_breakdown }" }
+        "400": { description: INSUFFICIENT_POINTS }
+        "401": { description: User JWT required }
+        "404": { description: UNKNOWN_PRODUCT }
+        "409": { description: PRICE_CHANGED or product unavailable }
+  /cards/saved:
+    get:
+      tags: [Cards]
+      summary: The caller's Razorpay customer tokens
+      responses:
+        "200":
+          description: Cards
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success: { type: boolean }
+                  customer_id: { type: [string, "null"] }
+                  cards: { type: array, items: { $ref: "#/components/schemas/SavedCard" } }
+  /cards/save:
+    post:
+      tags: [Cards]
+      summary: Retired - cards are saved in Razorpay Checkout
+      responses:
+        "410": { description: CARD_SAVE_IN_CHECKOUT }
+  /cards/{id}:
+    delete:
+      tags: [Cards]
+      summary: Delete one of the caller's tokens at Razorpay
+      parameters:
+        - { in: path, name: id, required: true, schema: { type: string } }
+      responses:
+        "200": { description: Removed }
+        "404": { description: Not the caller's card }
+  /returns/exchange/eligibility:
+    get:
+      tags: [Returns]
+      summary: Exchange pre-check (also POST with the same fields in the body)
+      parameters:
+        - { in: query, name: orderId, schema: { type: string } }
+        - { in: query, name: orderNumber, schema: { type: string } }
+        - { in: query, name: newProductId, schema: { type: string } }
+        - { in: query, name: newVariantId, schema: { type: string } }
+      responses:
+        "200":
+          description: Eligibility
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ExchangeEligibility" }
+        "401": { description: User JWT required }
+  /returns/exchange:
+    post:
+      tags: [Returns]
+      summary: File an exchange (eligibility re-checked)
+      responses:
+        "201": { description: Filed }
+        "200": { description: Already filed by the exchange checkout (already_processed true) }
+        "402": { description: PAYMENT_REQUIRED - pay the difference through create-order with exchange }
+        "409": { description: EXCHANGE_NOT_ELIGIBLE }
+  /admin/checkouts:
+    get:
+      tags: [Admin]
+      summary: Stuck / failed checkouts
+      parameters:
+        - { in: query, name: status, schema: { type: string, default: stuck } }
+      responses:
+        "200": { description: List }
+  /admin/checkouts/{razorpayOrderId}/resume:
+    post:
+      tags: [Admin]
+      summary: Resume fulfilment (expired lease / FAILED) or retry pending seller transfers
+      parameters:
+        - { in: path, name: razorpayOrderId, required: true, schema: { type: string } }
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                paymentId: { type: string }
+                force: { type: boolean, description: Expire a live lease first }
+      responses:
+        "200": { description: "{ state, result } or { state: FULFILLED, transfers }" }
+        "409": { description: Live lease held, refunded checkout, or no payment recorded }

@@ -1,5 +1,6 @@
 import { Router } from "express";
-import { requireSellerAuth, requireUserAuth } from "../middleware/auth.middleware";
+import { requireSellerAuth, requireUserAuth, optionalUserAuth } from "../middleware/auth.middleware";
+import { config } from "../config/env";
 import authRoutes from "./auth.routes";
 import userAuthRoutes from "./user-auth.routes";
 import billpayRoutes from "./billpay.routes";
@@ -24,6 +25,7 @@ import rewardsRoutes from "./rewards.routes";
 import shipwayRoutes from "./shipway.routes";
 import userAddressRoutes from "./user-address.routes";
 import cardsRoutes from "./cards.routes";
+import userOrdersRoutes from "./user-orders.routes";
 import walletRoutes from "./wallet.routes";
 
 import hubbleRoutes from "./hubble.routes";
@@ -53,6 +55,7 @@ router.use("/customer-auth", userAuthRoutes); // Backward compatibility alias
 router.use("/user/address", userAddressRoutes);
 router.use("/user/addresses", userAddressRoutes);
 router.use("/user-address", userAddressRoutes);
+router.use("/user/orders", userOrdersRoutes);
 router.use("/cards", cardsRoutes);
 router.use("/user/cards", cardsRoutes);
 // BBPS bill pay via Setu pre-built screens (spec 002): /api/bbps/session, /api/bbps/history[/:id]
@@ -85,7 +88,9 @@ router.use("/shipway", shipwayRoutes);
 
 // Customer return / exchange requests (mobile app). They trigger refunds and payout
 // reversals, so a signed-in user is required.
-import { createReturn, createExchange } from "../controllers/returns.controller";
+import { createReturn, createExchange, exchangeEligibility } from "../controllers/returns.controller";
+router.get("/returns/exchange/eligibility", requireUserAuth, exchangeEligibility);
+router.post("/returns/exchange/eligibility", requireUserAuth, exchangeEligibility);
 router.post("/returns/request", requireUserAuth, createReturn);
 router.post("/returns/create", requireUserAuth, createReturn);
 router.post("/returns/exchange", requireUserAuth, createExchange);
@@ -93,10 +98,16 @@ router.post("/returns/exchange", requireUserAuth, createExchange);
 // Public Cikka Mall Catalog (Product exploration & single-loop exchanges)
 import { listMallCatalogProducts } from "../controllers/products.controller";
 import { createOrder } from "../controllers/orders.controller";
+import { quoteMallCart } from "../controllers/mall.controller";
 router.get("/mall/products", listMallCatalogProducts);
 router.get("/products/mall", listMallCatalogProducts);
-// Public order simulation endpoint (customer app / Postman testing)
-router.post("/orders/create", createOrder);
+// Server-side cart pricing (spec 003): user JWT optional (needed for cashback / exchanges)
+router.post("/mall/quote", optionalUserAuth, quoteMallCart);
+// Order simulation endpoint for local testing only: it writes orders with arbitrary totals,
+// so it does not exist in production.
+if (!config.isProduction) {
+  router.post("/orders/create", createOrder);
+}
 
 
 
@@ -106,16 +117,16 @@ router.use("/onboarding", onboardingRoutes);
 // Public Products Catalog Endpoint (Mobile App & Public Browse; protected mutations handled internally)
 router.use("/products", productsRoutes);
 
-// Protected Seller Routes — require valid Seller JWT
-router.use(requireSellerAuth);
-router.use("/dashboard", dashboardRoutes);
-router.use("/orders", ordersRoutes);
-router.use("/inventory", inventoryRoutes);
-router.use("/settlements", settlementsRoutes);
-router.use("/returns", returnsRoutes);
-router.use("/notifications", notificationsRoutes);
-router.use("/settings", settingsRoutes);
-router.use("/team", teamRoutes);
+// Protected Seller Routes — require a valid Seller JWT. Auth is attached per mount (not as a
+// catch-all), so an unknown /api path falls through to the app's 404 instead of a 401.
+router.use("/dashboard", requireSellerAuth, dashboardRoutes);
+router.use("/orders", requireSellerAuth, ordersRoutes);
+router.use("/inventory", requireSellerAuth, inventoryRoutes);
+router.use("/settlements", requireSellerAuth, settlementsRoutes);
+router.use("/returns", requireSellerAuth, returnsRoutes);
+router.use("/notifications", requireSellerAuth, notificationsRoutes);
+router.use("/settings", requireSellerAuth, settingsRoutes);
+router.use("/team", requireSellerAuth, teamRoutes);
 
 export default router;
 

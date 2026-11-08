@@ -9,7 +9,10 @@ import {
 } from "./razorpay.service";
 
 export type CheckoutPurpose = "MALL" | "REWARDS";
-export type FulfilmentChannel = "VERIFY" | "CARD_OTP" | "WEBHOOK";
+export type FulfilmentChannel = "VERIFY" | "CARD_OTP" | "WEBHOOK" | "ADMIN";
+
+/** How long a PROCESSING claim is honoured before another caller may resume it. */
+export const FULFILMENT_LEASE_MS = Number(process.env.CHECKOUT_LEASE_MS || 5 * 60 * 1000);
 
 export type RazorpayCheckoutRow = NonNullable<Awaited<ReturnType<typeof prisma.razorpayCheckout.findUnique>>>;
 
@@ -18,6 +21,18 @@ export class PaymentVerificationError extends Error {
   constructor(public status: number, public code: string, message: string) {
     super(message);
     this.name = "PaymentVerificationError";
+  }
+}
+
+/**
+ * A business reason this paid checkout cannot be fulfilled (out of stock, product withdrawn,
+ * repriced total ≠ paid amount, insufficient wallet balance, exchange no longer eligible).
+ * fulfilOnce refunds the whole payment and ends the checkout in REFUNDED.
+ */
+export class FulfilmentRejection extends Error {
+  constructor(public code: string, message: string, public details?: Record<string, unknown>) {
+    super(message);
+    this.name = "FulfilmentRejection";
   }
 }
 
@@ -31,7 +46,9 @@ export interface ConfirmedPayment {
 export type FulfilmentOutcome =
   | { state: "FULFILLED"; result: any }
   | { state: "DUPLICATE"; result: any }
-  | { state: "IN_PROGRESS"; result: null };
+  | { state: "IN_PROGRESS"; result: null }
+  /** Fulfilment was refused for a business reason and the payment was refunded. */
+  | { state: "REJECTED"; result: any };
 
 const toJson = (value: unknown): Prisma.InputJsonValue =>
   JSON.parse(JSON.stringify(value ?? null)) as Prisma.InputJsonValue;
@@ -84,6 +101,11 @@ export const razorpayCheckoutService = {
     orderId: string;
     paymentId: string;
     purpose: CheckoutPurpose;
+    /**
+     * Runs before an `authorized` payment is captured. Throwing stops the capture: Razorpay
+     * then voids/refunds the uncaptured authorization (used to re-check exchange eligibility).
+     */
+    beforeCapture?: (checkout: RazorpayCheckoutRow | null) => Promise<void>;
   }): Promise<ConfirmedPayment> {
     const { orderId, paymentId, purpose } = params;
     const checkout = await this.findByOrderId(orderId);
@@ -136,6 +158,7 @@ export const razorpayCheckoutService = {
     }
 
     if (payment.status === "authorized") {
+      if (params.beforeCapture) await params.beforeCapture(checkout);
       try {
         payment = await razorpayService.capturePayment(paymentId, Number(payment.amount), payment.currency || "INR");
       } catch (err: any) {
@@ -153,9 +176,13 @@ export const razorpayCheckoutService = {
 
   /**
    * Run `fulfil` at most once per Razorpay order. The first caller atomically moves the row
-   * CREATED/FAILED → PROCESSING and fulfils; later callers get the stored result (DUPLICATE) or
-   * IN_PROGRESS while the first one is still running. A failure marks the row FAILED so a
-   * retry (client or webhook redelivery) can try again.
+   * CREATED/FAILED → PROCESSING with a lease (FULFILMENT_LEASE_MS) and fulfils; later callers
+   * get the stored result (DUPLICATE) or IN_PROGRESS while the lease is live. A PROCESSING row
+   * whose lease expired (process crashed mid-fulfilment) is claimable again, so a webhook
+   * redelivery or the admin resume endpoint picks it up; `fulfil` must therefore be resumable
+   * (see checkoutFulfilment.service: DB writes are one transaction guarded by `stage`).
+   * A FulfilmentRejection refunds the payment and ends in REFUNDED; any other error marks the
+   * row FAILED for a retry.
    */
   async fulfilOnce(params: {
     orderId: string;
@@ -183,11 +210,26 @@ export const razorpayCheckoutService = {
       update: {},
     });
 
+    const now = new Date();
     let claimed = 0;
     try {
       const claim = await prisma.razorpayCheckout.updateMany({
-        where: { razorpayOrderId: orderId, status: { in: ["CREATED", "FAILED"] } },
-        data: { status: "PROCESSING", razorpayPaymentId: paymentId, fulfilledVia: via, lastError: null },
+        where: {
+          razorpayOrderId: orderId,
+          OR: [
+            { status: { in: ["CREATED", "FAILED"] } },
+            { status: "PROCESSING", leaseExpiresAt: { lt: now } },
+            { status: "PROCESSING", leaseExpiresAt: null },
+          ],
+        },
+        data: {
+          status: "PROCESSING",
+          razorpayPaymentId: paymentId,
+          fulfilledVia: via,
+          lastError: null,
+          leaseExpiresAt: new Date(now.getTime() + FULFILMENT_LEASE_MS),
+          attempts: { increment: 1 },
+        },
       });
       claimed = claim.count;
     } catch (err: any) {
@@ -200,23 +242,65 @@ export const razorpayCheckoutService = {
 
     if (claimed === 0) {
       if (row.status === "FULFILLED") return { state: "DUPLICATE", result: row.result };
+      if (row.status === "REFUNDED") return { state: "REJECTED", result: row.result };
       return { state: "IN_PROGRESS", result: null };
     }
-
     try {
       const result = await params.fulfil(row);
       await prisma.razorpayCheckout.update({
         where: { razorpayOrderId: orderId },
-        data: { status: "FULFILLED", result: toJson(result), fulfilledAt: new Date() },
+        data: { status: "FULFILLED", result: toJson(result), fulfilledAt: new Date(), leaseExpiresAt: null },
       });
       return { state: "FULFILLED", result };
     } catch (err: any) {
+      if (err instanceof FulfilmentRejection) {
+        return this.rejectAndRefund(row, paymentId, err);
+      }
       await prisma.razorpayCheckout.update({
         where: { razorpayOrderId: orderId },
-        data: { status: "FAILED", lastError: String(err?.message || err).slice(0, 500) },
+        data: { status: "FAILED", leaseExpiresAt: null, lastError: String(err?.message || err).slice(0, 500) },
       });
       throw err;
     }
+  },
+
+  /** Refund the whole captured payment for a rejected fulfilment (idempotent by receipt). */
+  async rejectAndRefund(row: RazorpayCheckoutRow, paymentId: string, err: FulfilmentRejection): Promise<FulfilmentOutcome> {
+    const refund = await razorpayService.refundPayment(
+      paymentId,
+      row.amountPaise,
+      { reason: err.code, razorpay_order_id: row.razorpayOrderId },
+      `ful_${row.razorpayOrderId}`
+    );
+    if (!refund.success) {
+      await prisma.razorpayCheckout.update({
+        where: { razorpayOrderId: row.razorpayOrderId },
+        data: {
+          status: "FAILED",
+          leaseExpiresAt: null,
+          lastError: `${err.code}: ${err.message}; refund failed: ${refund.error}`.slice(0, 500),
+        },
+      });
+      throw err;
+    }
+    const result = {
+      refunded: true,
+      refund_id: refund.refundId,
+      amount_refunded_paise: row.amountPaise,
+      code: err.code,
+      error: err.message,
+      ...(err.details ? { details: err.details } : {}),
+    };
+    await prisma.razorpayCheckout.update({
+      where: { razorpayOrderId: row.razorpayOrderId },
+      data: {
+        status: "REFUNDED",
+        result: toJson(result),
+        leaseExpiresAt: null,
+        lastError: `${err.code}: ${err.message}`.slice(0, 500),
+      },
+    });
+    return { state: "REJECTED", result };
   },
 
   /** Note a captured payment we could not fulfil yet (e.g. webhook arrived without a cart). */

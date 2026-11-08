@@ -86,8 +86,8 @@ describe("Payment forgery guards in production", () => {
 
   it("no longer serves the custom payment simulator", async () => {
     const res = await request(app).post("/api/payment/process-custom").send({ amount: 100, order_id: "order_x" });
-    // Route removed; unknown /api paths fall through to the seller-auth gate.
-    expect(res.status).toBe(401);
+    // Route removed; unknown /api paths are 404.
+    expect(res.status).toBe(404);
     expect(res.body.razorpay_signature).toBeUndefined();
   });
 });

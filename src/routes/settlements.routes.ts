@@ -1,6 +1,5 @@
 import { Router } from "express";
-import { listSettlements, createWithdrawal } from "../controllers/settlements.controller";
-import { triggerRouteDisburse } from "../controllers/razorpay-route.controller";
+import { listSettlements } from "../controllers/settlements.controller";
 import { z } from "zod";
 import { validate } from "../middleware/validate.middleware";
 import { requireRole } from "../middleware/auth.middleware";
@@ -10,14 +9,19 @@ const router = Router();
 const settlementQuerySchema = z.object({
   page: z.string().optional(),
   limit: z.string().optional(),
-  status: z.enum(["ALL", "PENDING", "PAID"]).optional(),
+  status: z.enum(["ALL", "PENDING", "PAID", "REVERSED", "FAILED"]).optional(),
 });
 
 // Strictly Admin only can view or manage settlements (Neither Executive nor Viewer can access)
 router.get("/", requireRole(["ADMIN"]), validate({ query: settlementQuerySchema }), listSettlements);
 
-// Strictly Admin only can withdraw or trigger disbursements
-router.post("/withdraw", requireRole(["ADMIN"]), createWithdrawal);
-router.post("/:id/disburse", requireRole(["ADMIN"]), triggerRouteDisburse);
+// Payouts are released automatically (T+7/T+14) from settled orders. The old seller
+// "withdraw any amount" and "disburse any settlement id" endpoints created payouts with no
+// customer payment behind them and were not scoped to the seller; they are retired.
+// Ops can still disburse via the admin-only POST /api/razorpay-route/disburse/:id.
+const retired = (_req: any, res: any) =>
+  res.status(410).json({ error: "Payouts are released automatically from settled orders; this endpoint is retired." });
+router.post("/withdraw", requireRole(["ADMIN"]), retired);
+router.post("/:id/disburse", requireRole(["ADMIN"]), retired);
 
 export default router;

@@ -1,104 +1,88 @@
 import { Request, Response } from "express";
-import { razorpayTokenService } from "../services/razorpayToken.service";
+import { savedCardsService, SavedCardError } from "../services/razorpayToken.service";
 import { asyncHandler } from "../utils/asyncHandler";
+
+function cardView(c: {
+  id: string;
+  razorpayTokenId: string;
+  bankName: string;
+  cardNetwork: string;
+  cardType: string;
+  last4: string;
+  cardholderName: string | null;
+  expiryMonth: string | null;
+  expiryYear: string | null;
+  isDefault: boolean;
+  status: string;
+}) {
+  return {
+    id: c.id,
+    tokenId: c.razorpayTokenId,
+    bankName: c.bankName,
+    cardNetwork: c.cardNetwork,
+    cardType: c.cardType,
+    last4: c.last4,
+    cardholderName: c.cardholderName,
+    expiryMonth: c.expiryMonth,
+    expiryYear: c.expiryYear,
+    isDefault: c.isDefault,
+    status: c.status,
+  };
+}
+
+function sendCardError(res: Response, err: unknown): boolean {
+  if (err instanceof SavedCardError) {
+    res.status(err.status).json({ success: false, code: err.code, error: err.message });
+    return true;
+  }
+  return false;
+}
 
 /**
  * GET /api/cards/saved
- * Fetch all active saved tokenized credit cards for the user (RBI CoF compliant)
+ * The signed-in user's saved cards = tokens of their Razorpay customer (refreshes the cache).
+ * `customer_id` is what the app passes to Razorpay Checkout to show / save cards.
  */
 export const getSavedCardsHandler = asyncHandler(async (req: Request, res: Response) => {
-  // Only the signed-in user's cards; phone/userId query params are no longer honoured.
-  const cards = await razorpayTokenService.getSavedCards(req.user!.id);
-
-  res.status(200).json({
-    success: true,
-    cards: cards.map((c) => ({
-      id: c.id,
-      tokenId: c.razorpayTokenId,
-      bankName: c.bankName,
-      cardNetwork: c.cardNetwork,
-      cardType: c.cardType,
-      last4: c.last4,
-      cardholderName: c.cardholderName,
-      expiryMonth: c.expiryMonth,
-      expiryYear: c.expiryYear,
-      isDefault: c.isDefault,
-      status: c.status,
-    })),
-  });
+  try {
+    const cards = await savedCardsService.listCards(req.user!.id);
+    const customerId = await savedCardsService.customerIdFor(req.user!.id);
+    res.status(200).json({ success: true, customer_id: customerId, cards: cards.map(cardView) });
+  } catch (err) {
+    if (sendCardError(res, err)) return;
+    throw err;
+  }
 });
 
 /**
- * POST /api/cards/save
- * POST /api/cards/tokenize
- * Tokenize newly added card and store token (RBI compliant - zero PAN stored)
+ * POST /api/cards/save, POST /api/cards/tokenize
+ * Retired: we no longer accept card details. Cards are saved by Razorpay Checkout (the user
+ * ticks "save card" while paying with the `customer_id` from create-order / GET /cards/saved).
  */
 export const saveCardTokenHandler = asyncHandler(async (req: Request, res: Response) => {
-  const {
-    bankName,
-    cardNetwork,
-    cardType = "credit",
-    last4,
-    cardholderName,
-    expiryMonth,
-    expiryYear,
-    isDefault = false,
-  } = req.body;
-
-  if (!last4 || String(last4).length < 4) {
-    res.status(400).json({
-      success: false,
-      error: "Last 4 digits of card are required for tokenization record",
-    });
-    return;
-  }
-  if (!bankName || !cardNetwork) {
-    res.status(400).json({ success: false, error: "bankName and cardNetwork are required" });
-    return;
-  }
-
-  const savedCard = await razorpayTokenService.saveCardToken({
-    userId: req.user!.id,
-    bankName,
-    cardNetwork,
-    cardType,
-    last4: String(last4).slice(-4),
-    cardholderName,
-    expiryMonth,
-    expiryYear,
-    isDefault,
-  });
-
-  res.status(201).json({
-    success: true,
-    message: "Card securely tokenized as per RBI guidelines",
-    card: {
-      id: savedCard.id,
-      tokenId: savedCard.razorpayTokenId,
-      bankName: savedCard.bankName,
-      cardNetwork: savedCard.cardNetwork,
-      cardType: savedCard.cardType,
-      last4: savedCard.last4,
-      isDefault: savedCard.isDefault,
-    },
+  const customerId = await savedCardsService.customerIdFor(req.user!.id);
+  res.status(410).json({
+    success: false,
+    code: "CARD_SAVE_IN_CHECKOUT",
+    error: "Cards are saved securely in Razorpay Checkout while paying. Card details are not accepted here.",
+    customer_id: customerId,
   });
 });
 
 /**
- * DELETE /api/cards/:id
- * Revoke and remove saved card token
+ * DELETE /api/cards/:id  (our card id or the Razorpay token id)
+ * Deletes the token from the user's own Razorpay customer and revokes the cached card.
  */
 export const deleteCardTokenHandler = asyncHandler(async (req: Request, res: Response) => {
-  const { id } = req.params;
-
-  const revoked = await razorpayTokenService.deleteCardToken(id, req.user!.id);
-  if (!revoked) {
-    res.status(404).json({ success: false, error: "Card not found" });
-    return;
+  try {
+    const revoked = await savedCardsService.deleteCard(req.user!.id, req.params.id);
+    if (!revoked) {
+      res.status(404).json({ success: false, error: "Card not found" });
+      return;
+    }
+    res.status(200).json({ success: true, message: "Card removed" });
+  } catch (err) {
+    if (sendCardError(res, err)) return;
+    throw err;
   }
-
-  res.status(200).json({
-    success: true,
-    message: "Card token revoked successfully",
-  });
 });

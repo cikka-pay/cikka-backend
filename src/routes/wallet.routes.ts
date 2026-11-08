@@ -1,5 +1,5 @@
 import { Router } from "express";
-import { requireUserAuth } from "../middleware/auth.middleware";
+import { requireAdminAuth, requireUserAuth } from "../middleware/auth.middleware";
 import {
   getWalletBalance,
   getWalletLedger,
@@ -10,7 +10,12 @@ import {
 
 const router = Router();
 
-// All wallet routes require a valid user JWT
+// Credits are admin-only (body: user_id). They used to sit behind the user JWT, which let any
+// signed-in user mint CI Points / cashback for themselves.
+router.post("/earn-points", requireAdminAuth, earnPoints);
+router.post("/earn-cashback", requireAdminAuth, earnCashback);
+
+// Everything else is the signed-in user's own wallet
 router.use(requireUserAuth);
 
 // GET  /api/wallet/balance       — authoritative balance (replaces AsyncStorage)
@@ -18,12 +23,6 @@ router.get("/balance", getWalletBalance);
 
 // GET  /api/wallet/ledger        — paginated transaction history
 router.get("/ledger", getWalletLedger);
-
-// POST /api/wallet/earn-points   — credit CI Points for a purchase/event
-router.post("/earn-points", earnPoints);
-
-// POST /api/wallet/earn-cashback — credit ₹5 (or any) cashback in paise
-router.post("/earn-cashback", earnCashback);
 
 // POST /api/wallet/withdraw      — withdraw cashback or CI points atomically
 router.post("/withdraw", withdrawFunds);

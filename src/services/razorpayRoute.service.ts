@@ -63,6 +63,19 @@ export interface RouteTransferResult {
   rawResponse?: any;
 }
 
+/** Subset of the Razorpay transfer entity we rely on. */
+export interface RazorpayTransferEntity {
+  id: string;
+  source?: string;
+  recipient?: string;
+  amount?: number;
+  on_hold?: boolean;
+  status?: string;
+  settlement_status?: string | null;
+  recipient_settlement_id?: string | null;
+  notes?: Record<string, string> | any[];
+}
+
 export interface ReversalResult {
   success: boolean;
   reversalId?: string;
@@ -546,6 +559,41 @@ export const razorpayRouteService = {
       }
       throw err;
     }
+  },
+
+  /**
+   * Transfers already made from a payment (GET /v1/payments/:id/transfers). Used before
+   * re-trying a transfer after a crash so the same seller share is never transferred twice.
+   */
+  async fetchPaymentTransfers(paymentId: string): Promise<RazorpayTransferEntity[]> {
+    if (routeStubOnly() || paymentId.startsWith("pay_stub_")) return [];
+    const headers = getRazorpayAuthHeaders();
+    const response = await axios.get(`${RAZORPAY_BASE_URL}/payments/${paymentId}/transfers`, { headers, timeout: 15000 });
+    return (response.data?.items || []) as RazorpayTransferEntity[];
+  },
+
+  /**
+   * All transfers settled in a linked-account settlement
+   * (GET /v1/transfers?recipient_settlement_id=setl_…, paginated with count/skip).
+   * The settlement.processed webhook names only the settlement, so this is how we find which
+   * of our transfers (and therefore which Settlement rows) it paid out.
+   */
+  async fetchTransfersForSettlement(recipientSettlementId: string): Promise<RazorpayTransferEntity[]> {
+    if (routeStubOnly()) return [];
+    const headers = getRazorpayAuthHeaders();
+    const all: RazorpayTransferEntity[] = [];
+    const count = 100;
+    for (let skip = 0; skip < 10000; skip += count) {
+      const response = await axios.get(`${RAZORPAY_BASE_URL}/transfers`, {
+        headers,
+        timeout: 15000,
+        params: { recipient_settlement_id: recipientSettlementId, count, skip },
+      });
+      const items = (response.data?.items || []) as RazorpayTransferEntity[];
+      all.push(...items);
+      if (items.length < count) break;
+    }
+    return all;
   },
 
   /**
