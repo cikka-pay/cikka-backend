@@ -1,10 +1,11 @@
-import { describe, it, expect, afterEach, beforeEach } from "vitest";
+import { describe, it, expect, afterEach, beforeEach, vi } from "vitest";
 import request from "supertest";
 import jwt from "jsonwebtoken";
 import app from "../../app";
 import { config } from "../../config/env";
 import { signAdminToken } from "../../utils/jwt";
 import { razorpayService } from "../../services/razorpay.service";
+import { prisma } from "../../config/prisma";
 
 const ORIGINAL_ENV = { ...process.env };
 const ORIGINAL_PROD = config.isProduction;
@@ -40,6 +41,12 @@ describe("Seller JWT verification", () => {
 });
 
 describe("Admin API protection", () => {
+  // Production refuses to sign or verify admin tokens without JWT_SECRET (no hardcoded
+  // fallback), so these production-mode checks run with one configured, as production does.
+  beforeEach(() => {
+    process.env.JWT_SECRET = "test-production-admin-jwt-secret";
+  });
+
   it("rejects admin data routes without a token", async () => {
     const res = await request(app).get("/api/admin/onboarding/applications");
     expect(res.status).toBe(401);
@@ -73,8 +80,25 @@ describe("Admin API protection", () => {
   });
 
   it("does not log in an unknown admin with the old default password", async () => {
-    const res = await request(app).post("/api/admin/auth/login").send({ email: "admin@cikka.in", password: "admin123" });
-    expect(res.status).toBe(401);
+    // No such admin exists; must not depend on a live DB.
+    const findSpy = vi.spyOn(prisma.adminUser, "findUnique").mockResolvedValue(null);
+    const createSpy = vi.spyOn(prisma.adminUser, "create");
+    try {
+      const res = await request(app).post("/api/admin/auth/login").send({ email: "admin@cikka.in", password: "admin123" });
+      expect(res.status).toBe(401);
+      expect(createSpy).not.toHaveBeenCalled();
+    } finally {
+      findSpy.mockRestore();
+      createSpy.mockRestore();
+    }
+  });
+
+  it("refuses to issue admin tokens in production when JWT_SECRET is missing", async () => {
+    delete process.env.JWT_SECRET;
+    process.env.SUPER_ADMIN_ACCESS_CODE = "the-real-code";
+    const res = await request(app).post("/api/admin/auth/verify-access-code").send({ accessCode: "the-real-code" });
+    expect(res.status).not.toBe(200);
+    expect(res.body.token).toBeUndefined();
   });
 });
 

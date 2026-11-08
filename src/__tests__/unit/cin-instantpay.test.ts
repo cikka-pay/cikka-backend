@@ -3,6 +3,7 @@ import request from "supertest";
 import app from "../../app";
 import { instantpayClient } from "../../external";
 import { signSellerToken } from "../../utils/jwt";
+import { INSTANTPAY_ERRORS } from "../../constants/errors";
 
 describe("InstantPay CIN Verification API Integration", () => {
   let verifyCinSpy: any;
@@ -42,13 +43,18 @@ describe("InstantPay CIN Verification API Integration", () => {
   it("should reject requests with missing CIN number", async () => {
     const res = await request(app).post("/api/kyc/verify-cin").set("Authorization", authHeader).send({});
     expect(res.status).toBe(400);
-    expect(res.body.error).toBe("Validation failed");
+    // validate() surfaces the first Zod issue as `error`; all issues are in `details`.
+    expect(res.body.error).toBe(INSTANTPAY_ERRORS.CIN_REQUIRED);
+    expect(res.body.details).toEqual([{ field: "cin", message: INSTANTPAY_ERRORS.CIN_REQUIRED }]);
+    expect(verifyCinSpy).not.toHaveBeenCalled();
   });
 
   it("should reject invalid CIN length/format", async () => {
     const res = await request(app).post("/api/kyc/verify-cin").set("Authorization", authHeader).send({ cin: "12345" });
     expect(res.status).toBe(400);
-    expect(res.body.error).toBe("Validation failed");
+    expect(res.body.error).toBe(INSTANTPAY_ERRORS.INVALID_CIN_FORMAT);
+    expect(res.body.details).toEqual([{ field: "cin", message: INSTANTPAY_ERRORS.INVALID_CIN_FORMAT }]);
+    expect(verifyCinSpy).not.toHaveBeenCalled();
   });
 
   it("should successfully verify valid CIN via InstantPay client", async () => {
