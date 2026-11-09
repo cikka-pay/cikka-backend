@@ -85,9 +85,16 @@ export const config = {
   instantpayEndpointIp: process.env.INSTANTPAY_ENDPOINT_IP || "127.0.0.1",
   instantpayEncryptionKey: process.env.INSTANTPAY_ENCRYPTION_KEY,
 
-  // MSG91 OTP credentials
+  // MSG91 SMS OTP credentials
   msg91AuthKey: process.env.MSG91_AUTH_KEY,
   msg91TemplateId: process.env.MSG91_TEMPLATE_ID,
+
+  // Meta WhatsApp Cloud API (Graph API v21.0)
+  metaWhatsappToken: process.env.META_WHATSAPP_TOKEN || process.env.WHATSAPP_TOKEN || "",
+  metaWhatsappPhoneNumberId: process.env.META_WHATSAPP_PHONE_NUMBER_ID || process.env.WHATSAPP_PHONE_NUMBER_ID || "",
+  metaWhatsappWabaId: process.env.META_WHATSAPP_WABA_ID || process.env.WHATSAPP_WABA_ID || "",
+  metaWhatsappVerifyToken: process.env.META_WHATSAPP_VERIFY_TOKEN || process.env.WHATSAPP_VERIFY_TOKEN || "",
+  metaWhatsappTemplateOrder: process.env.META_WHATSAPP_TEMPLATE_ORDER || "cikka_seller_new_order_alert",
 
   // Razorpay Gateway & Route Config
   razorpayKeyId: process.env.RAZORPAY_KEY_ID,
@@ -97,6 +104,9 @@ export const config = {
   // Shipway Experience API Config
   shipwayUsername: process.env.SHIPWAY_USERNAME,
   shipwayLicenseKey: process.env.SHIPWAY_LICENSE_KEY,
+  shipwayMockMode:
+    process.env.SHIPWAY_MOCK_MODE === "true" ||
+    (process.env.SHIPWAY_MOCK_MODE !== "false" && (process.env.EXTERNAL_SERVICES_MODE === "stub" || process.env.SHIPWAY_MOCK === "true")),
 
   // Google Cloud Storage
   gcsProjectId: process.env.GCS_PROJECT_ID,

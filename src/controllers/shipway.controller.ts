@@ -61,7 +61,10 @@ export const dispatchOrder = asyncHandler(async (req: Request, res: Response) =>
   // Resolve Seller Pickup Pincode from onboarding
   const pickupAddress = order.seller?.onboarding?.pickupAddress as any;
   const fromPincode = pickupAddress?.pincode || pickupAddress?.pin || "122008";
-  const toPincode = (order as any).pincode || "110001";
+  const toPincode = order.pincode || "110001";
+  const toAddress = order.shippingAddress || (order.customerCity ? `${order.customerCity}, Pincode: ${toPincode}` : "Delivery Address");
+  const toPhone = order.customerPhone || "9876543210";
+  const toEmail = order.customerEmail || "customer@cikka.club";
 
   // Calculate or use requested courier
   let selectedCarrier: any = null;
@@ -87,7 +90,9 @@ export const dispatchOrder = asyncHandler(async (req: Request, res: Response) =>
     carrier_name: selectedCarrier?.courier_name,
     carrier_id: selectedCarrier?.carrier_id,
     customer_name: order.customerName,
-    delivery_address: `${order.customerCity || "City"}, Pincode: ${toPincode}`,
+    customer_email: toEmail,
+    customer_phone: toPhone,
+    delivery_address: toAddress,
     city: order.customerCity || "Mumbai",
     pincode: toPincode,
     pickup_pincode: fromPincode,
@@ -513,25 +518,60 @@ export const getShipmentDetails = asyncHandler(async (req: Request, res: Respons
     return;
   }
 
+  const cleanId = String(orderId).replace(/^#/, "").trim();
+
+  // Check if order exists in DB
+  const existingOrder = await prisma.order.findFirst({
+    where: {
+      OR: [{ orderNumber: cleanId }, { orderNumber: `#${cleanId}` }, { id: cleanId }, { trackingNumber: cleanId }],
+    },
+    select: { id: true, status: true, trackingNumber: true, courier: true, customerName: true },
+  });
+
+  // If order is still PENDING, do NOT mark as shipped!
+  // It MUST stay in PENDING so the seller can click 'Pack Order' in the dashboard!
+  if (existingOrder && existingOrder.status === OrderStatus.PENDING) {
+    res.status(200).json({
+      success: true,
+      status: "Success",
+      response: {
+        current_status: "Order Placed",
+        current_status_code: "PLCD",
+        carrier: existingOrder.courier || "Delhivery Express Air (0.5kg)",
+        customer_name: existingOrder.customerName || "Customer",
+        scans: [
+          {
+            status: "Order Placed by Customer",
+            location: "Cikka Mall Marketplace",
+            timestamp: new Date().toISOString(),
+            time: "Just Now",
+            remarks: "Order placed. Awaiting seller packaging and AWB generation from dashboard.",
+          },
+        ],
+      },
+    });
+    return;
+  }
+
   const result = await shipwayService.getOrderShipmentDetails(orderId as string);
 
-  // Sync live tracking status to the database order record
+  // Sync live tracking status to the database order record ONLY IF order has already been packed/shipped
   const liveAwb = result?.response?.awbno;
   const liveCarrier = result?.response?.carrier;
   const liveStatusCode = result?.response?.current_status_code;
   const mappedStatus = liveStatusCode ? mapShipwayToPrismaStatus(liveStatusCode) : null;
 
-  if (mappedStatus || (liveAwb && !liveAwb.startsWith("AWB-") && !liveAwb.startsWith("R-SW"))) {
-    prisma.order.updateMany({
-      where: {
-        OR: [{ orderNumber: orderId as string }, { id: orderId as string }],
-      },
-      data: {
-        ...(liveAwb && { trackingNumber: liveAwb }),
-        ...(liveCarrier && { courier: liveCarrier }),
-        ...(mappedStatus && { status: mappedStatus }),
-      },
-    }).catch((e) => console.warn(`[Order Tracking Sync Notice]: ${e.message}`));
+  if (existingOrder && existingOrder.status !== OrderStatus.PENDING) {
+    if (mappedStatus || (liveAwb && !liveAwb.startsWith("AWB-") && !liveAwb.startsWith("R-SW"))) {
+      prisma.order.update({
+        where: { id: existingOrder.id },
+        data: {
+          ...(liveAwb && { trackingNumber: liveAwb }),
+          ...(liveCarrier && { courier: liveCarrier }),
+          ...(mappedStatus && { status: mappedStatus }),
+        },
+      }).catch((e) => console.warn(`[Order Tracking Sync Notice]: ${e.message}`));
+    }
   }
 
   res.status(200).json({

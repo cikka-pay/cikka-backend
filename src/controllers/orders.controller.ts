@@ -4,6 +4,8 @@ import { prisma } from "../config/prisma";
 import { Prisma, OrderStatus, WalletTxType } from "../generated/prisma/client";
 import { walletService } from "../services/wallet.service";
 import { shipwayService } from "../services/shipway.service";
+import { orderSlaService } from "../services/order-sla.service";
+import { metaWhatsAppService } from "../services/meta-whatsapp.service";
 
 export const listOrders = asyncHandler(async (req: Request, res: Response) => {
   const sellerId = req.seller!.id;
@@ -140,7 +142,7 @@ export const createOrder = asyncHandler(async (req: Request, res: Response) => {
 
   const sellerId = seller.id;
 
-  const { customerName, customerCity, totalAmount, customerEmail, customerPhone, deliveryAddress, sku, productId, items } = req.body;
+  const { customerName, customerCity, totalAmount, customerEmail, customerPhone, deliveryAddress, pincode, sku, productId, items } = req.body;
   const orderNumber = `ORD-${Date.now().toString().slice(-6)}`;
 
   // Find product by SKU or productId if provided
@@ -156,6 +158,7 @@ export const createOrder = asyncHandler(async (req: Request, res: Response) => {
   }
 
   const finalAmount = totalAmount || (targetProduct ? Number(targetProduct.price) : 32989);
+  const sla = orderSlaService.calculateSlaDeadlines();
 
   let order;
   try {
@@ -164,11 +167,17 @@ export const createOrder = asyncHandler(async (req: Request, res: Response) => {
         sellerId,
         orderNumber,
         customerName: customerName || "Cikka Customer",
+        customerEmail: customerEmail || null,
+        customerPhone: customerPhone || null,
         customerCity: customerCity || "Mumbai",
+        shippingAddress: deliveryAddress || null,
+        pincode: pincode || null,
         totalAmount: finalAmount,
         status: OrderStatus.PENDING,
         courier: null,
         trackingNumber: null,
+        packDeadline: sla.packDeadline,
+        cancellationDeadline: sla.cancellationDeadline,
         ...(targetProduct && {
           items: {
             create: [
@@ -189,6 +198,32 @@ export const createOrder = asyncHandler(async (req: Request, res: Response) => {
     console.error(`[Order Creation DB Error]`, dbError);
     res.status(500).json({ error: dbError.message || "Failed to create order in database" });
     return;
+  }
+
+  // Automated Meta WhatsApp alert to seller
+  const sellerPhone = seller.phone || (seller as any)?.onboarding?.signatoryMobile;
+  const sellerBiz = seller.businessName || (seller as any)?.onboarding?.businessName || "Seller Partner";
+  if (sellerPhone) {
+    metaWhatsAppService.sendNewOrderAlert({
+      sellerPhone,
+      sellerName: sellerBiz,
+      orderNumber,
+      quantity: 1,
+      productName: targetProduct?.name || "Curated Mall Product",
+      skuId: targetProduct?.sku || "SKU-CIKKA",
+      packDeadlineFormatted: sla.packDeadlineFormatted,
+      cancellationDeadlineFormatted: sla.cancellationDeadlineFormatted,
+    }).then((waRes) => {
+      if (waRes.success && waRes.messageId) {
+        prisma.order.update({
+          where: { id: order.id },
+          data: {
+            whatsappNotifiedAt: new Date(),
+            whatsappMessageId: waRes.messageId,
+          },
+        }).catch(() => {});
+      }
+    }).catch(() => {});
   }
 
   res.status(201).json({
@@ -223,14 +258,17 @@ export const updateOrderStatus = asyncHandler(async (req: Request, res: Response
   if (status === "PACKED" && !assignedAwb) {
     const pickupAddress = order.seller?.onboarding?.pickupAddress as any;
     const fromPincode = pickupAddress?.pincode || pickupAddress?.pin || "122008";
-    const toPincode = (order as any).pincode || "400001";
+    const toPincode = order.pincode || "400001";
+    const toAddress = order.shippingAddress || (order.customerCity ? `${order.customerCity}, Pincode: ${toPincode}` : "Delivery Address");
+    const toEmail = order.customerEmail || "customer@cikka.club";
+    const toPhone = order.customerPhone || "9876543210";
 
     const pushRes = await shipwayService.pushOrderData({
       order_id: order.orderNumber,
       customer_name: order.customerName,
-      customer_email: (order as any).customerEmail || "customer@cikka.club",
-      customer_phone: (order as any).customerPhone || "9876543210",
-      delivery_address: `${order.customerCity || "Mumbai"}, India`,
+      customer_email: toEmail,
+      customer_phone: toPhone,
+      delivery_address: toAddress,
       city: order.customerCity || "Mumbai",
       pincode: toPincode,
       pickup_pincode: fromPincode,
@@ -265,6 +303,20 @@ export const updateOrderStatus = asyncHandler(async (req: Request, res: Response
   });
 
   const labelUrl = assignedAwb ? `https://app.shipway.com/label/${encodeURIComponent(assignedAwb)}` : null;
+  if (status === "PACKED" && labelUrl) {
+    const sellerPhone = order.seller?.phone || (order.seller?.onboarding as any)?.signatoryMobile;
+    if (sellerPhone) {
+      metaWhatsAppService.sendShippingLabelDocument({
+        sellerPhone,
+        orderNumber: order.orderNumber,
+        awbNumber: assignedAwb,
+        courierName: assignedCourier,
+        labelUrl,
+      }).catch((waErr: any) => {
+        console.warn(`[WhatsApp Label Dispatch Notice] Order #${order.orderNumber}:`, waErr.message);
+      });
+    }
+  }
   res.json({
     ...updatedOrder,
     labelUrl,

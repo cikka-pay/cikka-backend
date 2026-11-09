@@ -131,14 +131,25 @@ export const updateReturnStatus = asyncHandler(async (req: Request, res: Respons
   if (status === "APPROVED" || status === "REFUNDED") {
     try {
       // Find the pending settlement associated with this seller and order
-      const settlement = await prisma.settlement.findFirst({
+      const settlement = (await prisma.settlement.findFirst({
+        where: {
+          sellerId,
+          transferStatus: "ON_HOLD",
+          razorpayTransferId: { not: null },
+          OR: [
+            { orderId: ret.order.id },
+            { orderNumber: ret.order.orderNumber },
+          ],
+        },
+        orderBy: { createdAt: "desc" },
+      })) || (await prisma.settlement.findFirst({
         where: {
           sellerId,
           transferStatus: "ON_HOLD",
           razorpayTransferId: { not: null },
         },
         orderBy: { createdAt: "desc" },
-      });
+      }));
 
       if (settlement && settlement.razorpayTransferId) {
         console.log(`[Return Clawback] Initiating reversal for transfer ${settlement.razorpayTransferId}`);

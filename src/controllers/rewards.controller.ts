@@ -5,6 +5,8 @@ import { razorpayRouteService } from "../services/razorpayRoute.service";
 import { calculateSettlementBreakdown } from "../services/settlementCalculator.service";
 import { getSellerSettlementProfile } from "../services/settlement.service";
 import { shipwayService } from "../services/shipway.service";
+import { orderSlaService } from "../services/order-sla.service";
+import { metaWhatsAppService } from "../services/meta-whatsapp.service";
 import { walletService } from "../services/wallet.service";
 import { asyncHandler } from "../utils/asyncHandler";
 import { prisma } from "../config/prisma";
@@ -416,7 +418,8 @@ async function executeRedemptionFulfillment(params: {
     data: { stockQty: { decrement: 1 } },
   });
 
-  // 4. Create Order & OrderItem in Prisma DB (Linked to userId and redemptionId)
+  // 4. Calculate SLA & Create Order in Prisma DB (Linked to userId and redemptionId, PENDING packing)
+  const rewardsSla = orderSlaService.calculateSlaDeadlines();
   const dbOrder = await prisma.order.create({
     data: {
       sellerId: seller.id,
@@ -428,6 +431,8 @@ async function executeRedemptionFulfillment(params: {
       status: OrderStatus.PENDING,
       trackingNumber: null,
       courier: carrier_name || null,
+      packDeadline: rewardsSla.packDeadline,
+      cancellationDeadline: rewardsSla.cancellationDeadline,
       items: {
         create: [
           {
@@ -569,6 +574,34 @@ async function executeRedemptionFulfillment(params: {
       },
     },
   }).catch(() => {});
+
+  // 10. Automated Meta WhatsApp alert to seller
+  const rewardsSellerPhone = seller.phone || (seller.onboarding as any)?.signatoryMobile;
+  const rewardsSellerBiz = seller.businessName || (seller.onboarding as any)?.businessName || "Seller Partner";
+  if (rewardsSellerPhone) {
+    metaWhatsAppService.sendNewOrderAlert({
+      sellerPhone: rewardsSellerPhone,
+      sellerName: rewardsSellerBiz,
+      orderNumber: finalOrderId,
+      quantity: 1,
+      productName: product_name,
+      skuId: "SKU-REWARDS",
+      packDeadlineFormatted: rewardsSla.packDeadlineFormatted,
+      cancellationDeadlineFormatted: rewardsSla.cancellationDeadlineFormatted,
+    }).then((waRes) => {
+      if (waRes.success && waRes.messageId) {
+        prisma.order.update({
+          where: { id: dbOrder.id },
+          data: {
+            whatsappNotifiedAt: new Date(),
+            whatsappMessageId: waRes.messageId,
+          },
+        }).catch(() => {});
+      }
+    }).catch((waErr: any) => {
+      console.warn(`[Meta WhatsApp Rewards Alert Warning]:`, waErr.message);
+    });
+  }
 
   return {
     order_id: finalOrderId,

@@ -402,7 +402,11 @@ model Order {
 
   orderNumber     String      @unique
   customerName    String
+  customerEmail   String?
+  customerPhone   String?
   customerCity    String?
+  shippingAddress String?     @db.Text
+  pincode         String?
   status          OrderStatus @default(PENDING)
   totalAmount     Decimal     @db.Decimal(10, 2)
 
@@ -410,6 +414,14 @@ model Order {
   trackingNumber  String?
   courier         String?     // Courier partner name e.g. "Delhivery", "Blue Dart"
   deliveredAt     DateTime?   // Timestamp when package reached the customer (triggers T+7 hold countdown)
+
+  // WhatsApp Automation & SLA Tracking
+  packDeadline         DateTime?   // Initial deadline for seller to pack (e.g. Next Day 12:00 PM)
+  cancellationDeadline DateTime?   // Hard SLA auto-cancel deadline (packDeadline + 48 hours)
+  whatsappNotifiedAt   DateTime?   // Timestamp when WhatsApp alert was dispatched
+  whatsappMessageId    String?     // Meta WhatsApp Cloud API outbound message identifier
+  whatsappActionAt     DateTime?   // When seller clicked Pack or Cancel in WhatsApp
+  whatsappActionTaken  String?     // "PACK" | "CANCEL" | null
 
   createdAt    DateTime    @default(now())
   updatedAt    DateTime    @updatedAt
@@ -422,6 +434,7 @@ model Order {
   @@index([sellerId, createdAt])
   @@index([sellerId, status])
   @@index([userId])
+  @@index([pincode])
   @@map("orders")
 }
 

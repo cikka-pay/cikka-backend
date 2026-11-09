@@ -24,6 +24,7 @@ import paymentRoutes from "./payment.routes";
 import reviewsRoutes from "./reviews.routes";
 import rewardsRoutes from "./rewards.routes";
 import shipwayRoutes from "./shipway.routes";
+import whatsappRoutes from "./whatsapp.routes";
 import userAddressRoutes from "./user-address.routes";
 import userNotificationRoutes from "./user-notification.routes";
 import userVoucherRoutes from "./user-voucher.routes";
@@ -90,6 +91,9 @@ router.use("/rewards", rewardsRoutes);
 
 // Shipway Experience Endpoints (/api/shipway/...)
 router.use("/shipway", shipwayRoutes);
+// Meta WhatsApp Cloud API Webhooks (/api/whatsapp/webhook, /api/webhooks/whatsapp)
+router.use("/whatsapp", whatsappRoutes);
+router.use("/webhooks/whatsapp", whatsappRoutes);
 
 
 // Return Request Endpoint (Customer App / Postman)

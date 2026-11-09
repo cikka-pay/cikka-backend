@@ -11,6 +11,8 @@ import { calculateSettlementBreakdown } from "../services/settlementCalculator.s
 import { shipwayService } from "../services/shipway.service";
 import { walletService } from "../services/wallet.service";
 import { asyncHandler } from "../utils/asyncHandler";
+import { orderSlaService } from "../services/order-sla.service";
+import { metaWhatsAppService } from "../services/meta-whatsapp.service";
 
 /**
  * POST /api/payment/create-order
@@ -105,6 +107,10 @@ async function findOrCreateSeller(pickupPincode: string, categoryHint?: string):
         );
         if (s) return s;
       }
+      const activeSeller = allSellers
+        .filter((s) => s.businessName && s.businessName.trim().length > 0)
+        .sort((a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime())[0];
+      if (activeSeller) return activeSeller;
       return allSellers[0];
     }
 
@@ -414,7 +420,25 @@ export async function executeOrderFulfillmentPipeline(params: OrderFulfillmentPa
       Number(item.price) ||
       (amount ? Number(amount) / (100 * rawItems.length) : 3499);
 
-    const seller = await findOrCreateSeller(itemPickupPincode, category);
+    let seller = null;
+    if (item.sellerId) {
+      seller = await prisma.seller.findUnique({
+        where: { id: item.sellerId },
+        include: { onboarding: true, commissionConfig: true },
+      });
+    }
+    if (!seller && (item.id || item.productId)) {
+      const existingProd = await prisma.product.findUnique({
+        where: { id: item.id || item.productId },
+        include: { seller: { include: { onboarding: true, commissionConfig: true } } },
+      });
+      if (existingProd?.seller) {
+        seller = existingProd.seller;
+      }
+    }
+    if (!seller) {
+      seller = await findOrCreateSeller(itemPickupPincode, category);
+    }
     if (!seller) {
       throw new Error(`Unable to resolve merchant partner for pickup pincode ${itemPickupPincode}`);
     }
@@ -450,26 +474,40 @@ export async function executeOrderFulfillmentPipeline(params: OrderFulfillmentPa
       rawItems.length > 1 ? `${razorpay_order_id}-${itemIdx}` : razorpay_order_id;
 
     try {
-      // 3. Create Order & OrderItem in Prisma DB (PENDING seller packing)
+      // 3. Calculate SLA deadlines & create Order in Prisma DB (PENDING seller packing)
+      const orderSla = orderSlaService.calculateSlaDeadlines();
       const createdOrder = await prisma.order.upsert({
         where: { orderNumber: itemOrderId },
         update: {
           totalAmount: Number(itemPrice),
           userId: params.userId || undefined,
+          customerEmail: customer_email || null,
+          customerPhone: customer_phone || null,
+          customerCity: customerCity,
+          shippingAddress: delivery_address || null,
+          pincode: destPincode,
           trackingNumber: null,
           courier: itemCarrier,
           status: OrderStatus.PENDING,
+          packDeadline: orderSla.packDeadline,
+          cancellationDeadline: orderSla.cancellationDeadline,
         },
         create: {
           sellerId: seller.id,
           userId: params.userId || null,
           orderNumber: itemOrderId,
           customerName: customer_name || "Cikka Mall Customer",
-          customerCity: `${customerCity} (${destPincode})`,
+          customerEmail: customer_email || null,
+          customerPhone: customer_phone || null,
+          customerCity: customerCity,
+          shippingAddress: delivery_address || null,
+          pincode: destPincode,
           totalAmount: Number(itemPrice),
           status: OrderStatus.PENDING,
           trackingNumber: null,
           courier: itemCarrier,
+          packDeadline: orderSla.packDeadline,
+          cancellationDeadline: orderSla.cancellationDeadline,
           items: {
             create: [
               {
@@ -500,6 +538,31 @@ export async function executeOrderFulfillmentPipeline(params: OrderFulfillmentPa
       console.log(
         `[Prisma DB Order Created] #${itemOrderId} (${name}, Origin: ${itemPickupPincode}) assigned to Seller #${seller.id} -> Status: PENDING (Ready to Pack)`
       );
+
+      // Push order to Shipway as 'Pending' order (created on placement, dispatched on 'Pack Order')
+      shipwayService.pushOrderData({
+        order_id: itemOrderId,
+        order_status: "Pending",
+        shipment_status: "PLACED",
+        customer_name: customer_name || "Cikka Mall Customer",
+        customer_email: customer_email || "customer@cikka.club",
+        customer_phone: customer_phone || "9876549812",
+        delivery_address: delivery_address || `${customerCity} (${destPincode})`,
+        city: customerCity || "Mumbai",
+        pincode: destPincode || "400001",
+        pickup_pincode: itemPickupPincode || "122008",
+        total_amount: Number(itemPrice),
+        products: [
+          {
+            product: name,
+            price: Number(itemPrice),
+            product_code: String(productId),
+            product_quantity: item.qty || 1,
+          },
+        ],
+      }).catch((swErr: any) => {
+        console.warn(`[Shipway Creation Notice] Order #${itemOrderId}: ${swErr.message}`);
+      });
 
       // 4. Resolve Seller Settlement Profile (Admin Commission & Settlement Cycle) with Express Split logic
       const profile = await getSellerSettlementProfile(seller.id, category);
@@ -643,6 +706,36 @@ export async function executeOrderFulfillmentPipeline(params: OrderFulfillmentPa
           },
         },
       }).catch(() => { });
+
+      // 9. Automated WhatsApp Order Alert to Seller via Meta WhatsApp Cloud API
+      const sellerPhone = seller.phone || (seller.onboarding as any)?.signatoryMobile;
+      const sellerBizName = seller.businessName || (seller.onboarding as any)?.businessName || "Seller Partner";
+      const productSku = (createdOrder.items?.[0] as any)?.product?.sku || (item as any)?.sku || "SKU-CIKKA";
+
+      if (sellerPhone) {
+        metaWhatsAppService.sendNewOrderAlert({
+          sellerPhone,
+          sellerName: sellerBizName,
+          orderNumber: itemOrderId,
+          quantity: item.qty || 1,
+          productName: name,
+          skuId: productSku,
+          packDeadlineFormatted: orderSla.packDeadlineFormatted,
+          cancellationDeadlineFormatted: orderSla.cancellationDeadlineFormatted,
+        }).then((waRes) => {
+          if (waRes.success && waRes.messageId) {
+            prisma.order.update({
+              where: { id: createdOrder.id },
+              data: {
+                whatsappNotifiedAt: new Date(),
+                whatsappMessageId: waRes.messageId,
+              },
+            }).catch(() => {});
+          }
+        }).catch((err) => {
+          console.warn(`[Meta WhatsApp Dispatch Warning] Order #${itemOrderId}:`, err.message);
+        });
+      }
 
       processedOrders.push({
         order_number: itemOrderId,
