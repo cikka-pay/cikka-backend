@@ -34,6 +34,16 @@ describe("RewardsCalcService - Unified Calculation Engine", () => {
       expect(res500.ciPointsRange).toEqual([45, 55]);
     });
 
+    it("amounts with paise between slab boundaries still match a slab", () => {
+      expect(RewardsCalcService.findSlab(10.5)?.id).toBe("S1");
+      expect(RewardsCalcService.findSlab(50.4)?.id).toBe("S2");
+      expect(RewardsCalcService.findSlab(100.99)?.id).toBe("S3");
+      expect(RewardsCalcService.findSlab(1000.4)?.id).toBe("S4");
+      expect(RewardsCalcService.findSlab(100000.5)?.id).toBe("S10");
+      expect(RewardsCalcService.findSlab(11)?.id).toBe("S2");
+      expect(RewardsCalcService.calculateBillPaymentRewards(50.5).ciPointsEarned).toBeGreaterThan(0);
+    });
+
     it("Slab S5 (₹1,001 - ₹5,000): supports ₹4,300 benchmark and deterministic seeded PRNG", () => {
       const res4300 = RewardsCalcService.calculateBillPaymentRewards(4300);
       expect(res4300.slabId).toBe("S5");

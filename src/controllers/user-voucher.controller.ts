@@ -3,31 +3,17 @@ import { prisma } from "../config/prisma";
 import { asyncHandler } from "../utils/asyncHandler";
 
 export const listUserVouchers = asyncHandler(async (req: Request, res: Response) => {
-  const authUserId = (req as any).user?.id;
-  const queryPhone = req.query.phone as string | undefined;
-
-  let resolvedUserId = authUserId;
-  if (!resolvedUserId && queryPhone) {
-    const cleanPhone = String(queryPhone).replace(/\D/g, "").slice(-10);
-    const user = await prisma.user.findFirst({
-      where: {
-        OR: [
-          { phone: { contains: cleanPhone } },
-          { phone: cleanPhone },
-          { phone: `+91${cleanPhone}` },
-        ],
-      },
-    });
-    if (user) resolvedUserId = user.id;
+  const authUserId = req.user?.id;
+  if (!authUserId) {
+    res.status(401).json({ success: false, error: "Authentication required" });
+    return;
   }
 
-  let dbVouchers: any[] = [];
-  if (resolvedUserId) {
-    dbVouchers = await prisma.userVoucher.findMany({
-      where: { userId: resolvedUserId },
-      orderBy: { createdAt: "desc" },
-    });
-  }
+  // Vouchers are only ever listed for the authenticated user (never by a phone number in the query)
+  const dbVouchers: any[] = await prisma.userVoucher.findMany({
+    where: { userId: authUserId },
+    orderBy: { createdAt: "desc" },
+  });
 
   // Only real vouchers purchased by the user from PostgreSQL
   const vouchers = dbVouchers;
@@ -100,6 +86,7 @@ export const getVoucherById = asyncHandler(async (req: Request, res: Response) =
   const { id } = req.params;
   const voucher = await prisma.userVoucher.findFirst({
     where: {
+      userId: req.user!.id,
       OR: [{ id }, { orderReference: id }],
     },
   });
@@ -121,7 +108,7 @@ export const updateVoucherStatus = asyncHandler(async (req: Request, res: Respon
     return;
   }
 
-  const existing = await prisma.userVoucher.findUnique({ where: { id } });
+  const existing = await prisma.userVoucher.findFirst({ where: { id, userId: req.user!.id } });
   if (!existing) {
     res.status(404).json({ success: false, error: "Voucher not found" });
     return;

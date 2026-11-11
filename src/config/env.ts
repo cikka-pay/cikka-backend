@@ -40,14 +40,14 @@ export const config = {
   setuClientId: (() => {
     const isUat = (process.env.SETU_ENVIRONMENT || "uat").toLowerCase() !== "production";
     if (isUat) {
-      return process.env.SETU_UAT_CLIENT_ID || "07579493-0c07-496b-b14c-7eef9d65f335";
+      return process.env.SETU_UAT_CLIENT_ID || process.env.SETU_CLIENT_ID || "";
     }
     return process.env.SETU_PROD_CLIENT_ID || process.env.SETU_CLIENT_ID || "";
   })(),
   setuSecret: (() => {
     const isUat = (process.env.SETU_ENVIRONMENT || "uat").toLowerCase() !== "production";
     if (isUat) {
-      return process.env.SETU_UAT_CLIENT_SECRET || "t8C8QxsXYdmMJYmDXwUUUBokKZL2q36t";
+      return process.env.SETU_UAT_CLIENT_SECRET || process.env.SETU_SECRET || "";
     }
     return process.env.SETU_PROD_CLIENT_SECRET || process.env.SETU_CLIENT_SECRET || "";
   })(),
@@ -94,6 +94,8 @@ export const config = {
   metaWhatsappPhoneNumberId: process.env.META_WHATSAPP_PHONE_NUMBER_ID || process.env.WHATSAPP_PHONE_NUMBER_ID || "",
   metaWhatsappWabaId: process.env.META_WHATSAPP_WABA_ID || process.env.WHATSAPP_WABA_ID || "",
   metaWhatsappVerifyToken: process.env.META_WHATSAPP_VERIFY_TOKEN || process.env.WHATSAPP_VERIFY_TOKEN || "",
+  // Meta App Secret — used to verify the X-Hub-Signature-256 header on inbound webhooks
+  metaWhatsappAppSecret: process.env.META_WHATSAPP_APP_SECRET || process.env.WHATSAPP_APP_SECRET || "",
   metaWhatsappTemplateOrder: process.env.META_WHATSAPP_TEMPLATE_ORDER || "cikka_seller_new_order_alert",
 
   // Razorpay Gateway & Route Config

@@ -9,6 +9,7 @@ import {
   setuReceiptService,
   setuSettlementService,
 } from "../services/setu";
+import { BbpsPaymentError } from "../services/setu/setuPayment.service";
 
 export const getBillers = asyncHandler(async (req: Request, res: Response) => {
   const category = req.query.category as string | undefined;
@@ -89,17 +90,39 @@ export const getBillDetails = asyncHandler(async (req: Request, res: Response) =
 
 export const payBill = asyncHandler(async (req: Request, res: Response) => {
   const userId = req.user?.id || null;
-  const { platformBillId, amount, paymentMode, billerId, customerParams, idempotencyKey } = req.body;
-
-  const result = await setuPaymentService.payBillService({
-    userId,
+  const {
     platformBillId,
-    amount: Number(amount),
-    paymentMode: paymentMode || "UPI",
+    amount,
+    paymentMode,
     billerId,
     customerParams,
     idempotencyKey,
-  });
+    razorpay_order_id,
+    razorpay_payment_id,
+    razorpay_signature,
+  } = req.body;
+
+  let result;
+  try {
+    result = await setuPaymentService.payBillService({
+      userId,
+      platformBillId,
+      amount: Number(amount),
+      paymentMode: paymentMode || "UPI",
+      billerId,
+      customerParams,
+      idempotencyKey,
+      razorpayOrderId: razorpay_order_id,
+      razorpayPaymentId: razorpay_payment_id,
+      razorpaySignature: razorpay_signature,
+    });
+  } catch (err) {
+    if (err instanceof BbpsPaymentError) {
+      res.status(err.httpStatus).json({ success: false, error: err.message });
+      return;
+    }
+    throw err;
+  }
 
   res.status(result.status === "FAILED" ? 400 : 200).json({
     success: result.status !== "FAILED",
@@ -116,10 +139,11 @@ export const getTransactions = asyncHandler(async (req: Request, res: Response) 
   const category = req.query.category as string | undefined;
   const status = req.query.status as string | undefined;
 
-  const whereClause: any = {};
-  if (userId) {
-    whereClause.userId = userId;
+  if (!userId) {
+    res.status(401).json({ success: false, error: "Authentication required" });
+    return;
   }
+  const whereClause: any = { userId };
   if (category) {
     whereClause.category = { equals: category, mode: "insensitive" };
   }
@@ -170,6 +194,7 @@ export const getTransactionById = asyncHandler(async (req: Request, res: Respons
   const { id } = req.params;
   const tx = await prisma.bbpsTransaction.findFirst({
     where: {
+      userId: req.user!.id,
       OR: [{ id }, { internalTxnId: id }, { refID: id }, { platformBillId: id }],
     },
   });
@@ -205,7 +230,7 @@ export const getTransactionById = asyncHandler(async (req: Request, res: Respons
 
 export const getTransactionReceipt = asyncHandler(async (req: Request, res: Response) => {
   const { id } = req.params;
-  const receipt = await setuReceiptService.getTransactionReceiptService(id);
+  const receipt = await setuReceiptService.getTransactionReceiptService(id, req.user!.id);
 
   if (!receipt) {
     res.status(404).json({

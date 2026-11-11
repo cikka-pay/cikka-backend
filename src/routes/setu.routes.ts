@@ -38,10 +38,17 @@ router.post("/refund", ...setuAuthGuard, validate({ body: processRefundSchema })
  * Endpoints for Setu Bridge "Step 2 — Test bill fetch and notifications"
  */
 import { handleBillsFetch, handleBillsFetchReceipt, handleNotifications } from "../controllers/setu.controller";
-router.post("/bills/fetch", handleBillsFetch);
-router.post("/fetch", handleBillsFetch);
-router.post("/bills/fetchReceipt", handleBillsFetchReceipt);
-router.post("/fetchReceipt", handleBillsFetchReceipt);
+import { config } from "../config/env";
+
+// Mock bill-fetch responders for Setu Bridge sandbox testing — never exposed in production.
+if (!config.isProduction) {
+  router.post("/bills/fetch", handleBillsFetch);
+  router.post("/fetch", handleBillsFetch);
+  router.post("/bills/fetchReceipt", handleBillsFetchReceipt);
+  router.post("/fetchReceipt", handleBillsFetchReceipt);
+}
+
+// BillPay webhook (authenticated via X-BILL-WEBHOOK-API-KEY inside the handler)
 router.post("/notifications", handleNotifications);
 router.get("/notifications", (_req, res) => res.json({ status: "ok" }));
 

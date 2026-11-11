@@ -12,7 +12,7 @@ import {
   getSettlements,
   reconcilePending,
 } from "../controllers/cikka-pay.controller";
-import { optionalUserAuth, requireUserAuth } from "../middleware/auth.middleware";
+import { optionalUserAuth, requireAdminAuth, requireUserAuth } from "../middleware/auth.middleware";
 import { validate } from "../middleware/validate.middleware";
 import {
   validateCustomerSchema,
@@ -40,11 +40,11 @@ router.post("/pay", requireUserAuth, validate({ body: payBillSchema }), payBill)
 
 // Transaction History & Tracking
 router.get("/transactions", requireUserAuth, getTransactions);
-router.get("/transactions/:id", getTransactionById);
-router.get("/transactions/:id/receipt", getTransactionReceipt);
+router.get("/transactions/:id", requireUserAuth, getTransactionById);
+router.get("/transactions/:id/receipt", requireUserAuth, getTransactionReceipt);
 
 // Settlement & Reconciliation (Admin / Ops Guarded)
-router.get("/settlements", requireUserAuth, getSettlements);
-router.post("/reconcile", requireUserAuth, reconcilePending);
+router.get("/settlements", requireAdminAuth, getSettlements);
+router.post("/reconcile", requireAdminAuth, reconcilePending);
 
 export default router;

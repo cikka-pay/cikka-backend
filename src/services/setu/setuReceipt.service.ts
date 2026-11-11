@@ -27,12 +27,16 @@ import { inMemoryTransactions } from "./setuPayment.service";
 /**
  * Retrieves official BBPS receipt details for a transaction.
  */
-export async function getTransactionReceiptService(txnIdentifier: string): Promise<BbpsReceiptData | null> {
+export async function getTransactionReceiptService(
+  txnIdentifier: string,
+  ownerUserId?: string
+): Promise<BbpsReceiptData | null> {
   let tx: any = null;
 
   try {
     tx = await prisma.bbpsTransaction.findFirst({
       where: {
+        ...(ownerUserId ? { userId: ownerUserId } : {}),
         OR: [
           { id: txnIdentifier },
           { internalTxnId: txnIdentifier },
@@ -43,8 +47,9 @@ export async function getTransactionReceiptService(txnIdentifier: string): Promi
     });
   } catch (_e) {}
 
-  if (!tx && inMemoryTransactions.has(txnIdentifier)) {
-    const memTx = inMemoryTransactions.get(txnIdentifier);
+  const memCandidate = inMemoryTransactions.get(txnIdentifier);
+  if (!tx && memCandidate && (!ownerUserId || memCandidate.userId === ownerUserId)) {
+    const memTx = memCandidate;
     tx = {
       internalTxnId: memTx.internalTxnId,
       refID: memTx.refID,

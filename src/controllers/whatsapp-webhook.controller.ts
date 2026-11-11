@@ -1,3 +1,4 @@
+import crypto from "crypto";
 import { Request, Response } from "express";
 import { asyncHandler } from "../utils/asyncHandler";
 import { prisma } from "../config/prisma";
@@ -11,6 +12,19 @@ import { config } from "../config/env";
  */
 function normalizeDigits(phone: string): string {
   return phone.replace(/\D/g, "");
+}
+
+function lastTenDigits(phone: string): string {
+  return normalizeDigits(phone).slice(-10);
+}
+
+/** Constant-time check of Meta's `X-Hub-Signature-256: sha256=<hex>` header. */
+function isValidMetaSignature(rawBody: string, header: unknown, appSecret: string): boolean {
+  if (typeof header !== "string" || !header.startsWith("sha256=")) return false;
+  const expected = crypto.createHmac("sha256", appSecret).update(rawBody, "utf8").digest("hex");
+  const a = Buffer.from(header.slice("sha256=".length), "utf8");
+  const b = Buffer.from(expected, "utf8");
+  return a.length === b.length && crypto.timingSafeEqual(a, b);
 }
 
 /**
@@ -57,7 +71,7 @@ export const verifyWhatsappWebhook = (req: Request, res: Response) => {
   const token = req.query["hub.verify_token"];
   const challenge = req.query["hub.challenge"];
 
-  console.log(`[Meta WhatsApp Webhook Handshake] mode=${mode}, verify_token=${token}`);
+  console.log(`[Meta WhatsApp Webhook Handshake] mode=${mode}`);
 
   if (mode && token) {
     if (mode === "subscribe" && config.metaWhatsappVerifyToken && token === config.metaWhatsappVerifyToken) {
@@ -65,7 +79,7 @@ export const verifyWhatsappWebhook = (req: Request, res: Response) => {
       res.status(200).send(challenge);
       return;
     }
-    console.warn(`[Meta WhatsApp Webhook Handshake Failed] Token mismatch. Received: "${token}", Expected: "${config.metaWhatsappVerifyToken}"`);
+    console.warn(`[Meta WhatsApp Webhook Handshake Failed] Verify token mismatch.`);
     res.status(403).send("Forbidden: Verification Token Mismatch");
     return;
   }
@@ -79,6 +93,21 @@ export const verifyWhatsappWebhook = (req: Request, res: Response) => {
  * Handles incoming WhatsApp button clicks: [Pack Order] and [Cancel Order]
  */
 export const handleWhatsappWebhook = asyncHandler(async (req: Request, res: Response) => {
+  // Only Meta may call this endpoint: verify the X-Hub-Signature-256 HMAC of the raw body.
+  const appSecret = config.metaWhatsappAppSecret;
+  if (config.isProduction || appSecret) {
+    if (!appSecret) {
+      console.error("[Meta WhatsApp Webhook] META_WHATSAPP_APP_SECRET is not configured; rejecting webhook.");
+      res.status(503).json({ success: false, error: "Webhook not configured" });
+      return;
+    }
+    const rawBody: string | undefined = (req as any).rawBody;
+    if (!rawBody || !isValidMetaSignature(rawBody, req.headers["x-hub-signature-256"], appSecret)) {
+      res.status(401).json({ success: false, error: "Invalid webhook signature" });
+      return;
+    }
+  }
+
   const event = extractWebhookEvent(req.body);
 
   if (!event || (!event.actionPayload && !event.buttonText)) {
@@ -138,7 +167,14 @@ export const handleWhatsappWebhook = asyncHandler(async (req: Request, res: Resp
     return;
   }
 
-  const sellerPhone = order.seller.phone || senderPhone;
+  // Only the seller who owns the order may pack or cancel it from WhatsApp.
+  if (!order.seller.phone || lastTenDigits(order.seller.phone) !== lastTenDigits(senderPhone)) {
+    console.warn(`[Meta WhatsApp Webhook] Sender is not the seller for order #${order.orderNumber}; ignoring.`);
+    res.status(200).json({ success: false, error: "Sender is not authorised for this order" });
+    return;
+  }
+
+  const sellerPhone = order.seller.phone;
 
   // =========================================================================
   // ACTION: PACK ORDER

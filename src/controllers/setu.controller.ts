@@ -6,6 +6,11 @@ import {
   processRefundService,
   checkPaymentStatusService,
 } from "../services/setu.service";
+import {
+  handleBillpayWebhook,
+  verifyBillpayWebhookApiKey,
+  type BillpayWebhookPayload,
+} from "../services/billpayWebhook.service";
 
 /**
  * POST /setu/v1/checkStatus (Check Status URL for WL + Custom Payment)
@@ -184,15 +189,29 @@ export const handleBillsFetchReceipt = asyncHandler(async (_req: Request, res: R
 });
 
 /**
- * POST /notifications
- * Receives Setu payment & settlement webhooks
+ * POST /notifications, POST /api/bbps/webhook
+ * Receives Setu BillPay webhooks (payment, refund, dispute, fetch events).
+ * Authenticated with the X-BILL-WEBHOOK-API-KEY header; processed idempotently by
+ * billpayWebhook.service. A processing error answers 500 so Setu retries.
  */
 export const handleNotifications = asyncHandler(async (req: Request, res: Response) => {
-  console.log("[Setu Notifications Webhook] Received payload:", JSON.stringify(req.body));
-  res.status(200).json({
-    status: 200,
-    success: true,
-    message: "Notification acknowledged successfully",
-  });
+  if (!verifyBillpayWebhookApiKey(req.headers["x-bill-webhook-api-key"])) {
+    res.status(401).json({ success: false, error: "Invalid or missing webhook API key" });
+    return;
+  }
+
+  const payload = req.body;
+  if (!payload || typeof payload !== "object" || typeof payload.event !== "string" || !payload.event) {
+    res.status(400).json({ success: false, error: "Webhook payload must include an event" });
+    return;
+  }
+
+  try {
+    const result = await handleBillpayWebhook(payload as BillpayWebhookPayload);
+    res.status(200).json({ success: true, status: result.status });
+  } catch (err: any) {
+    console.error(`[Setu BillPay Webhook] Processing failed for event ${payload.event}: ${err?.message}`);
+    res.status(500).json({ success: false, error: "Webhook processing failed" });
+  }
 });
 

@@ -4,11 +4,11 @@ import {
   getVoucherById,
   updateVoucherStatus,
 } from "../controllers/user-voucher.controller";
-import { optionalUserAuth } from "../middleware/auth.middleware";
+import { requireUserAuth } from "../middleware/auth.middleware";
 
 const router = Router();
 
-router.use(optionalUserAuth);
+router.use(requireUserAuth);
 
 // List user vouchers & brand groups
 router.get("/", listUserVouchers);

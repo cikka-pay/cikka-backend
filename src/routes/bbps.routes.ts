@@ -11,6 +11,7 @@ import {
   createBbpsSession,
 } from "../controllers/bbps.controller";
 import { requireUserAuth, optionalUserAuth } from "../middleware/auth.middleware";
+import { handleNotifications } from "../controllers/setu.controller";
 import { validate } from "../middleware/validate.middleware";
 import {
   fetchBillSchema,
@@ -35,6 +36,9 @@ router.post(
   validate({ body: initiateBbpsPaymentSchema }),
   initiateBbpsPayment
 );
+
+// Setu BillPay webhook (authenticated via X-BILL-WEBHOOK-API-KEY inside the handler)
+router.post("/webhook", handleNotifications);
 
 // Payment Status by refID
 router.get("/payments/:refID/status", getPaymentStatus);

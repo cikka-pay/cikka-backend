@@ -190,7 +190,8 @@ const WithdrawSchema = z.object({
   type: z.enum(["cashback", "points"]),
   amount: z.number().positive(),
   description: z.string().optional(),
-  idempotency_key: z.string().optional(),
+  // Required: a client-generated key (e.g. a UUID per withdrawal attempt) so retries never debit twice
+  idempotency_key: z.string().min(8).max(128),
 });
 
 export const withdrawFunds = asyncHandler(async (req: Request, res: Response) => {
@@ -218,8 +219,7 @@ export const withdrawFunds = asyncHandler(async (req: Request, res: Response) =>
     return;
   }
 
-  const timestamp = Date.now();
-  const idem = idempotency_key || `WITHDRAW:${userId}:${timestamp}`;
+  const idem = `WITHDRAW:${userId}:${idempotency_key}`;
 
   try {
     if (type === "cashback") {

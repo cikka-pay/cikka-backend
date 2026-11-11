@@ -5,6 +5,8 @@ import cors from "cors";
 import morgan from "morgan";
 import routes from "./routes/index";
 import setuRoutes from "./routes/setu.routes";
+import { handleNotifications } from "./controllers/setu.controller";
+import { config } from "./config/env";
 import { errorHandler } from "./middleware/error.middleware";
 
 const app = express();
@@ -35,7 +37,15 @@ app.use(cors({
   },
   credentials: true,
 }));
-app.use(express.json({ limit: "50mb" }));
+app.use(
+  express.json({
+    limit: "50mb",
+    // Keep the exact request bytes so webhook HMAC signatures (Meta, Razorpay) can be verified
+    verify: (req, _res, buf) => {
+      (req as any).rawBody = buf.toString("utf8");
+    },
+  })
+);
 app.use(express.urlencoded({ limit: "50mb", extended: true }));
 app.use(morgan("dev"));
 
@@ -53,8 +63,13 @@ app.use("/uploads", express.static(path.resolve(process.cwd(), "uploads")));
 
 // Direct Setu endpoint matching POST {ourBaseURL}/setu/v1/*
 app.use("/setu/v1", setuRoutes);
-app.use("/bills", setuRoutes);
-app.use("/notifications", setuRoutes);
+// Setu BillPay webhook at the bare path configured on the Setu dashboard (API-key authenticated)
+app.post("/notifications", handleNotifications);
+app.get("/notifications", (_req, res) => res.json({ status: "ok" }));
+// Sandbox bill-fetch mocks — development/test only
+if (!config.isProduction) {
+  app.use("/bills", setuRoutes);
+}
 
 // API v1 routes
 app.use("/api", routes);

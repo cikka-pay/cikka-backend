@@ -27,6 +27,7 @@ import shipwayRoutes from "./shipway.routes";
 import whatsappRoutes from "./whatsapp.routes";
 import userAddressRoutes from "./user-address.routes";
 import userNotificationRoutes from "./user-notification.routes";
+import userOrdersRoutes from "./user-orders.routes";
 import userVoucherRoutes from "./user-voucher.routes";
 import walletRoutes from "./wallet.routes";
 
@@ -57,8 +58,8 @@ router.use("/customer-auth", userAuthRoutes); // Backward compatibility alias
 router.use("/user/address", userAddressRoutes);
 router.use("/user/addresses", userAddressRoutes);
 router.use("/user-address", userAddressRoutes);
-router.use("/user/orders", ordersRoutes);
-router.use("/user-orders", ordersRoutes);
+router.use("/user/orders", userOrdersRoutes);
+router.use("/user-orders", userOrdersRoutes);
 router.use("/reviews", reviewsRoutes);
 router.use("/cards", cardsRoutes);
 router.use("/user/cards", cardsRoutes);
