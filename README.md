@@ -10,7 +10,7 @@ Sellers see pending payouts, gross sales, orders to pack, low-stock inventory al
 
 | Layer | Technology |
 |---|---|
-| Runtime | Node.js 20 |
+| Runtime | Node.js 22 (`.nvmrc`, same as the Dockerfile base image) |
 | Language | TypeScript (strict, CommonJS, `tsc` → `dist/`) |
 | Framework | Express 4 |
 | Database | PostgreSQL 14+ |
@@ -202,6 +202,42 @@ docker run -p 4000:4000 --env-file .env cikka-backend
 ```
 
 On startup the container runs `prisma migrate deploy` before `node dist/server.js` — migrations are safe to apply repeatedly.
+
+---
+
+## CI
+
+`.github/workflows/ci.yml` runs on every pull request and on pushes to `main`:
+
+| Job | What it checks |
+|---|---|
+| `typecheck` | `npm ci`, `prisma generate`, `tsc --noEmit` |
+| `unit tests` | `vitest run src/__tests__/unit` with no `DATABASE_URL` and `EXTERNAL_SERVICES_MODE=stub`; coverage uploaded as an artifact |
+| `integration tests` | `postgres:16` service, `prisma migrate deploy`, `vitest run src/__tests__/integration` |
+| `migrations` | `prisma validate`; replaying `prisma/migrations` must give exactly `schema.prisma` (`migrate diff --exit-code`); a `schema.prisma` change must add a migration |
+| `docker build` | builds the `Dockerfile` (no push) |
+| `npm audit` | `npm audit --omit=dev --audit-level=high`; **non-blocking** until the current advisories are fixed |
+
+Production deploys (`deploy.yml`) run only after CI succeeds on a push to `main`, and deploy the commit CI tested.
+
+Same checks locally (Node 22, Postgres running):
+
+```bash
+npm ci && npx prisma generate && npx tsc --noEmit
+env -u DATABASE_URL EXTERNAL_SERVICES_MODE=stub npx vitest run src/__tests__/unit
+
+createdb cikka_test && createdb cikka_shadow
+export DATABASE_URL=postgresql://localhost:5432/cikka_test SHADOW_DATABASE_URL=postgresql://localhost:5432/cikka_shadow
+npx prisma migrate deploy && EXTERNAL_SERVICES_MODE=stub npx vitest run src/__tests__/integration
+npx prisma validate
+npx prisma migrate diff --from-migrations prisma/migrations --to-schema prisma/schema.prisma --exit-code
+docker build -t cikka-backend .
+```
+
+Unit tests must not need a database: stub Prisma calls with `vi.spyOn`. The shadow database is wiped by `migrate diff`, so never point `SHADOW_DATABASE_URL` at real data.
+`npm test` also picks up `tests/unit/`, which calls live third-party APIs (Hubble) and is not run in CI.
+
+**Repository owner:** require the CI checks before merging (Settings → Branches → branch protection or a ruleset for `main` → require status checks: `typecheck`, `unit tests`, `integration tests`, `migrations`, `docker build`; leave `npm audit` optional while it is non-blocking). `RAILWAY_TOKEN` must be set as an Actions secret, and Railway's own GitHub auto-deploy disconnected so it doesn't deploy untested commits.
 
 ---
 

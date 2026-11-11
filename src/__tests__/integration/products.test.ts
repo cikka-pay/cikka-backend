@@ -108,7 +108,26 @@ describe("Products API", () => {
 
       expect(res.status).toBe(200);
       expect(res.body.name).toBe("New Name");
-      expect(Number(res.body.price)).toBe(200);
+      // A seller's price change on a live product needs admin approval: it is held as
+      // pendingPrice and the product keeps selling at its current price meanwhile.
+      expect(Number(res.body.price)).toBe(100);
+      expect(Number(res.body.pendingPrice)).toBe(200);
+      expect(res.body.priceRequestedAt).toBeTruthy();
+      expect(res.body.status).toBe("ACTIVE");
+    });
+
+    it("Should apply a price change directly on a draft product", async () => {
+      const draft = await prisma.product.create({
+        data: { sellerId, name: "Draft", sku: "DRAFT-01", price: 100, status: "DRAFT" },
+      });
+      const res = await request(app)
+        .patch(`/api/products/${draft.id}`)
+        .set("Authorization", `Bearer ${token}`)
+        .send({ price: 150 });
+
+      expect(res.status).toBe(200);
+      expect(Number(res.body.price)).toBe(150);
+      expect(res.body.pendingPrice).toBeNull();
     });
 
     it("Should delete product", async () => {

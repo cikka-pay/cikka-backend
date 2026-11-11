@@ -1,0 +1,196 @@
+name: CI
+
+# Required checks for main. deploy.yml only deploys a main commit after this
+# workflow succeeds on it. Job names are the check names branch protection uses.
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  # Never call real OTP / KYC / Setu / InstantPay / Razorpay APIs from CI.
+  EXTERNAL_SERVICES_MODE: stub
+  NODE_ENV: test
+
+jobs:
+  typecheck:
+    name: typecheck
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+      - run: npm ci
+      - run: npx prisma generate
+      - run: npx tsc --noEmit
+
+  unit:
+    name: unit tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    # No DATABASE_URL: unit tests must not need a database.
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+      - run: npm ci
+      - run: npx prisma generate
+      - run: npx vitest run src/__tests__/unit --coverage --coverage.reportsDirectory=coverage/unit
+      - name: Upload coverage
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-unit
+          path: coverage/unit
+          retention-days: 14
+          if-no-files-found: ignore
+
+  integration:
+    name: integration tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: cikka_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      DATABASE_URL: postgresql://postgres:postgres@localhost:5432/cikka_test?schema=public
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+      - run: npm ci
+      - run: npx prisma generate
+      - run: npx prisma migrate deploy
+      - run: npx vitest run src/__tests__/integration --coverage --coverage.reportsDirectory=coverage/integration
+      - name: Upload coverage
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-integration
+          path: coverage/integration
+          retention-days: 14
+          if-no-files-found: ignore
+
+  migrations:
+    name: migrations
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: cikka_migrations
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      DATABASE_URL: postgresql://postgres:postgres@localhost:5432/cikka_migrations?schema=public
+      # migrate diff --from-migrations replays every migration into this scratch DB.
+      SHADOW_DATABASE_URL: postgresql://postgres:postgres@localhost:5432/cikka_shadow?schema=public
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v5
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+      - run: npm ci
+      - name: Create shadow database
+        run: psql "postgresql://postgres:postgres@localhost:5432/postgres" -c 'CREATE DATABASE cikka_shadow'
+      - run: npx prisma validate
+      - name: Migrations produce exactly schema.prisma
+        # --exit-code: 0 = no difference, 2 = schema.prisma has changes no migration creates.
+        run: |
+          npx prisma migrate diff \
+            --from-migrations prisma/migrations \
+            --to-schema prisma/schema.prisma \
+            --exit-code || {
+            echo "::error file=prisma/schema.prisma::schema.prisma and prisma/migrations differ. Create a migration with: npx prisma migrate dev --name <change>"
+            npx prisma migrate diff --from-migrations prisma/migrations --to-schema prisma/schema.prisma --script || true
+            exit 1
+          }
+      - name: schema.prisma changes come with a new migration
+        env:
+          BASE_SHA: ${{ github.event_name == 'pull_request' && github.event.pull_request.base.sha || github.event.before }}
+        run: |
+          if [ -z "$BASE_SHA" ] || [ "$BASE_SHA" = "0000000000000000000000000000000000000000" ] \
+             || ! git cat-file -e "$BASE_SHA^{commit}" 2>/dev/null; then
+            echo "No base commit to compare against; skipping."
+            exit 0
+          fi
+          if git diff --quiet "$BASE_SHA" HEAD -- prisma/schema.prisma; then
+            echo "schema.prisma unchanged."
+            exit 0
+          fi
+          added=$(git diff --name-only --diff-filter=A "$BASE_SHA" HEAD -- 'prisma/migrations/*/migration.sql')
+          if [ -z "$added" ]; then
+            echo "::error file=prisma/schema.prisma::schema.prisma changed but no new prisma/migrations/*/migration.sql was added."
+            exit 1
+          fi
+          echo "schema.prisma changed with new migration(s):"
+          echo "$added"
+
+  docker:
+    name: docker build
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v5
+      - uses: docker/setup-buildx-action@v3
+      - name: Build image (no push)
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: false
+          tags: cikka-backend:ci
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+  audit:
+    name: npm audit
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    # Non-blocking for now: production deps currently have high/critical advisories
+    # (prisma 7.10.0 via @prisma/config / mysql2 / deepmerge-ts, multer, zod,
+    # proxy-addr / body-parser / qs via express, follow-redirects, morgan).
+    # Fix them in a dedicated dependency PR, then delete continue-on-error so new
+    # advisories block merges.
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version-file: .nvmrc
+      - run: npm audit --omit=dev --audit-level=high

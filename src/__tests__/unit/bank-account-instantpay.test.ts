@@ -4,13 +4,22 @@ import app from "../../app";
 import { instantpayClient } from "../../external";
 import { signSellerToken } from "../../utils/jwt";
 import { resetPennyDropLimiter } from "../../services/pennydrop-limiter.service";
+import { prisma } from "../../config/prisma";
 
 describe("InstantPay Penny Drop Bank Account Verification API Integration", () => {
   let verifyBankSpy: any;
+  let dbCountSpy: any;
+  let dbCreateSpy: any;
   const authHeader = `Bearer ${signSellerToken("test-seller-123")}`;
 
   beforeEach(() => {
     resetPennyDropLimiter();
+    // The limiter also counts BankAccountVerificationRecord rows from the last 24h. Stub the
+    // DB side so these unit tests never depend on (or accumulate rows in) a live database.
+    dbCountSpy = vi.spyOn(prisma.bankAccountVerificationRecord, "count").mockResolvedValue(0 as any);
+    dbCreateSpy = vi
+      .spyOn(prisma.bankAccountVerificationRecord, "create")
+      .mockImplementation((async () => ({ id: "bav_test" })) as any);
     verifyBankSpy = vi.spyOn(instantpayClient, "verifyBankAccount").mockImplementation(async (options: any) => {
       const acc = options.accountNumber.trim();
       const ifsc = options.bankIfsc.trim().toUpperCase();
@@ -42,6 +51,21 @@ describe("InstantPay Penny Drop Bank Account Verification API Integration", () =
 
   afterEach(() => {
     verifyBankSpy.mockRestore();
+    dbCountSpy.mockRestore();
+    dbCreateSpy.mockRestore();
+  });
+
+  it("blocks when the database already holds 12 penny drops in the last 24 hours", async () => {
+    dbCountSpy.mockResolvedValue(12);
+    const res = await request(app)
+      .post("/api/kyc/verify-bank-account")
+      .set("Authorization", authHeader)
+      .send({ accountNumber: "91234567890", bankIfsc: "HDFC0001234" });
+
+    expect(res.status).toBe(429);
+    expect(res.body.success).toBe(false);
+    expect(verifyBankSpy).not.toHaveBeenCalled();
+    expect(dbCountSpy.mock.calls[0][0].where.sellerId).toBe("test-seller-123");
   });
 
   it("should reject requests with missing account number or IFSC", async () => {

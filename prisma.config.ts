@@ -10,6 +10,9 @@ export default defineConfig({
     ? {
         datasource: {
           url: process.env.DATABASE_URL,
+          // Scratch database `prisma migrate diff --from-migrations` replays migrations into
+          // (CI's migrations check). Its contents are wiped; never point it at real data.
+          ...(process.env.SHADOW_DATABASE_URL ? { shadowDatabaseUrl: process.env.SHADOW_DATABASE_URL } : {}),
         },
       }
     : {}),

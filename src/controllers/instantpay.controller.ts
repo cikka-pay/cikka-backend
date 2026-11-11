@@ -364,8 +364,10 @@ export const verifyAadhaar = asyncHandler(async (req: Request, res: Response) =>
     }).catch((err) => console.warn(`[InstantPay Onboarding Sync] Aadhaar sync skipped: ${err.message}`));
   }
 
+  // `success` must reflect the verification outcome, like GSTIN and penny drop: a failed
+  // Aadhaar check carries an `error`, and clients keying off `success` must not read it as verified.
   res.status(200).json({
-    success: true,
+    success: result.valid,
     data: {
       ...result,
       aadhaarHolderName: resolvedHolderName,

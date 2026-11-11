@@ -67,8 +67,10 @@ describe("InstantPay PAN Verification API Integration", () => {
     expect(res.body.data.status).toBe("INVALID");
   });
 
-  it("should return cached PAN verification without calling InstantPay if already verified", async () => {
-    const prismaSpy = vi.spyOn(prisma.panVerificationRecord, "findFirst").mockResolvedValueOnce({
+  it("always re-verifies with InstantPay instead of serving a stored PAN verification", async () => {
+    // The PAN cache was removed on purpose (33ab43b, "no stale cache"): a stored record must
+    // never short-circuit the live check, so a PAN that has since become invalid is caught.
+    const prismaSpy = vi.spyOn(prisma.panVerificationRecord, "findFirst").mockResolvedValue({
       id: "v_pan_cached_123",
       pan: "ABCDE1234F",
       registeredName: "SUJAL P (CACHED)",
@@ -84,9 +86,10 @@ describe("InstantPay PAN Verification API Integration", () => {
 
     expect(res.status).toBe(200);
     expect(res.body.success).toBe(true);
-    expect(res.body.data.valid).toBe(true);
-    expect(res.body.data.cached).toBe(true);
-    expect(res.body.data.registeredName).toBe("SUJAL P (CACHED)");
+    expect(verifyPanSpy).toHaveBeenCalledTimes(1);
+    expect(verifyPanSpy).toHaveBeenCalledWith("ABCDE1234F");
+    expect(res.body.data.cached).toBeUndefined();
+    expect(res.body.data.registeredName).toBe("SUJAL P");
 
     prismaSpy.mockRestore();
   });

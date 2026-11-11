@@ -20,13 +20,32 @@ describe("Onboarding Integration Tests", () => {
   });
 
   describe("GET /api/onboarding", () => {
-    it("Should return null or empty state if onboarding hasn't started", async () => {
+    it("Should return an empty onboarding record with a Cikka ID if onboarding hasn't started", async () => {
+      // GET creates the onboarding row on first visit (5f9569c) so the seller gets a
+      // CKA029… application ID straight away; nothing from the steps is filled in yet.
       const res = await request(app)
         .get("/api/onboarding")
         .set("Authorization", `Bearer ${token}`);
-      
+
       expect(res.status).toBe(200);
-      expect(res.body.onboarding).toBeNull();
+      expect(res.body.onboardingStatus).toBe("INCOMPLETE");
+      expect(res.body.submittedAt).toBeNull();
+      expect(res.body.onboarding).toMatchObject({
+        completedSteps: 0,
+        businessName: null,
+        gstNumber: null,
+        gstVerified: false,
+        panVerified: false,
+        bankVerified: false,
+        submittedAt: null,
+      });
+      expect(res.body.applicationId).toMatch(/^CKA029/);
+      expect(res.body.onboarding.applicationId).toBe(res.body.applicationId);
+
+      // A second visit reuses the same record and ID.
+      const again = await request(app).get("/api/onboarding").set("Authorization", `Bearer ${token}`);
+      expect(again.body.applicationId).toBe(res.body.applicationId);
+      expect(await prisma.sellerOnboarding.count({ where: { seller: { phone } } })).toBe(1);
     });
   });
 

@@ -72,6 +72,13 @@ docker build -t cikka-backend .  # build the production image
 docker compose up                # run full stack (DB + app)
 ```
 
+## CI
+
+Every PR runs `.github/workflows/ci.yml` (typecheck, unit, integration, migrations, docker build, audit);
+production deploys only after it passes on `main`. See README "CI" for running the same checks locally.
+Unit tests (`src/__tests__/unit`) run without `DATABASE_URL`: stub Prisma with `vi.spyOn`, never
+call real external APIs. A `schema.prisma` change needs a migration in the same PR.
+
 ## Conventions
 
 - **TypeScript strict mode is on.** All new files must compile without errors.

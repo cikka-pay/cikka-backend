@@ -3,6 +3,7 @@ import request from "supertest";
 import app from "../../app";
 import { instantpayClient } from "../../external";
 import { signSellerToken } from "../../utils/jwt";
+import { INSTANTPAY_ERRORS } from "../../constants/errors";
 
 describe("InstantPay UPI VPA Verification API Integration", () => {
   let verifyVpaSpy: any;
@@ -42,13 +43,18 @@ describe("InstantPay UPI VPA Verification API Integration", () => {
   it("should reject requests with missing VPA handle", async () => {
     const res = await request(app).post("/api/kyc/verify-vpa").set("Authorization", authHeader).send({});
     expect(res.status).toBe(400);
-    expect(res.body.error).toBe("Validation failed");
+    // validate() surfaces the first Zod issue as `error`; all issues are in `details`.
+    expect(res.body.error).toBe(INSTANTPAY_ERRORS.VPA_REQUIRED);
+    expect(res.body.details).toEqual([{ field: "vpa", message: INSTANTPAY_ERRORS.VPA_REQUIRED }]);
+    expect(verifyVpaSpy).not.toHaveBeenCalled();
   });
 
   it("should reject invalid VPA format", async () => {
     const res = await request(app).post("/api/kyc/verify-vpa").set("Authorization", authHeader).send({ vpa: "invalid_vpa_no_at_sign" });
     expect(res.status).toBe(400);
-    expect(res.body.error).toBe("Validation failed");
+    expect(res.body.error).toBe(INSTANTPAY_ERRORS.INVALID_VPA_FORMAT);
+    expect(res.body.details).toEqual([{ field: "vpa", message: INSTANTPAY_ERRORS.INVALID_VPA_FORMAT }]);
+    expect(verifyVpaSpy).not.toHaveBeenCalled();
   });
 
   it("should successfully verify valid UPI VPA handle via InstantPay client", async () => {

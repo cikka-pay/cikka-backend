@@ -78,16 +78,17 @@ export async function getSummary(sellerId: string, role: string = "ADMIN") {
     }
   }
 
-  let netPayout = 0;
-  if (grossSalesThisWeek > 0) {
+  // Net payout pending is what the PENDING Settlement rows owe the seller (spec 001); checkout
+  // fulfilment writes one per order line. Only when there are none yet (orders created outside
+  // checkout) fall back to estimating this week's payout from live order totals.
+  let netPayout = Number(netPayoutAgg._sum.netPayable || 0);
+  if (netPayout === 0 && grossSalesThisWeek > 0) {
     const breakdown = calculateSettlementBreakdown(
       grossSalesThisWeek,
       { commissionRate: commRate },
       Math.max(ordersCountThisWeek, 1)
     );
     netPayout = breakdown.sellerNetSettlement;
-  } else {
-    netPayout = Number(netPayoutAgg._sum.netPayable || 0);
   }
 
   return {
@@ -215,68 +216,8 @@ export async function getSettlementBreakdown(
 
   const isAdmin = role.toUpperCase() === "ADMIN" || role.toUpperCase() === "OWNER";
 
-  // If live orders exist in this period, they are the primary source of truth for current sales
-  if (ordersGross > 0) {
-    const grossSales = ordersGross;
-    const customConfig: Partial<SettlementFeeConfig> = {
-      commissionRate,
-    };
-    if (commissionConfig?.flatOrderFee !== undefined) {
-      customConfig.sellerPlatformFee = Number(commissionConfig.flatOrderFee);
-    }
-
-    const breakdown = calculateSettlementBreakdown(grossSales, customConfig, effectiveOrderCount);
-
-    return {
-      period,
-      grossSales: breakdown.grossProductValue,
-      productsCount: totalProductsSold,
-      basePrice: breakdown.baseProductValue,
-      gstOnSale: breakdown.productGst,
-      commission: {
-        category: activeCategory,
-        rate: breakdown.commissionRate,
-        amount: isAdmin ? breakdown.commission : null,
-      },
-      commissionAmount: isAdmin ? breakdown.commission : null,
-      gstOnCommission: isAdmin ? breakdown.commissionGst : null,
-      commissionTotal: isAdmin ? breakdown.commissionTotal : null,
-      shippingFee: isAdmin ? breakdown.shipping : null,
-      gstOnShipping: isAdmin ? breakdown.shippingGst : null,
-      shippingTotal: isAdmin ? breakdown.shippingTotal : null,
-      tdsAmount: isAdmin ? breakdown.tds : null,
-      tcsAmount: isAdmin ? breakdown.tcs : null,
-      statutoryTaxes: {
-        total: isAdmin ? Number((breakdown.tds + breakdown.tcs).toFixed(2)) : null,
-        tds: isAdmin ? breakdown.tds : null,
-        tcs: isAdmin ? breakdown.tcs : null,
-      },
-      statutoryTaxAmount: isAdmin ? Number((breakdown.tds + breakdown.tcs).toFixed(2)) : null,
-      platformFee: isAdmin ? breakdown.sellerPlatformFee : null,
-      gstOnPlatformFee: isAdmin ? breakdown.sellerPlatformFeeGst : null,
-      sellerPlatformTotal: isAdmin ? breakdown.sellerPlatformTotal : null,
-      successFee: isAdmin ? breakdown.successFee : null,
-      gstOnSuccessFee: isAdmin ? breakdown.successFeeGst : null,
-      successFeeTotal: isAdmin ? breakdown.successFeeTotal : null,
-      otherCharges: {
-        total: isAdmin ? Number((breakdown.sellerPlatformTotal + breakdown.successFeeTotal).toFixed(2)) : null,
-        platformFee: isAdmin ? breakdown.sellerPlatformFee : null,
-        gstOnPlatformFee: isAdmin ? breakdown.sellerPlatformFeeGst : null,
-        successFee: isAdmin ? breakdown.successFee : null,
-        gstOnSuccessFee: isAdmin ? breakdown.successFeeGst : null,
-        ordersCount: totalProductsSold,
-        productsCount: totalProductsSold,
-        platformFeePerOrder: isAdmin ? (customConfig.sellerPlatformFee ?? 15) : null,
-        successFeeRate: breakdown.successFeeRate,
-      },
-      shippingGstAmount: isAdmin ? breakdown.shippingTotal : null,
-      totalDeductions: isAdmin ? breakdown.totalSellerDeductions : null,
-      netPayable: isAdmin ? breakdown.sellerNetSettlement : null,
-      isMasked: !isAdmin,
-    };
-  }
-
-  // Case 2: Historical/batch settlements exist with no active orders
+  // Case 1: Settlement rows are the source of truth (fulfilment writes one per order line,
+  // with the seller's category commission and fees), so they win over a live recomputation.
   if (settlementGross > 0) {
     const grossSales = settlementGross;
     const basePrice = Number(latest?.basePrice || Number((grossSales / 1.18).toFixed(2)));
@@ -356,7 +297,68 @@ export async function getSettlementBreakdown(
     };
   }
 
-  // Case 2: No settlements yet, calculate dynamically from orders or return zero
+  // Case 2: no settlement rows for the period yet; estimate from live order totals.
+  if (ordersGross > 0) {
+    const grossSales = ordersGross;
+    const customConfig: Partial<SettlementFeeConfig> = {
+      commissionRate,
+    };
+    if (commissionConfig?.flatOrderFee !== undefined) {
+      customConfig.sellerPlatformFee = Number(commissionConfig.flatOrderFee);
+    }
+
+    const breakdown = calculateSettlementBreakdown(grossSales, customConfig, effectiveOrderCount);
+
+    return {
+      period,
+      grossSales: breakdown.grossProductValue,
+      productsCount: totalProductsSold,
+      basePrice: breakdown.baseProductValue,
+      gstOnSale: breakdown.productGst,
+      commission: {
+        category: activeCategory,
+        rate: breakdown.commissionRate,
+        amount: isAdmin ? breakdown.commission : null,
+      },
+      commissionAmount: isAdmin ? breakdown.commission : null,
+      gstOnCommission: isAdmin ? breakdown.commissionGst : null,
+      commissionTotal: isAdmin ? breakdown.commissionTotal : null,
+      shippingFee: isAdmin ? breakdown.shipping : null,
+      gstOnShipping: isAdmin ? breakdown.shippingGst : null,
+      shippingTotal: isAdmin ? breakdown.shippingTotal : null,
+      tdsAmount: isAdmin ? breakdown.tds : null,
+      tcsAmount: isAdmin ? breakdown.tcs : null,
+      statutoryTaxes: {
+        total: isAdmin ? Number((breakdown.tds + breakdown.tcs).toFixed(2)) : null,
+        tds: isAdmin ? breakdown.tds : null,
+        tcs: isAdmin ? breakdown.tcs : null,
+      },
+      statutoryTaxAmount: isAdmin ? Number((breakdown.tds + breakdown.tcs).toFixed(2)) : null,
+      platformFee: isAdmin ? breakdown.sellerPlatformFee : null,
+      gstOnPlatformFee: isAdmin ? breakdown.sellerPlatformFeeGst : null,
+      sellerPlatformTotal: isAdmin ? breakdown.sellerPlatformTotal : null,
+      successFee: isAdmin ? breakdown.successFee : null,
+      gstOnSuccessFee: isAdmin ? breakdown.successFeeGst : null,
+      successFeeTotal: isAdmin ? breakdown.successFeeTotal : null,
+      otherCharges: {
+        total: isAdmin ? Number((breakdown.sellerPlatformTotal + breakdown.successFeeTotal).toFixed(2)) : null,
+        platformFee: isAdmin ? breakdown.sellerPlatformFee : null,
+        gstOnPlatformFee: isAdmin ? breakdown.sellerPlatformFeeGst : null,
+        successFee: isAdmin ? breakdown.successFee : null,
+        gstOnSuccessFee: isAdmin ? breakdown.successFeeGst : null,
+        ordersCount: totalProductsSold,
+        productsCount: totalProductsSold,
+        platformFeePerOrder: isAdmin ? (customConfig.sellerPlatformFee ?? 15) : null,
+        successFeeRate: breakdown.successFeeRate,
+      },
+      shippingGstAmount: isAdmin ? breakdown.shippingTotal : null,
+      totalDeductions: isAdmin ? breakdown.totalSellerDeductions : null,
+      netPayable: isAdmin ? breakdown.sellerNetSettlement : null,
+      isMasked: !isAdmin,
+    };
+  }
+
+  // Case 3: no settlements and no orders: zero breakdown
   const grossSales = ordersGross > 0 ? ordersGross : 0;
   const customConfig: Partial<SettlementFeeConfig> = {
     commissionRate,

@@ -1,10 +1,17 @@
 name: Deploy to Railway
 
-# Deploys from CI with a Railway project token, so any push to main deploys
-# regardless of who authored it. Disconnect the GitHub repo from this service
-# in Railway, or every push deploys twice.
+# Deploys from CI with a Railway project token, so any main commit that passes
+# CI deploys regardless of who authored it. Disconnect the GitHub repo from this
+# service in Railway, or every push deploys twice (and Railway's own deploy
+# would not wait for CI).
+#
+# Runs only after the "CI" workflow finishes successfully for a push to main,
+# and deploys exactly the commit CI tested. workflow_dispatch is the manual
+# escape hatch (redeploy / rollback); it is limited to main and skips CI.
 on:
-  push:
+  workflow_run:
+    workflows: [CI]
+    types: [completed]
     branches: [main]
   workflow_dispatch:
 
@@ -12,11 +19,23 @@ concurrency:
   group: railway-production
   cancel-in-progress: false
 
+permissions:
+  contents: read
+
 jobs:
   deploy:
+    if: >-
+      (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main') ||
+      (github.event_name == 'workflow_run' &&
+       github.event.workflow_run.conclusion == 'success' &&
+       github.event.workflow_run.event == 'push' &&
+       github.event.workflow_run.head_branch == 'main' &&
+       github.event.workflow_run.head_repository.full_name == github.repository)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
+        with:
+          ref: ${{ github.event.workflow_run.head_sha || github.sha }}
 
       - name: Install Railway CLI
         run: npm i -g @railway/cli
