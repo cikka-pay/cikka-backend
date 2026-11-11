@@ -10,6 +10,7 @@ import { prisma } from "../config/prisma";
 import { config } from "../config/env";
 import { OrderStatus, NotificationType } from "../generated/prisma/client";
 import { RewardsCalcService } from "../services/rewardsCalc.service";
+import { jobQueue } from "../jobs";
 
 /**
  * POST /api/payment/create-order
@@ -202,6 +203,9 @@ export const verifyPayment = asyncHandler(async (req: Request, res: Response) =>
   const hasSpecialSeller = processedOrders.some((p: any) => p.is_special_seller) || Boolean(req.body.is_special_seller);
   const mallRewards = RewardsCalcService.calculateMallPurchaseRewards(totalRupees, hasSpecialSeller);
 
+  // Credit rewards asynchronously (only for logged-in buyers — guests have no wallet).
+  await enqueueMallRewardCredit(req.user?.id, razorpay_order_id, razorpay_payment_id, mallRewards);
+
   res.status(200).json({
     success: true,
     verified: true,
@@ -216,6 +220,39 @@ export const verifyPayment = asyncHandler(async (req: Request, res: Response) =>
     processed_orders: processedOrders,
   });
 });
+
+/**
+ * Enqueue the wallet credit for a verified Mall purchase. Never fails the
+ * payment response: the money is already captured, so an enqueue error is
+ * logged loudly instead. The job is deduplicated per Razorpay order, and the
+ * handler is idempotent on the ledger, so retries/duplicates are safe.
+ */
+export async function enqueueMallRewardCredit(
+  userId: string | undefined,
+  razorpayOrderId: string,
+  razorpayPaymentId: string,
+  rewards: { ciPointsEarned: number; cashbackEarned: number }
+): Promise<void> {
+  if (!userId) return;
+  if (rewards.ciPointsEarned <= 0 && rewards.cashbackEarned <= 0) return;
+  try {
+    await jobQueue.enqueue(
+      "reward.credit",
+      {
+        userId,
+        razorpayOrderId,
+        razorpayPaymentId,
+        ciPoints: rewards.ciPointsEarned,
+        cashbackRupees: rewards.cashbackEarned,
+      },
+      { key: razorpayOrderId, delaySeconds: config.jobs.rewardCreditDelaySeconds }
+    );
+  } catch (err: any) {
+    console.error(
+      `❌ [jobs] FAILED to enqueue reward.credit for order ${razorpayOrderId} (user ${userId}): ${err?.message || err}`
+    );
+  }
+}
 
 export interface OrderFulfillmentParams {
   razorpay_order_id: string;

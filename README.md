@@ -83,6 +83,9 @@ Copy `.env.example` → `.env` and set:
 | `JWT_EXPIRES_IN` | Token lifetime | `7d` |
 | `PORT` | API port | `4000` |
 | `CORS_ORIGIN` | Comma-separated allowed origins | `http://localhost:5173` |
+| `JOBS_WORKERS_ENABLED` | Run async job workers (pg-boss) in this process. Set `false` on the API once a dedicated worker service exists | `true` |
+| `REWARD_CREDIT_DELAY_SECONDS` | Delay before Mall purchase rewards are credited to the wallet (`0` = immediately) | `0` |
+| `JOBS_SCHEMA` | Postgres schema pg-boss owns | `pgboss` |
 
 ---
 

@@ -2,6 +2,9 @@
   "name": "cikka-dashboard-backend",
   "version": "1.0.0",
   "private": true,
+  "engines": {
+    "node": ">=22.12.0"
+  },
   "scripts": {
     "setup": "bash scripts/setup.sh",
     "dev": "tsx watch src/server.ts",
@@ -10,6 +13,7 @@
     "build": "tsc",
     "seed": "tsx prisma/seed.ts",
     "test": "vitest run",
+    "typecheck:jobs": "tsc -p tsconfig.jobs-typecheck.json",
     "create-seller": "tsx scripts/create-seller.ts",
     "delete-seller": "tsx scripts/delete-seller.ts",
     "migrate:images": "tsx src/scripts/migrate-base64-images.ts",
@@ -33,6 +37,7 @@
     "multer": "^2.2.0",
     "node-cron": "^4.6.0",
     "pg": "^8.23.1",
+    "pg-boss": "^12.38.0",
     "razorpay": "^2.9.8",
     "resend": "^6.28.1",
     "zod": "^4.4.3"
