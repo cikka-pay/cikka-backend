@@ -5,6 +5,7 @@ import { prisma } from "../config/prisma";
 import { NotificationType, OrderStatus, WalletTxType } from "../generated/prisma/client";
 import { razorpayService } from "../services/razorpay.service";
 import { razorpayRouteService } from "../services/razorpayRoute.service";
+import { razorpayTokenService } from "../services/razorpayToken.service";
 import { RewardsCalcService } from "../services/rewardsCalc.service";
 import { getSellerSettlementProfile } from "../services/settlement.service";
 import { calculateSettlementBreakdown } from "../services/settlementCalculator.service";
@@ -20,9 +21,10 @@ import { metaWhatsAppService } from "../services/meta-whatsapp.service";
  * Create a new Razorpay order for Cikka Mall purchases.
  */
 export const createOrder = asyncHandler(async (req: Request, res: Response) => {
-  const { amount, currency, receipt, notes, items, ciPointsDiscount, exchangeCredit, deliveryFee } = req.body;
+  const { amount, amount_in_paise, currency, receipt, notes, items, ciPointsDiscount, exchangeCredit, deliveryFee } = req.body;
 
-  if (amount === undefined || amount === null || isNaN(Number(amount))) {
+  const rawAmount = amount !== undefined && amount !== null ? amount : amount_in_paise;
+  if (rawAmount === undefined || rawAmount === null || isNaN(Number(rawAmount))) {
     res.status(400).json({
       success: false,
       error: "Amount in paise is required and must be a valid number",
@@ -30,7 +32,7 @@ export const createOrder = asyncHandler(async (req: Request, res: Response) => {
     return;
   }
 
-  let finalAmountInPaise = Number(amount);
+  let finalAmountInPaise = Number(rawAmount);
 
   // Authoritative server-side price recalculation if items are provided
   if (Array.isArray(items) && items.length > 0) {
@@ -56,12 +58,26 @@ export const createOrder = asyncHandler(async (req: Request, res: Response) => {
       const credit = Number(exchangeCredit) || 0;
       const fee = Number(deliveryFee) || 0;
       const expectedRupees = Math.max(0, computedRupees - discount - credit + fee);
-      const clientRupees = Number(amount) > 1000 ? Number(amount) / 100 : Number(amount);
+      const clientRupees = finalAmountInPaise / 100;
 
       // If price was tampered with downwards by client, enforce authoritative server price
       if (clientRupees < expectedRupees * 0.95) {
         finalAmountInPaise = Math.round(expectedRupees * 100);
       }
+    }
+  }
+
+  const phone = req.body.customer_phone || (req as any).user?.phone;
+  let customerId = req.body.customer_id;
+  if (!customerId && phone) {
+    try {
+      customerId = await razorpayTokenService.getOrCreateCustomer(
+        phone,
+        req.body.customer_email || "customer@cikka.club",
+        req.body.customer_name || "Cikka Member"
+      );
+    } catch (err: any) {
+      console.warn(`[PaymentController] Customer resolution notice: ${err?.message || err}`);
     }
   }
 
@@ -75,6 +91,7 @@ export const createOrder = asyncHandler(async (req: Request, res: Response) => {
   res.status(200).json({
     success: true,
     message: "Razorpay order created successfully",
+    customer_id: customerId || null,
     ...result,
   });
 });
@@ -232,76 +249,21 @@ export const verifyPayment = asyncHandler(async (req: Request, res: Response) =>
     pincode: req.body.pincode,
     city: req.body.city,
     amount,
+    amount_in_paise: req.body.amount_in_paise,
     items: req.body.items || req.body.cartItems,
     carrier_name: req.body.carrier_name,
     originPincode: req.body.originPincode,
     delivery_option: req.body.delivery_option,
     is_express: req.body.is_express || req.body.delivery_option === "express",
+    userId: (req as any).user?.id,
   });
 
-  // Calculate earned Rewards (Cikka Pay Bill Payment vs Cikka Mall Purchase)
-  const totalRupees = Number(amount) ? (Number(amount) > 1000 ? Number(amount) / 100 : Number(amount)) : 0;
-  const isBillPayment = Boolean(
-    req.body.payment_type === "credit_card_bill" ||
-    req.body.payment_type === "bill_payment" ||
-    req.body.type === "credit_card" ||
-    req.body.type === "bill" ||
-    req.body.card_name ||
-    req.body.cardName ||
-    req.body.billType ||
-    (!req.body.items && !req.body.cartItems && processedOrders.length === 0)
-  );
-
-  let cashbackEarned = 0;
-  let ciPointsEarned = 0;
-  let rewardsStatus = "PROCESSED";
-  let rewardsSlabId = "NONE";
-  let cashbackRange: [number, number] | undefined = undefined;
-  let ciPointsRange: [number, number] | undefined = undefined;
-
-  if (isBillPayment) {
-    const billRewards = RewardsCalcService.calculateCikkaPayRewards(razorpay_payment_id, totalRupees);
-    cashbackEarned = billRewards.cashbackEarned;
-    ciPointsEarned = billRewards.ciPointsEarned;
-    rewardsSlabId = billRewards.slabId || "S5";
-    cashbackRange = billRewards.cashbackRange;
-    ciPointsRange = billRewards.ciPointsRange;
-
-    // Credit User Wallet if user identified
-    const userId = (req as any).user?.id || (customer_phone ? (await prisma.user.findFirst({ where: { phone: { contains: customer_phone.slice(-10) } } }))?.id : null);
-    if (userId) {
-      if (ciPointsEarned > 0) {
-        await walletService.creditPoints(userId, ciPointsEarned, WalletTxType.EARN_BBPS, {
-          idempotencyKey: `EARN_CC_PTS:${razorpay_payment_id}`,
-          description: `CI Points for bill payment (₹${totalRupees})`,
-        }).catch((err) => console.warn(`[Wallet Credit Points] ${err.message}`));
-      }
-      if (cashbackEarned > 0) {
-        await walletService.creditCash(userId, cashbackEarned * 100, WalletTxType.EARN_CASHBACK, {
-          idempotencyKey: `EARN_CC_CASH:${razorpay_payment_id}`,
-          description: `₹${cashbackEarned} Cashback for bill payment (₹${totalRupees})`,
-        }).catch((err) => console.warn(`[Wallet Credit Cash] ${err.message}`));
-      }
-    }
-  } else {
-    const hasSpecialSeller = processedOrders.some((p: any) => p.is_special_seller) || Boolean(req.body.is_special_seller);
-    const mallRewards = RewardsCalcService.calculateMallPurchaseRewards(totalRupees, hasSpecialSeller);
-    cashbackEarned = mallRewards.cashbackEarned;
-    ciPointsEarned = mallRewards.ciPointsEarned;
-    rewardsStatus = mallRewards.status;
-    cashbackRange = mallRewards.cashbackRange;
-  }
-
-  // Credit earned rewards to authoritative double-entry wallet & ledger
-  if (!isBillPayment) {
-    await creditMallRewards(
-      (req as any).user?.id,
-      customer_phone,
-      razorpay_order_id,
-      razorpay_payment_id,
-      { cashbackEarned, ciPointsEarned, status: rewardsStatus }
-    );
-  }
+  const rewards = await settleVerificationRewards(req, {
+    orderId: razorpay_order_id,
+    paymentId: razorpay_payment_id,
+    customerPhone: customer_phone,
+    processedOrders,
+  });
 
   res.status(200).json({
     success: true,
@@ -309,16 +271,204 @@ export const verifyPayment = asyncHandler(async (req: Request, res: Response) =>
     message: "Payment verified successfully, orders created, and settlements scheduled on T+7 hold.",
     payment_id: razorpay_payment_id,
     order_id: razorpay_order_id,
-    cashback_earned: cashbackEarned,
-    ci_points_earned: ciPointsEarned,
-    rewards_slab: rewardsSlabId,
-    cashback_range: cashbackRange,
-    ci_points_range: ciPointsRange,
-    is_special_seller: !isBillPayment && (processedOrders.some((p: any) => p.is_special_seller) || Boolean(req.body.is_special_seller)),
-    rewards_status: rewardsStatus,
+    cashback_earned: rewards.cashbackEarned,
+    ci_points_earned: rewards.ciPointsEarned,
+    rewards_slab: rewards.rewardsSlabId,
+    cashback_range: rewards.cashbackRange,
+    ci_points_range: rewards.ciPointsRange,
+    is_special_seller: rewards.isSpecialSeller,
+    rewards_status: rewards.rewardsStatus,
     processed_orders: processedOrders,
   });
 });
+
+async function resolveTargetUserId(
+  userId: string | null | undefined,
+  customerPhone: string | undefined
+): Promise<string | null> {
+  if (userId) return userId;
+  if (!customerPhone) return null;
+
+  const clean = String(customerPhone).replace(/\D/g, "").slice(-10);
+  if (!clean) return null;
+
+  const user = await prisma.user.findFirst({
+    where: {
+      OR: [{ phone: { contains: clean } }, { phone: String(customerPhone) }],
+    },
+    select: { id: true },
+  });
+  return user?.id || null;
+}
+
+function resolveOrderRupees(
+  body: Record<string, any>,
+  treatBareAmountAsPaiseIfLarge = false
+): number {
+  const subtotal = Number(body.subtotal);
+  if (!isNaN(subtotal) && subtotal > 0) {
+    return subtotal;
+  }
+
+  const paise = Number(body.amount_in_paise);
+  if (!isNaN(paise) && paise > 0) {
+    return Math.round(paise) / 100;
+  }
+
+  const itemList = body.items || body.cartItems;
+  if (Array.isArray(itemList) && itemList.length > 0) {
+    const itemsTotal = itemList.reduce((sum: number, it: any) => {
+      const unit = Number(it?.unit_price ?? it?.price ?? 0);
+      const qty = Math.max(1, Number(it?.qty ?? it?.quantity ?? 1));
+      return sum + (isNaN(unit) ? 0 : unit * qty);
+    }, 0);
+    if (itemsTotal > 0) {
+      return itemsTotal;
+    }
+  }
+
+  const amt = Number(body.amount);
+  if (!isNaN(amt) && amt > 0) {
+    return treatBareAmountAsPaiseIfLarge && amt > 1000 ? amt / 100 : amt;
+  }
+
+  return 0;
+}
+
+async function debitAppliedCashback(
+  targetUserId: string | null,
+  req: Request,
+  orderId: string,
+  paymentId: string
+): Promise<void> {
+  const cashbackDiscount = Number(req.body.cashback_discount) || 0;
+  if (!targetUserId || !req.body.use_cashback || cashbackDiscount <= 0) return;
+
+  try {
+    const walletBal = await walletService.getBalance(targetUserId);
+    const paiseToDebit = Math.min(Math.round(cashbackDiscount * 100), walletBal.cashPaise);
+    if (paiseToDebit > 0) {
+      await walletService.applyEntry({
+        userId: targetUserId,
+        txType: WalletTxType.CASHBACK_REDEEM,
+        cashPaiseDelta: -paiseToDebit,
+        idempotencyKey: `MALL_CB_USE:${orderId}`,
+        orderId,
+        razorpayPaymentId: paymentId,
+        description: "Cashback Applied",
+      });
+    }
+  } catch (err: any) {
+    console.warn(`[Mall Cashback Debit Warning]: ${err.message}`);
+  }
+}
+
+async function settleOrderRewardsAndCashback(
+  req: Request,
+  opts: {
+    orderId: string;
+    paymentId: string;
+    customerPhone: string | undefined;
+    processedOrders: any[];
+  }
+) {
+  const targetUserId = await resolveTargetUserId((req as any).user?.id, opts.customerPhone);
+  await debitAppliedCashback(targetUserId, req, opts.orderId, opts.paymentId);
+
+  const totalRupees = resolveOrderRupees(req.body);
+  const hasSpecialSeller =
+    opts.processedOrders.some((p: any) => p.is_special_seller) || Boolean(req.body.is_special_seller);
+  const mallRewards = RewardsCalcService.calculateMallPurchaseRewards(totalRupees, hasSpecialSeller);
+
+  await creditMallRewards(
+    targetUserId,
+    opts.customerPhone,
+    opts.orderId,
+    opts.paymentId,
+    mallRewards
+  );
+
+  return mallRewards;
+}
+
+async function settleVerificationRewards(
+  req: Request,
+  opts: {
+    orderId: string;
+    paymentId: string;
+    customerPhone: string | undefined;
+    processedOrders: any[];
+  }
+): Promise<{
+  cashbackEarned: number;
+  ciPointsEarned: number;
+  rewardsStatus: string;
+  rewardsSlabId: string;
+  cashbackRange?: [number, number];
+  ciPointsRange?: [number, number];
+  isSpecialSeller: boolean;
+}> {
+  const rawItems = req.body.items || req.body.cartItems;
+  const hasExplicitItems = Array.isArray(rawItems) && rawItems.length > 0;
+  const isBillPayment = Boolean(
+    req.body.payment_type === "credit_card_bill" ||
+      req.body.payment_type === "bill_payment" ||
+      req.body.type === "credit_card" ||
+      req.body.type === "bill" ||
+      req.body.card_name ||
+      req.body.cardName ||
+      req.body.billType ||
+      (!hasExplicitItems && req.body.subtotal === undefined && opts.processedOrders.length === 0)
+  );
+
+  if (isBillPayment) {
+    const targetUserId = await resolveTargetUserId((req as any).user?.id, opts.customerPhone);
+    await debitAppliedCashback(targetUserId, req, opts.orderId, opts.paymentId);
+
+    const totalRupees = resolveOrderRupees(req.body, true);
+    const billRewards = RewardsCalcService.calculateCikkaPayRewards(opts.paymentId, totalRupees);
+
+    if (targetUserId) {
+      if (billRewards.ciPointsEarned > 0) {
+        await walletService
+          .creditPoints(targetUserId, billRewards.ciPointsEarned, WalletTxType.EARN_BBPS, {
+            idempotencyKey: `EARN_CC_PTS:${opts.paymentId}`,
+            description: `CI Points for bill payment (₹${totalRupees})`,
+          })
+          .catch((err) => console.warn(`[Wallet Credit Points] ${err.message}`));
+      }
+      if (billRewards.cashbackEarned > 0) {
+        await walletService
+          .creditCash(targetUserId, billRewards.cashbackEarned * 100, WalletTxType.EARN_CASHBACK, {
+            idempotencyKey: `EARN_CC_CASH:${opts.paymentId}`,
+            description: `₹${billRewards.cashbackEarned} Cashback for bill payment (₹${totalRupees})`,
+          })
+          .catch((err) => console.warn(`[Wallet Credit Cash] ${err.message}`));
+      }
+    }
+
+    return {
+      cashbackEarned: billRewards.cashbackEarned,
+      ciPointsEarned: billRewards.ciPointsEarned,
+      rewardsStatus: "PROCESSED",
+      rewardsSlabId: billRewards.slabId || "S5",
+      cashbackRange: billRewards.cashbackRange,
+      ciPointsRange: billRewards.ciPointsRange,
+      isSpecialSeller: false,
+    };
+  }
+
+  const mallRewards = await settleOrderRewardsAndCashback(req, opts);
+  return {
+    cashbackEarned: mallRewards.cashbackEarned,
+    ciPointsEarned: mallRewards.ciPointsEarned,
+    rewardsStatus: mallRewards.status,
+    rewardsSlabId: "NONE",
+    cashbackRange: mallRewards.cashbackRange,
+    ciPointsRange: undefined,
+    isSpecialSeller: Boolean(mallRewards.isSpecialSeller),
+  };
+}
 
 async function creditMallRewards(
   userId: string | null | undefined,
@@ -327,17 +477,7 @@ async function creditMallRewards(
   razorpay_payment_id: string,
   mallRewards: any
 ) {
-  let targetUserId = userId;
-  if (!targetUserId && customerPhone) {
-    const clean = String(customerPhone).replace(/\D/g, "").slice(-10);
-    const user = await prisma.user.findFirst({
-      where: {
-        OR: [{ phone: { contains: clean } }, { phone: String(customerPhone) }],
-      },
-      select: { id: true },
-    });
-    if (user) targetUserId = user.id;
-  }
+  const targetUserId = await resolveTargetUserId(userId, customerPhone);
 
   if (targetUserId) {
     try {
@@ -349,7 +489,7 @@ async function creditMallRewards(
           idempotencyKey: `MALL_CB:${razorpay_order_id}`,
           orderId: razorpay_order_id,
           razorpayPaymentId: razorpay_payment_id,
-          description: `Cikka Mall Cashback for Order #${razorpay_order_id}`,
+          description: "Cikka Mall Cashback",
         });
       }
       if (mallRewards.ciPointsEarned > 0) {
@@ -360,7 +500,7 @@ async function creditMallRewards(
           idempotencyKey: `MALL_PTS:${razorpay_order_id}`,
           orderId: razorpay_order_id,
           razorpayPaymentId: razorpay_payment_id,
-          description: `Cikka Mall CI Points for Order #${razorpay_order_id}`,
+          description: "Cikka Mall CI Points",
         });
       }
     } catch (err: any) {
@@ -379,6 +519,7 @@ export interface OrderFulfillmentParams {
   pincode?: string;
   city?: string;
   amount?: number | string;
+  amount_in_paise?: number | string;
   items?: any[];
   carrier_name?: string;
   originPincode?: string;
@@ -404,12 +545,17 @@ export async function executeOrderFulfillmentPipeline(params: OrderFulfillmentPa
     customer_phone,
     delivery_address,
     amount,
+    amount_in_paise,
     carrier_name,
   } = params;
 
   let rawItems = params.items;
   if (!Array.isArray(rawItems) || rawItems.length === 0) {
-    const singlePrice = amount ? Number(amount) / 100 : 24999;
+    const singlePrice = amount_in_paise
+      ? Number(amount_in_paise) / 100
+      : amount
+        ? Number(amount)
+        : 2499;
     rawItems = [
       {
         id: "PRD-DEFAULT-1",
@@ -470,7 +616,12 @@ export async function executeOrderFulfillmentPipeline(params: OrderFulfillmentPa
 
     const itemPrice =
       Number(item.price) ||
-      (amount ? Number(amount) / (100 * rawItems.length) : 3499);
+      Number(item.unit_price) ||
+      (amount_in_paise
+        ? Number(amount_in_paise) / (100 * rawItems.length)
+        : amount
+          ? Number(amount) / rawItems.length
+          : 3499);
 
     let seller = null;
     if (item.sellerId) {
@@ -479,7 +630,7 @@ export async function executeOrderFulfillmentPipeline(params: OrderFulfillmentPa
         include: { onboarding: true, commissionConfig: true },
       });
     }
-    if (!seller && (item.id || item.productId)) {
+    if (!seller && (item.id || item.productId) && !String(item.id || item.productId).startsWith("PRD-")) {
       const existingProd = await prisma.product.findUnique({
         where: { id: item.id || item.productId },
         include: { seller: { include: { onboarding: true, commissionConfig: true } } },
@@ -870,10 +1021,14 @@ export const payWithCard = asyncHandler(async (req: Request, res: Response) => {
     } as any;
   }
 
-  let amountInPaise = Number(amount);
+  const rawPaise = req.body.amount_in_paise;
+  let amountInPaise =
+    rawPaise !== undefined && rawPaise !== null && !isNaN(Number(rawPaise))
+      ? Math.round(Number(rawPaise))
+      : Number(amount);
   if (isNaN(amountInPaise) || amountInPaise <= 0) {
     amountInPaise = 249900;
-  } else if (amountInPaise < 1000) {
+  } else if (rawPaise === undefined && amountInPaise < 1000) {
     amountInPaise = Math.round(amountInPaise * 100);
   }
 
@@ -1008,74 +1163,20 @@ export const verifyCardOtp = asyncHandler(async (req: Request, res: Response) =>
     pincode,
     city,
     amount,
+    amount_in_paise: req.body.amount_in_paise,
     items: items || req.body.cartItems,
     carrier_name: req.body.carrier_name,
     delivery_option: req.body.delivery_option,
     is_express: req.body.is_express || req.body.delivery_option === "express",
+    userId: (req as any).user?.id,
   });
 
-  const totalRupees = Number(amount) ? (Number(amount) > 1000 ? Number(amount) / 100 : Number(amount)) : 0;
-  const isBillPayment = Boolean(
-    req.body.payment_type === "credit_card_bill" ||
-    req.body.payment_type === "bill_payment" ||
-    req.body.type === "credit_card" ||
-    req.body.type === "bill" ||
-    req.body.card_name ||
-    req.body.cardName ||
-    req.body.billType ||
-    (!items && !req.body.cartItems && processedOrders.length === 0)
-  );
-
-  let cashbackEarned = 0;
-  let ciPointsEarned = 0;
-  let rewardsStatus = "PROCESSED";
-  let rewardsSlabId = "NONE";
-  let cashbackRange: [number, number] | undefined = undefined;
-  let ciPointsRange: [number, number] | undefined = undefined;
-
-  if (isBillPayment) {
-    const billRewards = RewardsCalcService.calculateCikkaPayRewards(payment_id, totalRupees);
-    cashbackEarned = billRewards.cashbackEarned;
-    ciPointsEarned = billRewards.ciPointsEarned;
-    rewardsSlabId = billRewards.slabId || "S5";
-    cashbackRange = billRewards.cashbackRange;
-    ciPointsRange = billRewards.ciPointsRange;
-
-    // Credit User Wallet if user identified
-    const userId = (req as any).user?.id || (customer_phone ? (await prisma.user.findFirst({ where: { phone: { contains: customer_phone.slice(-10) } } }))?.id : null);
-    if (userId) {
-      if (ciPointsEarned > 0) {
-        await walletService.creditPoints(userId, ciPointsEarned, WalletTxType.EARN_BBPS, {
-          idempotencyKey: `EARN_CC_PTS:${payment_id}`,
-          description: `CI Points for bill payment (₹${totalRupees})`,
-        }).catch((err) => console.warn(`[Wallet Credit Points] ${err.message}`));
-      }
-      if (cashbackEarned > 0) {
-        await walletService.creditCash(userId, cashbackEarned * 100, WalletTxType.EARN_CASHBACK, {
-          idempotencyKey: `EARN_CC_CASH:${payment_id}`,
-          description: `₹${cashbackEarned} Cashback for bill payment (₹${totalRupees})`,
-        }).catch((err) => console.warn(`[Wallet Credit Cash] ${err.message}`));
-      }
-    }
-  } else {
-    const hasSpecialSeller = processedOrders.some((p: any) => p.is_special_seller) || Boolean(req.body.is_special_seller);
-    const mallRewards = RewardsCalcService.calculateMallPurchaseRewards(totalRupees, hasSpecialSeller);
-    cashbackEarned = mallRewards.cashbackEarned;
-    ciPointsEarned = mallRewards.ciPointsEarned;
-    rewardsStatus = mallRewards.status;
-    cashbackRange = mallRewards.cashbackRange;
-  }
-
-  // Credit earned rewards to authoritative double-entry wallet & ledger
-  if (!isBillPayment) {
-    await creditMallRewards(
-      (req as any).user?.id,
-      customer_phone,
-      order_id,
-      payment_id,
-      { cashbackEarned, ciPointsEarned, status: rewardsStatus }
-    );
-  }
+  const rewards = await settleVerificationRewards(req, {
+    orderId: order_id,
+    paymentId: payment_id,
+    customerPhone: customer_phone,
+    processedOrders,
+  });
 
   res.status(200).json({
     success: true,
@@ -1084,13 +1185,13 @@ export const verifyCardOtp = asyncHandler(async (req: Request, res: Response) =>
     order_id,
     razorpay_signature: signature,
     message: "Bank 3DS OTP verified successfully! Order placed and fulfillment initiated.",
-    cashback_earned: cashbackEarned,
-    ci_points_earned: ciPointsEarned,
-    rewards_slab: rewardsSlabId,
-    cashback_range: cashbackRange,
-    ci_points_range: ciPointsRange,
-    is_special_seller: !isBillPayment && (processedOrders.some((p: any) => p.is_special_seller) || Boolean(req.body.is_special_seller)),
-    rewards_status: rewardsStatus,
+    cashback_earned: rewards.cashbackEarned,
+    ci_points_earned: rewards.ciPointsEarned,
+    rewards_slab: rewards.rewardsSlabId,
+    cashback_range: rewards.cashbackRange,
+    ci_points_range: rewards.ciPointsRange,
+    is_special_seller: rewards.isSpecialSeller,
+    rewards_status: rewards.rewardsStatus,
     processed_orders: processedOrders,
   });
 });

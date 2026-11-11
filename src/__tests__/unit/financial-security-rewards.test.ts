@@ -7,20 +7,23 @@ import { prisma } from "../../config/prisma";
 describe("Financial Ledger, Rewards & Security Guard Verification", () => {
   describe("1. RewardsCalcService Mathematical Precision", () => {
     it("should calculate correct tiered cashback and CI points for bill payments", () => {
-      // < 100: Rs 2, 1 pt per Rs 10
+      // S2 (11 - 50): Rs 2-5, 15 pts
       const r50 = RewardsCalcService.calculateBillPaymentRewards(50);
-      expect(r50.cashbackEarned).toBe(2);
-      expect(r50.ciPointsEarned).toBe(5);
+      expect(r50.slabId).toBe("S2");
+      expect(r50.cashbackEarned).toBe(5);
+      expect(r50.ciPointsEarned).toBe(15);
 
-      // 500 - 3500: Rs 10, 1 pt per Rs 10
-      const r1500 = RewardsCalcService.calculateBillPaymentRewards(1500);
-      expect(r1500.cashbackEarned).toBe(10);
-      expect(r1500.ciPointsEarned).toBe(150);
+      // S5 (1001 - 5000): benchmark Rs 4,300 -> Rs 10, 68 pts
+      const r4300 = RewardsCalcService.calculateBillPaymentRewards(4300);
+      expect(r4300.slabId).toBe("S5");
+      expect(r4300.cashbackEarned).toBe(10);
+      expect(r4300.ciPointsEarned).toBe(68);
 
-      // > 100,000: Rs 22, 1 pt per Rs 10
+      // S11 (> 100,000): Rs 33-34, 360-410 pts
       const r150k = RewardsCalcService.calculateBillPaymentRewards(150000);
-      expect(r150k.cashbackEarned).toBe(22);
-      expect(r150k.ciPointsEarned).toBe(15000);
+      expect(r150k.slabId).toBe("S11");
+      expect(r150k.cashbackEarned).toBe(34);
+      expect(r150k.ciPointsEarned).toBe(410);
     });
 
     it("should calculate correct mall purchase rewards with 2x multiplier for special sellers", () => {

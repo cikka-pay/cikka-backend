@@ -213,7 +213,7 @@ export const updateReturnStatus = asyncHandler(async (req: Request, res: Respons
                 burnedPoints,
                 WalletTxType.EARN_ADMIN,
                 {
-                  description: `CI Points restored for returned reward #${ret.order.orderNumber}`,
+                  description: "Order Returned • Points Restored",
                   idempotencyKey: `RETURN_REWARD_RESTORE:${ret.id}`,
                   orderId: ret.order.orderNumber,
                 }

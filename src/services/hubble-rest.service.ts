@@ -1750,9 +1750,26 @@ export class HubbleRestClient {
     return { candidateClientIds, candidateSecrets };
   }
 
+  private static sanitizeUpstreamErrorText(status: number, rawText: string): string {
+    const trimmed = String(rawText || '').trim();
+    if (!trimmed || /<(?:\!DOCTYPE|html|head|body)\b/i.test(trimmed)) {
+      return `Hubble upstream error (HTTP ${status})`;
+    }
+    try {
+      const parsed = JSON.parse(trimmed);
+      const debugMsg = parsed?.debugMessage || parsed?.message || parsed?.error;
+      if (typeof debugMsg === 'string' && debugMsg.trim()) {
+        return debugMsg.trim().slice(0, 300);
+      }
+    } catch {
+      // Non-JSON plain text body
+    }
+    return trimmed.slice(0, 300);
+  }
+
   /**
    * High-reliability HTTPS dispatcher that resolves IP and connects with custom Host header,
-   * bypassing ISP DPI SNI filtering while maintaining strict TLS 1.3 encryption.
+   * optionally omitting SNI (when HUBBLE_OMIT_SNI=true) while preserving TLS encryption.
    */
   public static hubbleFetch(pathOrUrl: string, options: {
     method?: string;
@@ -1794,7 +1811,7 @@ export class HubbleRestClient {
           path: reqPath,
           method,
           headers,
-          servername: '', // Omit SNI in TLS ClientHello to bypass ISP DPI reset
+          servername: process.env.HUBBLE_OMIT_SNI === 'true' ? '' : host,
           rejectUnauthorized: false,
           timeout: options.timeoutMs || 8000,
         };
@@ -1882,16 +1899,11 @@ export class HubbleRestClient {
             }
           } else {
             const errText = await response.text();
+            const cleanErr = this.sanitizeUpstreamErrorText(response.status, errText);
             if (process.env.HUBBLE_DEBUG === 'true') {
-              console.warn(`[HubbleRestClient] Auth attempt (${clientId}) failed (${response.status}): ${errText}`);
+              console.warn(`[HubbleRestClient] Auth attempt (${clientId}) failed (${response.status}): ${cleanErr}`);
             }
-            try {
-              const parsed = JSON.parse(errText);
-              const debugMsg = parsed.debugMessage || parsed.message || errText;
-              this.lastAuthError = debugMsg;
-            } catch {
-              this.lastAuthError = errText;
-            }
+            this.lastAuthError = cleanErr;
           }
         } catch (err: any) {
           this.lastAuthError = err.message;
@@ -1936,6 +1948,7 @@ export class HubbleRestClient {
 
     const endpoint = `/v1/partners/products${query.toString() ? `?${query.toString()}` : ''}`;
     const requestId = crypto.randomUUID ? crypto.randomUUID() : `req_${Date.now()}`;
+    let lastBrandsError: string | null = null;
 
     try {
       const token = await this.getAccessToken();
@@ -1963,6 +1976,10 @@ export class HubbleRestClient {
               isLiveApi: true,
             };
           }
+        } else {
+          const errText = await response.text();
+          lastBrandsError = this.sanitizeUpstreamErrorText(response.status, errText);
+          console.warn(`[HubbleRestClient] Remote getBrands failed (${response.status}): ${lastBrandsError}.`);
         }
       }
     } catch (err: any) {
@@ -1973,7 +1990,7 @@ export class HubbleRestClient {
     // Check Mock Mode: allowed if HUBBLE_MOCK_MODE is true, auto, or fallback
     const allowFallback = process.env.HUBBLE_MOCK_MODE === 'true' || process.env.HUBBLE_MOCK_MODE === 'auto' || process.env.HUBBLE_MOCK_MODE === 'fallback';
     if (!allowFallback) {
-      throw new Error(this.lastAuthError || 'Hubble REST API is unreachable and HUBBLE_MOCK_MODE is not enabled.');
+      throw new Error(lastBrandsError || this.lastAuthError || 'Hubble REST API is unreachable and HUBBLE_MOCK_MODE is not enabled.');
     }
 
     // High-fidelity fallback catalog

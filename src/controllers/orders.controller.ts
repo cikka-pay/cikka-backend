@@ -504,7 +504,7 @@ export const cancelUserOrder = asyncHandler(async (req: Request, res: Response) 
     if (pointsToRefund > 0) {
       await walletService
         .creditPoints(order.userId, pointsToRefund, WalletTxType.EARN_ADMIN, {
-          description: `Refund: Order cancellation for #${order.orderNumber}`,
+          description: "Order Cancelled • Points Restored",
           idempotencyKey: `ORDER_CANCEL_REFUND:${order.id}`,
           orderId: order.id,
         })

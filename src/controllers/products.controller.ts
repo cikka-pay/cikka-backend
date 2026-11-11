@@ -1,13 +1,14 @@
 import { Request, Response } from "express";
-import { asyncHandler } from "../utils/asyncHandler";
+import { config } from "../config/env";
 import { prisma } from "../config/prisma";
 import { Prisma } from "../generated/prisma/client";
-import { config } from "../config/env";
+import { walletService } from "../services/wallet.service";
+import { asyncHandler } from "../utils/asyncHandler";
 
 async function getValidSellerId(req: Request): Promise<string> {
   const rawSellerId = req.seller?.id;
-  const reqSellerId = typeof rawSellerId === "object" && rawSellerId !== null 
-    ? ((rawSellerId as any).id || String(rawSellerId)) 
+  const reqSellerId = typeof rawSellerId === "object" && rawSellerId !== null
+    ? ((rawSellerId as any).id || String(rawSellerId))
     : (typeof rawSellerId === "string" ? rawSellerId : undefined);
 
   if (reqSellerId) {
@@ -43,8 +44,8 @@ async function getValidSellerId(req: Request): Promise<string> {
 export const listProducts = asyncHandler(async (req: Request, res: Response) => {
   const { page = "1", limit = "500", status, category, q, sellerId } = req.query as any;
 
-  const pageNum = parseInt(page, 10);
-  const limitNum = parseInt(limit, 10) || 500;
+  const pageNum = Math.max(1, parseInt(page, 10) || 1);
+  const limitNum = Math.min(500, Math.max(1, parseInt(limit, 10) || 500));
   const skip = (pageNum - 1) * limitNum;
 
   const where: Prisma.ProductWhereInput = {};
@@ -58,7 +59,7 @@ export const listProducts = asyncHandler(async (req: Request, res: Response) => 
   else if (req.seller?.id) {
     where.sellerId = req.seller.id;
     if (status) where.status = status;
-  } 
+  }
   // Case 3: Public Customer / Mobile App Mall (No Seller JWT attached)
   else {
     // Condition: ONLY approved active products displayed in Cikka Mall
@@ -391,6 +392,119 @@ export const listMallCatalogProducts = asyncHandler(async (req: Request, res: Re
       limit: limitNum,
       totalPages: Math.ceil(total / limitNum),
     },
+  });
+});
+
+/**
+ * POST /api/mall/quote
+ * Authoritative price quote for Cikka Mall bag / checkout
+ */
+export const getMallQuote = asyncHandler(async (req: Request, res: Response) => {
+  const { items, deliveryOption = "standard", useCashback = false, couponCode, useCiPoints = false } = req.body || {};
+
+  if (!Array.isArray(items) || items.length === 0) {
+    res.status(400).json({ success: false, code: "EMPTY_CART", error: "Your bag is empty." });
+    return;
+  }
+
+  let subtotal = 0;
+  let mrpTotal = 0;
+  const lines: any[] = [];
+
+  for (const item of items) {
+    const qty = Math.max(1, Math.round(Number(item.qty) || 1));
+    const productId = item.productId || item.id;
+    let product: any = null;
+
+    if (productId) {
+      product = await prisma.product.findUnique({
+        where: { id: productId },
+        include: { variants: true },
+      }).catch(() => null);
+    }
+
+    const unitPrice = product ? Number(product.price) : Number(item.unit_price || item.price || 0);
+    const unitMrp = product?.mrp ? Number(product.mrp) : unitPrice;
+    const lineTotal = unitPrice * qty;
+    const lineMrpTotal = unitMrp * qty;
+
+    subtotal += lineTotal;
+    mrpTotal += lineMrpTotal;
+
+    lines.push({
+      product_id: productId,
+      variant_id: item.variantId || null,
+      variant: null,
+      name: product?.name || item.name || "Item",
+      brand: product?.brandName || null,
+      seller_id: product?.sellerId || "cikka_default_seller",
+      qty,
+      unit_price: unitPrice,
+      unit_price_paise: Math.round(unitPrice * 100),
+      mrp: unitMrp,
+      line_total: lineTotal,
+      line_total_paise: Math.round(lineTotal * 100),
+      line_mrp_total: lineMrpTotal,
+      mrp_savings: Math.max(0, lineMrpTotal - lineTotal),
+    });
+  }
+
+  const expressFee = deliveryOption === "express" ? 50 : 0;
+  const authUserId = (req as any).user?.id as string | undefined;
+
+  if (useCashback && !authUserId) {
+    res.status(401).json({
+      success: false,
+      code: "AUTH_REQUIRED_FOR_CASHBACK",
+      error: "Sign in to use your cashback balance.",
+    });
+    return;
+  }
+
+  let cashbackBalance: number | null = null;
+  if (authUserId) {
+    const walletBal = await walletService.getBalance(authUserId);
+    cashbackBalance = Math.max(0, Number(walletBal.cashRupees.toFixed(2)));
+  }
+
+  const maxCashbackUsable = cashbackBalance !== null ? Math.floor(cashbackBalance) : 0;
+  const cashbackDiscount = useCashback ? Math.min(Math.round(subtotal * 0.2), 200, maxCashbackUsable) : 0;
+  const couponDiscount = 0;
+  const ciPointsDiscount = 0;
+  const totalDiscount = cashbackDiscount + couponDiscount + ciPointsDiscount;
+
+  const total = Math.max(0, subtotal + expressFee - totalDiscount);
+  const totalPaise = Math.round(total * 100);
+  const quoteId = `quote_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+
+  res.status(200).json({
+    success: true,
+    quote_id: quoteId,
+    currency: "INR",
+    delivery_option: deliveryOption,
+    lines,
+    subtotal,
+    subtotal_paise: Math.round(subtotal * 100),
+    mrp_total: mrpTotal,
+    mrp_savings: Math.max(0, mrpTotal - subtotal),
+    discounts: {
+      coupon: couponDiscount,
+      cashback: cashbackDiscount,
+      ci_points: ciPointsDiscount,
+      total: totalDiscount,
+      total_paise: Math.round(totalDiscount * 100),
+    },
+    fees: {
+      express_delivery_fee: expressFee,
+      platform_fee: 0,
+      platform_fee_gst: 0,
+      platform_fee_total: 0,
+    },
+    cashback_balance: cashbackBalance,
+    total,
+    total_paise: totalPaise,
+    requires_payment: total > 0,
+    notes: [],
   });
 });
 

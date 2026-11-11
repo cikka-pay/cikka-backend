@@ -28,7 +28,7 @@ export const BBPS_ERRORS = {
   BILLER_ID_REQUIRED: "Biller ID is required",
   CUSTOMER_PARAMS_REQUIRED: "Customer account parameters are required",
   BILL_NOT_FOUND: "No active bill found for the provided customer details",
-  BILL_FETCH_FAILED: "Failed to fetch bill details from Setu BBPS Gateway",
+  BILL_FETCH_FAILED: "Failed to fetch bill details from BBPS Live Network",
   PAYMENT_INITIATION_FAILED: "Failed to initiate BBPS payment order",
   INVALID_PAYMENT_AMOUNT: "Payment amount must be greater than zero",
   INVALID_CUSTOMER_PARAMS: "Invalid or missing biller customer parameters",

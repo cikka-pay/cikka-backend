@@ -104,9 +104,10 @@ router.post("/returns/exchange", optionalUserAuth, createExchange);
 
 // Public Cikka Mall Catalog (Product exploration & single-loop exchanges)
 import { createOrder } from "../controllers/orders.controller";
-import { listMallCatalogProducts } from "../controllers/products.controller";
+import { listMallCatalogProducts, getMallQuote } from "../controllers/products.controller";
 router.get("/mall/products", listMallCatalogProducts);
 router.get("/products/mall", listMallCatalogProducts);
+router.post("/mall/quote", optionalUserAuth, getMallQuote);
 // Order simulation endpoint (customer app / Postman testing)
 router.post("/orders/create", optionalUserAuth, createOrder);
 

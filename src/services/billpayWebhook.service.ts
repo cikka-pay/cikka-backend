@@ -23,11 +23,19 @@
  */
 
 import crypto from "crypto";
-import { Prisma, BbpsTxnStatus, WalletTxType } from "../generated/prisma/client";
+import { Prisma, WalletTxType } from "../generated/prisma/client";
 import type { BbpsTransaction } from "../generated/prisma/client";
 import { prisma } from "../config/prisma";
 import { walletService } from "./wallet.service";
 import { RewardsCalcService } from "./rewardsCalc.service";
+
+export const BbpsTxnStatus = {
+  PENDING: "PENDING",
+  SUCCESS: "SUCCESS",
+  FAILED: "FAILED",
+  REFUNDED: "REFUNDED",
+} as const;
+export type BbpsTxnStatus = (typeof BbpsTxnStatus)[keyof typeof BbpsTxnStatus];
 
 // ── Config (read lazily from env; wired into src/config/env.ts separately) ────────────
 
@@ -172,10 +180,14 @@ function errorText(err: unknown): string {
  *   SUCCESS  → REFUNDED (never downgraded to FAILED by a late failure event)
  *   REFUNDED → nothing (final)
  */
-export function canTransition(from: BbpsTxnStatus, to: BbpsTxnStatus, event: string): boolean {
+export function canTransition(from: string, to: BbpsTxnStatus, event: string): boolean {
   if (from === to) return false;
   switch (from) {
     case BbpsTxnStatus.PENDING:
+    case "INITIATED":
+    case "VALIDATING":
+    case "BILL_FETCHED":
+    case "PAYMENT_PROCESSING":
       return true;
     case BbpsTxnStatus.FAILED:
       return to === BbpsTxnStatus.REFUNDED || (to === BbpsTxnStatus.SUCCESS && event === "bill_payment_success");
@@ -255,21 +267,20 @@ async function findTransaction(orderId: string | null, refId: string | null): Pr
   return null;
 }
 
-type TxnFields = Pick<
-  Prisma.BbpsTransactionUncheckedUpdateInput,
-  | "bbpsTxnId"
-  | "refId"
-  | "sessionId"
-  | "mobileNumber"
-  | "billerId"
-  | "billerName"
-  | "category"
-  | "billAmount"
-  | "amountPaid"
-  | "paidOn"
->;
+type TxnFields = {
+  bbpsTxnId: string | null;
+  refId: string | null;
+  sessionId: string | null;
+  mobileNumber: string | null;
+  billerId: string | null;
+  billerName: string | null;
+  category: string | null;
+  billAmount: Prisma.Decimal | null;
+  amountPaid: Prisma.Decimal | null;
+  paidOn: Date | null;
+};
 
-function extractFields(p: Record<string, unknown>): Record<keyof TxnFields, unknown> {
+function extractFields(p: Record<string, unknown>): TxnFields {
   return {
     bbpsTxnId: str(p.txnId),
     refId: str(p.refId),
@@ -310,8 +321,20 @@ async function applyPaymentEvent(event: string, target: BbpsTxnStatus, p: Record
       try {
         const created = await prisma.bbpsTransaction.create({
           data: {
-            ...(fields as Prisma.BbpsTransactionUncheckedCreateInput),
+            internalTxnId: orderId ? `CKK-WH-${orderId}` : `CKK-WH-${crypto.randomUUID()}`,
+            refID: orderId ? `WH-${orderId}` : `WH-${crypto.randomUUID()}`,
+            refId: fields.refId,
             setuOrderId: orderId,
+            bbpsTxnId: fields.bbpsTxnId,
+            sessionId: fields.sessionId,
+            mobileNumber: fields.mobileNumber,
+            billerId: fields.billerId ?? "UNKNOWN",
+            billerName: fields.billerName ?? "Bill Payment",
+            category: fields.category ?? "UTILITY",
+            amount: fields.amountPaid ?? fields.billAmount ?? new Prisma.Decimal(0),
+            billAmount: fields.billAmount,
+            amountPaid: fields.amountPaid,
+            paidOn: fields.paidOn,
             userId,
             status: target,
             ...errorData,

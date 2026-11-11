@@ -7,10 +7,16 @@ import {
   initiateBbpsPayment,
   getPaymentStatus,
   getBbpsHistory,
+  getBbpsHistoryItem,
+  createBbpsSession,
 } from "../controllers/bbps.controller";
 import { requireUserAuth, optionalUserAuth } from "../middleware/auth.middleware";
 import { validate } from "../middleware/validate.middleware";
-import { fetchBillSchema, initiateBbpsPaymentSchema } from "../validations/bbps.validation";
+import {
+  fetchBillSchema,
+  initiateBbpsPaymentSchema,
+  createBillpaySessionSchema,
+} from "../validations/bbps.validation";
 
 const router = Router();
 
@@ -33,7 +39,16 @@ router.post(
 // Payment Status by refID
 router.get("/payments/:refID/status", getPaymentStatus);
 
+// Setu Pre-Built Screens Session Link (Requires User Auth)
+router.post(
+  "/session",
+  requireUserAuth,
+  validate({ body: createBillpaySessionSchema }),
+  createBbpsSession
+);
+
 // User Bill Payment History (Requires User Auth)
 router.get("/history", requireUserAuth, getBbpsHistory);
+router.get("/history/:id", requireUserAuth, getBbpsHistoryItem);
 
 export default router;

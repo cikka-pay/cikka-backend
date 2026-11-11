@@ -77,10 +77,12 @@ enum WalletTxType {
   EARN_SIGNUP         // CI Points bonus on first sign-up
   EARN_REFERRAL       // CI Points for referring a friend
   EARN_CASHBACK       // ₹5 cashback credited as cash balance
+  EARN_BBPS           // CI Points earned on Setu BBPS / Cikka Pay bill payment
   EARN_ADMIN          // Manual admin credit (adjustments / promos)
   REDEEM_REWARD       // CI Points spent at Rewards Store
   DEBIT_EXPIRY        // CI Points expired (non-cash)
   DEBIT_REFUND        // CI Points reversed on order return
+  DEBIT_BBPS          // CI Points / cashback reversed on BBPS refund
   DEBIT_ADMIN         // Manual admin debit (fraud reversal)
   CASHBACK_REDEEM     // Cash balance applied to an order
 }
@@ -792,17 +794,47 @@ model BbpsTransaction {
   settlementRef      String?
   rawPayload         Json?
   errorMessage       String?
+  errorCode          String?
+  setuOrderId        String?   @unique
+  bbpsTxnId          String?
+  refId              String?
+  sessionId          String?
+  mobileNumber       String?
+  billAmount         Decimal?  @db.Decimal(10, 2)
+  amountPaid         Decimal?  @db.Decimal(10, 2)
+  paidOn             DateTime?
+  disputeRefId       String?
+  disputeStatus      String?
 
   createdAt          DateTime  @default(now())
   updatedAt          DateTime  @updatedAt
 
   @@index([internalTxnId])
   @@index([refID])
+  @@index([refId])
+  @@index([bbpsTxnId])
   @@index([platformBillId])
   @@index([userId])
   @@index([status])
   @@index([category])
   @@map("bbps_transactions")
+}
+
+// ============================================================
+// BBPS WEBHOOK EVENT — Append-only log of Setu BillPay webhook deliveries
+// ============================================================
+
+model BbpsWebhookEvent {
+  id          String    @id @default(uuid())
+  event       String
+  dedupeKey   String    @unique
+  payload     Json
+  receivedAt  DateTime  @default(now())
+  processedAt DateTime?
+  error       String?
+
+  @@index([event, receivedAt])
+  @@map("bbps_webhook_events")
 }
 
 // ============================================================

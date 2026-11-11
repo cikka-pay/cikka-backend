@@ -149,7 +149,7 @@ export const setuBbpsStub: SetuBbpsService = {
       status: "SUCCESS",
       bbpsRefNo,
       amount: params.amount,
-      message: "Bill payment processed successfully via Setu BBPS",
+      message: "Bill payment processed successfully via BBPS Gateway",
       receiptUrl: `https://bbps.setu.co/receipts/${setuPaymentId}`,
     };
   },

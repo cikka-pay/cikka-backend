@@ -3,6 +3,7 @@ import { Request, Response } from 'express';
 import { HubbleService } from '../services/hubble.service';
 import { HubbleRestClient } from '../services/hubble-rest.service';
 import { walletService } from '../services/wallet.service';
+import { RewardsCalcService } from '../services/rewardsCalc.service';
 import { prisma } from '../config/prisma';
 import { WalletTxType } from '../generated/prisma/client';
 
@@ -203,7 +204,7 @@ export class HubbleController {
           numCoins,
           WalletTxType.REDEEM_REWARD,
           {
-            description: `Hubble gift card redemption (ref: ${referenceId})`,
+            description: 'Brand Voucher Redeemed',
             idempotencyKey: `HUBBLE_DEBIT:${referenceId}`,
             redemptionId: referenceId,
           }
@@ -309,7 +310,7 @@ export class HubbleController {
         coinsToRefund,
         WalletTxType.EARN_ADMIN,
         {
-          description: `Hubble reversal for transaction ${referenceId}`,
+          description: "Voucher Points Restored",
           idempotencyKey: reverseKey,
           redemptionId: referenceId,
         }
@@ -415,7 +416,11 @@ export class HubbleController {
         return;
       }
 
-      const { productId, denomination, quantity = 1, amount, customerDetails } = req.body;
+      const { productId, denomination, quantity = 1, amount, customerDetails, brandTitle } = req.body;
+      const cleanBrand =
+        typeof brandTitle === "string" && brandTitle.trim() && !/hubble/i.test(brandTitle)
+          ? brandTitle.trim()
+          : "";
 
       if (!productId) {
         res.status(400).json({
@@ -437,8 +442,8 @@ export class HubbleController {
         return;
       }
 
-      // Strict Valuation: 1 CI Point = ₹1 gift voucher purchasing power
-      const totalPointsRequired = Math.round(totalAmount);
+      // Coupon Valuation: 6 CI Points = ₹1 gift voucher purchasing power (~₹0.1667/pt)
+      const totalPointsRequired = RewardsCalcService.calculateCouponPointsRequired(totalAmount);
 
       // 1. Verify User CI Points balance in PostgreSQL UserWallet
       const wallet = await walletService.getBalance(authUserId);
@@ -461,7 +466,7 @@ export class HubbleController {
           totalPointsRequired,
           WalletTxType.REDEEM_REWARD,
           {
-            description: `Hubble voucher purchase: ${productId} (₹${totalAmount})`,
+            description: cleanBrand ? `${cleanBrand} Voucher` : "Brand Voucher Redeemed",
             idempotencyKey: `HUBBLE_ORDER_DEBIT:${orderReference}`,
             redemptionId: orderReference,
           }
@@ -518,7 +523,7 @@ export class HubbleController {
                   cardNumber: v.cardNumber || `VCHR-${Date.now()}-${Math.floor(1000 + Math.random() * 9000)}`,
                   cardPin: v.cardPin || null,
                   denomination: Number(v.amount) || denomNum,
-                  pointsBurned: Number(v.amount) || denomNum,
+                  pointsBurned: RewardsCalcService.calculateCouponPointsRequired(Number(v.amount) || denomNum),
                   validTill: isNaN(validDate.getTime()) ? null : validDate,
                   cardType: v.cardType || brand?.cardType || "CARD_AND_PIN_NO_SECURED",
                   status: "ACTIVE",
@@ -551,7 +556,7 @@ export class HubbleController {
             totalPointsRequired,
             WalletTxType.EARN_ADMIN,
             {
-              description: `Refund: Rollback for failed Hubble voucher order (${productId})`,
+              description: "Voucher Points Restored",
               idempotencyKey: `HUBBLE_ORDER_ROLLBACK:${orderReference}`,
               redemptionId: orderReference,
             }

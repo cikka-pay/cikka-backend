@@ -105,22 +105,10 @@ export async function initiateBbpsPaymentService(userId: string | null, dto: Ini
   };
 }
 
-export async function getUserBbpsHistoryService(userId: string) {
-  const transactions = await prisma.bbpsTransaction.findMany({
-    where: { userId },
-    orderBy: { createdAt: "desc" },
-    take: 50,
-  });
+import { getUserBillpayHistory, toBillpayHistoryItem } from "./billpaySession.service";
 
-  return transactions.map((tx) => ({
-    id: tx.id,
-    refID: tx.refID,
-    billerId: tx.billerId,
-    billerName: tx.billerName,
-    category: tx.category,
-    amount: parseFloat(tx.amount.toString()),
-    status: tx.status,
-    bbpsRefNo: tx.bbpsRefNo,
-    createdAt: tx.createdAt,
-  }));
+export { getUserBillpayHistoryItem, toBillpayHistoryItem } from "./billpaySession.service";
+
+export async function getUserBbpsHistoryService(userId: string) {
+  return getUserBillpayHistory(userId);
 }

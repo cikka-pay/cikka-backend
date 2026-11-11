@@ -54,6 +54,7 @@ const EARN_TYPES = new Set<WalletTxType>([
   WalletTxType.EARN_SIGNUP,
   WalletTxType.EARN_REFERRAL,
   WalletTxType.EARN_CASHBACK,
+  WalletTxType.EARN_BBPS,
   WalletTxType.EARN_ADMIN,
 ]);
 
@@ -61,6 +62,7 @@ const REDEEM_TYPES = new Set<WalletTxType>([
   WalletTxType.REDEEM_REWARD,
   WalletTxType.DEBIT_EXPIRY,
   WalletTxType.DEBIT_REFUND,
+  WalletTxType.DEBIT_BBPS,
   WalletTxType.DEBIT_ADMIN,
   WalletTxType.CASHBACK_REDEEM,
 ]);
@@ -90,23 +92,6 @@ export const walletService = {
       if (bypassUser?.wallet) {
         wallet = bypassUser.wallet;
       }
-    }
-    const isDevBypass =
-      userId === "dev-bypass-1" ||
-      userId === "dev-bypass-user-id" ||
-      userId === "975ada92-b982-4205-8c49-4f2723fce75a";
-
-    if (isDevBypass && (!wallet || wallet.ciPoints < 10000)) {
-      return {
-        ciPoints: 10000,
-        cashPaise: wallet?.cashPaise || 0,
-        cashRupees: (wallet?.cashPaise || 0) / 100,
-        lifetimeEarnedPoints: Math.max(10000, wallet?.lifetimeEarnedPoints || 0),
-        lifetimeRedeemedPoints: wallet?.lifetimeRedeemedPoints || 0,
-        lifetimeEarnedPaise: wallet?.lifetimeEarnedPaise || 0,
-        lifetimeRedeemedPaise: wallet?.lifetimeRedeemedPaise || 0,
-        walletId: wallet?.id || "dev-bypass-wallet",
-      };
     }
 
     if (!wallet) {
@@ -209,7 +194,7 @@ export const walletService = {
           phoneVerified: true,
         },
         update: {},
-      }).catch(() => {});
+      }).catch(() => { });
 
       // 2b. Upsert wallet and lock the row
       const wallet = await tx.userWallet.upsert({
@@ -222,15 +207,6 @@ export const walletService = {
         },
         update: {}, // Just locks the row; we'll update it below
       });
-
-      const isDevBypass =
-        userId === "dev-bypass-1" ||
-        userId === "dev-bypass-user-id" ||
-        userId === "975ada92-b982-4205-8c49-4f2723fce75a";
-
-      if (isDevBypass && wallet.ciPoints < Math.abs(pointsDelta)) {
-        wallet.ciPoints = Math.max(10000, wallet.ciPoints + 10000);
-      }
 
       // 2b. Guard against negative balances on debits
       if (pointsDelta < 0) {
@@ -284,7 +260,7 @@ export const walletService = {
           ciPoints: newCiPoints,
           cashbackBalance: Number((newCashPaise / 100).toFixed(2)),
         },
-      }).catch(() => {});
+      }).catch(() => { });
 
       // 2g. Append the immutable ledger entry
       const entry = await tx.loyaltyLedger.create({
@@ -314,9 +290,12 @@ export const walletService = {
           notifTitle = `₹${(cashPaiseDelta / 100).toFixed(2)} Cashback Credited!`;
           notifCategory = "rewards";
           notifBody = description || `Instant cashback of ₹${(cashPaiseDelta / 100).toFixed(2)} credited to your account.`;
-        } else if (txType === WalletTxType.EARN_ORDER && pointsDelta > 0) {
+        } else if (
+          (txType === WalletTxType.EARN_ORDER || txType === WalletTxType.EARN_BBPS) &&
+          pointsDelta > 0
+        ) {
           notifTitle = `+${pointsDelta.toLocaleString("en-IN")} CI Points Earned!`;
-          notifCategory = "rewards";
+          notifCategory = txType === WalletTxType.EARN_BBPS ? "bills" : "rewards";
           notifBody = description || `${pointsDelta} CI Points have been added to your vault balance.`;
         } else if (txType === WalletTxType.REDEEM_REWARD && pointsDelta < 0) {
           notifTitle = `${Math.abs(pointsDelta).toLocaleString("en-IN")} CI Points Redeemed`;
@@ -345,7 +324,7 @@ export const walletService = {
             },
           },
         });
-      } catch (_notifErr) {}
+      } catch (_notifErr) { }
 
       return { entry, wallet: updatedWallet };
     });

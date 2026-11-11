@@ -377,7 +377,7 @@ async function executeRedemptionFulfillment(params: {
       {
         redemptionId,
         razorpayPaymentId: payment_id,
-        description: `Rewards Store redemption: ${product_name}`,
+        description: product_name ? String(product_name).trim() : "Rewards Store Order",
         idempotencyKey: `REDEEM_REWARD:${redemptionId}`,
       }
     );
@@ -404,7 +404,7 @@ async function executeRedemptionFulfillment(params: {
         numPointsBurned,
         WalletTxType.EARN_ADMIN,
         {
-          description: `Rollback: Out of stock item for redemption #${redemptionId}`,
+          description: "Rewards Store Points Restored",
           idempotencyKey: `REDEEM_REWARD_ROLLBACK:${redemptionId}`,
           redemptionId,
         }

@@ -30,3 +30,11 @@ export const createPaymentOrderSchema = z.object({
   amount: z.number().positive("Amount must be greater than zero"),
   paymentMode: z.enum(["UPI", "DEBIT_CARD", "CREDIT_CARD", "NET_BANKING"]).default("UPI"),
 });
+
+export const createBillpaySessionSchema = z.object({
+  categoryName: z.string().trim().min(1).max(120).optional(),
+  billerId: z.string().trim().min(1).max(120).optional(),
+  redirectTo: z.enum(["transactions", "disputes"]).optional(),
+  transactionRef: z.string().trim().min(1).max(160).optional(),
+  refId: z.string().trim().min(1).max(160).optional(),
+});

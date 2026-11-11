@@ -10,6 +10,7 @@ import { asyncHandler } from "../utils/asyncHandler";
 import { walletService } from "../services/wallet.service";
 import { WalletTxType } from "../generated/prisma/client";
 import { z } from "zod";
+import { formatCustomerLedgerDescription } from "../utils/ledgerDescription";
 
 // ── GET /api/wallet/balance ───────────────────────────────────────────────────
 /**
@@ -70,7 +71,7 @@ export const getWalletLedger = asyncHandler(async (req: Request, res: Response) 
       balance_after_rupees: e.balanceAfterPaise / 100,
       order_id: e.orderId,
       redemption_id: e.redemptionId,
-      description: e.description,
+      description: formatCustomerLedgerDescription(e.description, e.txType),
       expires_at: e.expiresAt,
       created_at: e.createdAt,
     })),
@@ -229,7 +230,7 @@ export const withdrawFunds = asyncHandler(async (req: Request, res: Response) =>
         WalletTxType.CASHBACK_REDEEM,
         {
           idempotencyKey: idem,
-          description: description || `Withdrawal of ₹${amount.toFixed(2)} to registered bank/UPI`,
+          description: formatCustomerLedgerDescription(description, WalletTxType.CASHBACK_REDEEM) || "Cashback Withdrawal",
         }
       );
       res.status(200).json({
@@ -247,7 +248,7 @@ export const withdrawFunds = asyncHandler(async (req: Request, res: Response) =>
         WalletTxType.REDEEM_REWARD,
         {
           idempotencyKey: idem,
-          description: description || `Withdrawal of ${points} CI Points to statement credit`,
+          description: formatCustomerLedgerDescription(description, WalletTxType.REDEEM_REWARD) || "CI Points Redemption",
         }
       );
       res.status(200).json({

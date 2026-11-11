@@ -108,7 +108,7 @@ describe("Reward Store Security Hardening & Vulnerability Remediation", () => {
       const debitSpy = vi.spyOn(walletService, "debitPoints").mockResolvedValue({
         ledgerEntryId: "led-debit-1",
         walletId: "w-rich",
-        balanceAfterPoints: 4500,
+        balanceAfterPoints: 2000,
         balanceAfterPaise: 0,
       });
 
@@ -137,10 +137,10 @@ describe("Reward Store Security Hardening & Vulnerability Remediation", () => {
       expect(res.body.success).toBe(false);
       expect(res.body.error).toContain("Hubble Partner Downstream Timeout");
 
-      // Verify debit occurred first
+      // Verify debit occurred first (6 CI Points = ₹1 -> 500 * 6 = 3,000 CI Points)
       expect(debitSpy).toHaveBeenCalledWith(
         "user-uuid-111",
-        500,
+        3000,
         WalletTxType.REDEEM_REWARD,
         expect.anything()
       );
@@ -148,7 +148,7 @@ describe("Reward Store Security Hardening & Vulnerability Remediation", () => {
       // Verify rollback refund was executed immediately
       expect(creditSpy).toHaveBeenCalledWith(
         "user-uuid-111",
-        500,
+        3000,
         WalletTxType.EARN_ADMIN,
         expect.anything()
       );
@@ -169,7 +169,7 @@ describe("Reward Store Security Hardening & Vulnerability Remediation", () => {
       vi.spyOn(walletService, "debitPoints").mockResolvedValue({
         ledgerEntryId: "led-debit-1",
         walletId: "w-rich",
-        balanceAfterPoints: 4500,
+        balanceAfterPoints: 2000,
         balanceAfterPaise: 0,
       });
 
@@ -201,8 +201,8 @@ describe("Reward Store Security Hardening & Vulnerability Remediation", () => {
 
       expect(res.status).toBe(201);
       expect(res.body.success).toBe(true);
-      expect(res.body.points_burned).toBe(500);
-      expect(res.body.remaining_points).toBe(4500);
+      expect(res.body.points_burned).toBe(3000);
+      expect(res.body.remaining_points).toBe(2000);
     });
   });
 
@@ -431,6 +431,132 @@ describe("Reward Store Security Hardening & Vulnerability Remediation", () => {
       expect(res.body.success).toBe(true);
       expect(res.body.ci_points).toBe(750);
       expect(res.body.cashback_balance).toBe(50.0);
+    });
+  });
+
+  describe("6. Rewards Integrity: Real Zero Balance, Quote Cashback & Mall Rewards", () => {
+    it("returns 0 CI Points (no synthetic 10,000 override) for dev bypass ID when DB wallet is absent", async () => {
+      vi.spyOn(prisma.userWallet, "findUnique").mockResolvedValue(null);
+
+      const bal = await walletService.getBalance("975ada92-b982-4205-8c49-4f2723fce75a");
+      expect(bal.ciPoints).toBe(0);
+      expect(bal.cashRupees).toBe(0);
+    });
+
+    it("caps /api/mall/quote cashback discount by user's actual wallet cashback balance", async () => {
+      vi.spyOn(prisma.product, "findUnique").mockResolvedValue({
+        id: "prod-mall-1",
+        name: "Leather Bag",
+        price: 2500 as any,
+        mrp: 3000 as any,
+        brandName: "Cikka",
+        sellerId: "seller-1",
+        variants: [],
+      } as any);
+
+      vi.spyOn(walletService, "getBalance").mockResolvedValue({
+        ciPoints: 0,
+        cashPaise: 2500, // ₹25 real cashback balance
+        cashRupees: 25,
+        lifetimeEarnedPoints: 0,
+        lifetimeRedeemedPoints: 0,
+        lifetimeEarnedPaise: 2500,
+        lifetimeRedeemedPaise: 0,
+        walletId: "w-cb",
+      });
+
+      const res = await request(app)
+        .post("/api/mall/quote")
+        .set("Authorization", `Bearer ${userToken}`)
+        .send({
+          items: [{ id: "prod-mall-1", qty: 1 }],
+          deliveryOption: "standard",
+          useCashback: true,
+        });
+
+      expect(res.status).toBe(200);
+      expect(res.body.cashback_balance).toBe(25);
+      expect(res.body.discounts.cashback).toBe(25);
+      expect(res.body.total).toBe(2475);
+    });
+
+    it("rejects /api/mall/quote with 401 AUTH_REQUIRED_FOR_CASHBACK when unauthenticated user requests cashback", async () => {
+      vi.spyOn(prisma.product, "findUnique").mockResolvedValue({
+        id: "prod-mall-1",
+        name: "Leather Bag",
+        price: 2500 as any,
+        mrp: 3000 as any,
+        brandName: "Cikka",
+        sellerId: "seller-1",
+        variants: [],
+      } as any);
+
+      const res = await request(app)
+        .post("/api/mall/quote")
+        .send({
+          items: [{ id: "prod-mall-1", qty: 1 }],
+          deliveryOption: "standard",
+          useCashback: true,
+        });
+
+      expect(res.status).toBe(401);
+      expect(res.body.code).toBe("AUTH_REQUIRED_FOR_CASHBACK");
+    });
+
+    it("computes accurate Mall rewards for >₹1,000 subtotal without dividing rupees by 100", async () => {
+      vi.spyOn(razorpayService, "verifyPaymentSignature").mockReturnValue(true);
+      vi.spyOn(prisma.seller, "findMany").mockResolvedValue([
+        {
+          id: "sel-1",
+          businessName: "Cikka Flagship Store",
+          isSpecialSeller: false,
+          razorpayAccountId: "acc_test_1",
+          onboarding: { pickupAddress: { pincode: "122008" } },
+          commissionConfig: null,
+        } as any,
+      ]);
+      vi.spyOn(prisma.product, "findFirst").mockResolvedValue({ id: "prod-default-1" } as any);
+      vi.spyOn(prisma.product, "findUnique").mockResolvedValue(null);
+      vi.spyOn(prisma.order, "upsert").mockResolvedValue({
+        id: "ord-1",
+        orderNumber: "order_dev_test_2500",
+        items: [],
+      } as any);
+      const applySpy = vi.spyOn(walletService, "applyEntry").mockResolvedValue({
+        ledgerEntryId: "led-mall-1",
+        walletId: "w-rich",
+        balanceAfterPoints: 6050,
+        balanceAfterPaise: 2100,
+      });
+
+      const res = await request(app)
+        .post("/api/payment/verify-payment")
+        .set("Authorization", `Bearer ${userToken}`)
+        .send({
+          razorpay_order_id: "order_dev_test_2500",
+          razorpay_payment_id: "pay_dev_test_2500",
+          razorpay_signature: "mock_signature_valid",
+          subtotal: 2500,
+          amount_in_paise: 250000,
+          customer_phone: "+919876543210",
+          items: [],
+        });
+
+      expect(res.status).toBe(200);
+      expect(res.body.cashback_earned).toBe(21);
+      expect(res.body.ci_points_earned).toBe(1050);
+      expect(applySpy).toHaveBeenCalledWith(
+        expect.objectContaining({
+          userId: "user-uuid-111",
+          cashPaiseDelta: 2100,
+        })
+      );
+      expect(applySpy).toHaveBeenCalledWith(
+        expect.objectContaining({
+          userId: "user-uuid-111",
+          pointsDelta: 1050,
+        })
+      );
     });
   });
 });

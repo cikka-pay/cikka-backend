@@ -11,7 +11,7 @@
  *    - Cikka Mall Products: Earn direct cashback (1.5% - 3%) and CI Points (10x - 45x tiered).
  *    - Rewards Store Products: 100% points redemption burn (e.g. 1 CI Point = ₹1 face value).
  *    - Coupons / Brand Vouchers:
- *        • Redeemed via CI Points (Hubble): 1 CI Point = ₹1 face value. Zero cashback, Zero points earned.
+ *        • Redeemed via CI Points (Hubble): 6 CI Points = ₹1 face value (~₹0.1667/pt). Zero cashback, Zero points earned.
  *        • Purchased via Cikka Pay: Brand discount (1% - 5%) + CI points earned on net payable.
  */
 
@@ -98,6 +98,10 @@ export interface CouponRewardResult {
 }
 
 export class RewardsCalcService {
+  /** Immutable canonical ratio: 6 CI Points = ₹1 (never alter this conversion rate). */
+  static readonly CI_POINTS_PER_RUPEE = 6;
+  static readonly COUPON_CI_POINTS_PER_RUPEE = RewardsCalcService.CI_POINTS_PER_RUPEE;
+
   /**
    * 1. CIKKA MALL PRODUCT PURCHASE
    * New Tiered Cashback Rules:
@@ -176,7 +180,8 @@ export class RewardsCalcService {
       isSpecialSeller: Boolean(isSpecialSeller),
       cashbackMultiplier: multiplier,
       ciPointsEarned,
-      effectiveSavings: finalCashback + Math.round(ciPointsEarned * 0.25),
+      effectiveSavings:
+        finalCashback + Math.round(ciPointsEarned / RewardsCalcService.CI_POINTS_PER_RUPEE),
       status: "PENDING_DELIVERY_WINDOW",
     };
   }
@@ -365,9 +370,14 @@ export class RewardsCalcService {
 
   /**
    * 4. COUPONS & BRAND VOUCHERS (Hubble Integration)
-   * Mode A: Points Redemption -> Member burns CI points (1 pt = ₹1 voucher). ZERO cashback, ZERO points.
+   * Mode A: Points Redemption -> Member burns CI points (6 pts = ₹1 voucher). ZERO cashback, ZERO points.
    * Mode B: Cash/UPI Purchase -> Member gets Brand Discount (1%-5%) + earns CI points on net paid.
    */
+  static calculateCouponPointsRequired(amountRupees: number): number {
+    const safeAmount = Math.max(0, Number(amountRupees) || 0);
+    return Math.round(safeAmount * RewardsCalcService.COUPON_CI_POINTS_PER_RUPEE);
+  }
+
   static calculateCouponTransaction(params: {
     mode: "REDEMPTION" | "PURCHASE";
     denomination: number;
@@ -380,7 +390,7 @@ export class RewardsCalcService {
       return {
         type: "REDEMPTION",
         denomination: denom,
-        pointsBurned: denom, // 1 CI Point = ₹1 Face Value
+        pointsBurned: RewardsCalcService.calculateCouponPointsRequired(denom), // 6 CI Points = ₹1 Face Value
         cashbackEarned: 0,
         ciPointsEarned: 0,
         brandDiscount: 0,
