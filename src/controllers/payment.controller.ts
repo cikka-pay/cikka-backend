@@ -239,19 +239,69 @@ export const verifyPayment = asyncHandler(async (req: Request, res: Response) =>
     is_express: req.body.is_express || req.body.delivery_option === "express",
   });
 
-  // Calculate earned Rewards for Cikka Mall Purchase (Cashback & CI Points)
+  // Calculate earned Rewards (Cikka Pay Bill Payment vs Cikka Mall Purchase)
   const totalRupees = Number(amount) ? (Number(amount) > 1000 ? Number(amount) / 100 : Number(amount)) : 0;
-  const hasSpecialSeller = processedOrders.some((p: any) => p.is_special_seller) || Boolean(req.body.is_special_seller);
-  const mallRewards = RewardsCalcService.calculateMallPurchaseRewards(totalRupees, hasSpecialSeller);
+  const isBillPayment = Boolean(
+    req.body.payment_type === "credit_card_bill" ||
+    req.body.payment_type === "bill_payment" ||
+    req.body.type === "credit_card" ||
+    req.body.type === "bill" ||
+    req.body.card_name ||
+    req.body.cardName ||
+    req.body.billType ||
+    (!req.body.items && !req.body.cartItems && processedOrders.length === 0)
+  );
+
+  let cashbackEarned = 0;
+  let ciPointsEarned = 0;
+  let rewardsStatus = "PROCESSED";
+  let rewardsSlabId = "NONE";
+  let cashbackRange: [number, number] | undefined = undefined;
+  let ciPointsRange: [number, number] | undefined = undefined;
+
+  if (isBillPayment) {
+    const billRewards = RewardsCalcService.calculateCikkaPayRewards(razorpay_payment_id, totalRupees);
+    cashbackEarned = billRewards.cashbackEarned;
+    ciPointsEarned = billRewards.ciPointsEarned;
+    rewardsSlabId = billRewards.slabId || "S5";
+    cashbackRange = billRewards.cashbackRange;
+    ciPointsRange = billRewards.ciPointsRange;
+
+    // Credit User Wallet if user identified
+    const userId = (req as any).user?.id || (customer_phone ? (await prisma.user.findFirst({ where: { phone: { contains: customer_phone.slice(-10) } } }))?.id : null);
+    if (userId) {
+      if (ciPointsEarned > 0) {
+        await walletService.creditPoints(userId, ciPointsEarned, WalletTxType.EARN_BBPS, {
+          idempotencyKey: `EARN_CC_PTS:${razorpay_payment_id}`,
+          description: `CI Points for bill payment (₹${totalRupees})`,
+        }).catch((err) => console.warn(`[Wallet Credit Points] ${err.message}`));
+      }
+      if (cashbackEarned > 0) {
+        await walletService.creditCash(userId, cashbackEarned * 100, WalletTxType.EARN_CASHBACK, {
+          idempotencyKey: `EARN_CC_CASH:${razorpay_payment_id}`,
+          description: `₹${cashbackEarned} Cashback for bill payment (₹${totalRupees})`,
+        }).catch((err) => console.warn(`[Wallet Credit Cash] ${err.message}`));
+      }
+    }
+  } else {
+    const hasSpecialSeller = processedOrders.some((p: any) => p.is_special_seller) || Boolean(req.body.is_special_seller);
+    const mallRewards = RewardsCalcService.calculateMallPurchaseRewards(totalRupees, hasSpecialSeller);
+    cashbackEarned = mallRewards.cashbackEarned;
+    ciPointsEarned = mallRewards.ciPointsEarned;
+    rewardsStatus = mallRewards.status;
+    cashbackRange = mallRewards.cashbackRange;
+  }
 
   // Credit earned rewards to authoritative double-entry wallet & ledger
-  await creditMallRewards(
-    (req as any).user?.id,
-    customer_phone,
-    razorpay_order_id,
-    razorpay_payment_id,
-    mallRewards
-  );
+  if (!isBillPayment) {
+    await creditMallRewards(
+      (req as any).user?.id,
+      customer_phone,
+      razorpay_order_id,
+      razorpay_payment_id,
+      { cashbackEarned, ciPointsEarned, status: rewardsStatus }
+    );
+  }
 
   res.status(200).json({
     success: true,
@@ -259,11 +309,13 @@ export const verifyPayment = asyncHandler(async (req: Request, res: Response) =>
     message: "Payment verified successfully, orders created, and settlements scheduled on T+7 hold.",
     payment_id: razorpay_payment_id,
     order_id: razorpay_order_id,
-    cashback_earned: mallRewards.cashbackEarned,
-    ci_points_earned: mallRewards.ciPointsEarned,
-    is_special_seller: mallRewards.isSpecialSeller,
-    cashback_multiplier: mallRewards.cashbackMultiplier,
-    rewards_status: mallRewards.status,
+    cashback_earned: cashbackEarned,
+    ci_points_earned: ciPointsEarned,
+    rewards_slab: rewardsSlabId,
+    cashback_range: cashbackRange,
+    ci_points_range: ciPointsRange,
+    is_special_seller: !isBillPayment && (processedOrders.some((p: any) => p.is_special_seller) || Boolean(req.body.is_special_seller)),
+    rewards_status: rewardsStatus,
     processed_orders: processedOrders,
   });
 });
@@ -963,17 +1015,67 @@ export const verifyCardOtp = asyncHandler(async (req: Request, res: Response) =>
   });
 
   const totalRupees = Number(amount) ? (Number(amount) > 1000 ? Number(amount) / 100 : Number(amount)) : 0;
-  const hasSpecialSeller = processedOrders.some((p: any) => p.is_special_seller) || Boolean(req.body.is_special_seller);
-  const mallRewards = RewardsCalcService.calculateMallPurchaseRewards(totalRupees, hasSpecialSeller);
+  const isBillPayment = Boolean(
+    req.body.payment_type === "credit_card_bill" ||
+    req.body.payment_type === "bill_payment" ||
+    req.body.type === "credit_card" ||
+    req.body.type === "bill" ||
+    req.body.card_name ||
+    req.body.cardName ||
+    req.body.billType ||
+    (!items && !req.body.cartItems && processedOrders.length === 0)
+  );
+
+  let cashbackEarned = 0;
+  let ciPointsEarned = 0;
+  let rewardsStatus = "PROCESSED";
+  let rewardsSlabId = "NONE";
+  let cashbackRange: [number, number] | undefined = undefined;
+  let ciPointsRange: [number, number] | undefined = undefined;
+
+  if (isBillPayment) {
+    const billRewards = RewardsCalcService.calculateCikkaPayRewards(payment_id, totalRupees);
+    cashbackEarned = billRewards.cashbackEarned;
+    ciPointsEarned = billRewards.ciPointsEarned;
+    rewardsSlabId = billRewards.slabId || "S5";
+    cashbackRange = billRewards.cashbackRange;
+    ciPointsRange = billRewards.ciPointsRange;
+
+    // Credit User Wallet if user identified
+    const userId = (req as any).user?.id || (customer_phone ? (await prisma.user.findFirst({ where: { phone: { contains: customer_phone.slice(-10) } } }))?.id : null);
+    if (userId) {
+      if (ciPointsEarned > 0) {
+        await walletService.creditPoints(userId, ciPointsEarned, WalletTxType.EARN_BBPS, {
+          idempotencyKey: `EARN_CC_PTS:${payment_id}`,
+          description: `CI Points for bill payment (₹${totalRupees})`,
+        }).catch((err) => console.warn(`[Wallet Credit Points] ${err.message}`));
+      }
+      if (cashbackEarned > 0) {
+        await walletService.creditCash(userId, cashbackEarned * 100, WalletTxType.EARN_CASHBACK, {
+          idempotencyKey: `EARN_CC_CASH:${payment_id}`,
+          description: `₹${cashbackEarned} Cashback for bill payment (₹${totalRupees})`,
+        }).catch((err) => console.warn(`[Wallet Credit Cash] ${err.message}`));
+      }
+    }
+  } else {
+    const hasSpecialSeller = processedOrders.some((p: any) => p.is_special_seller) || Boolean(req.body.is_special_seller);
+    const mallRewards = RewardsCalcService.calculateMallPurchaseRewards(totalRupees, hasSpecialSeller);
+    cashbackEarned = mallRewards.cashbackEarned;
+    ciPointsEarned = mallRewards.ciPointsEarned;
+    rewardsStatus = mallRewards.status;
+    cashbackRange = mallRewards.cashbackRange;
+  }
 
   // Credit earned rewards to authoritative double-entry wallet & ledger
-  await creditMallRewards(
-    (req as any).user?.id,
-    customer_phone,
-    order_id,
-    payment_id,
-    mallRewards
-  );
+  if (!isBillPayment) {
+    await creditMallRewards(
+      (req as any).user?.id,
+      customer_phone,
+      order_id,
+      payment_id,
+      { cashbackEarned, ciPointsEarned, status: rewardsStatus }
+    );
+  }
 
   res.status(200).json({
     success: true,
@@ -982,11 +1084,13 @@ export const verifyCardOtp = asyncHandler(async (req: Request, res: Response) =>
     order_id,
     razorpay_signature: signature,
     message: "Bank 3DS OTP verified successfully! Order placed and fulfillment initiated.",
-    cashback_earned: mallRewards.cashbackEarned,
-    ci_points_earned: mallRewards.ciPointsEarned,
-    is_special_seller: mallRewards.isSpecialSeller,
-    cashback_multiplier: mallRewards.cashbackMultiplier,
-    rewards_status: mallRewards.status,
+    cashback_earned: cashbackEarned,
+    ci_points_earned: ciPointsEarned,
+    rewards_slab: rewardsSlabId,
+    cashback_range: cashbackRange,
+    ci_points_range: ciPointsRange,
+    is_special_seller: !isBillPayment && (processedOrders.some((p: any) => p.is_special_seller) || Boolean(req.body.is_special_seller)),
+    rewards_status: rewardsStatus,
     processed_orders: processedOrders,
   });
 });

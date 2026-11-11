@@ -5,6 +5,7 @@ import {
   payWithCardForRewards,
   verifyCardOtpForRewards,
   getUserRewardBalance,
+  getCikkaPayRewardEstimate,
 } from "../controllers/rewards.controller";
 import { optionalUserAuth } from "../middleware/auth.middleware";
 
@@ -12,6 +13,10 @@ const router = Router();
 
 // Allow authenticated users or guests with points session
 router.use(optionalUserAuth);
+
+// Cikka Pay Real-Time Rewards Estimation
+router.get("/estimate", getCikkaPayRewardEstimate);
+router.get("/cikka-pay/estimate", getCikkaPayRewardEstimate);
 
 // CI Points Balance inquiry
 router.get("/balance", getUserRewardBalance);

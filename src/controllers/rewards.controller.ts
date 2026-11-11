@@ -12,6 +12,7 @@ import { asyncHandler } from "../utils/asyncHandler";
 import { prisma } from "../config/prisma";
 import { config } from "../config/env";
 import { OrderStatus, NotificationType, WalletTxType } from "../generated/prisma/client";
+import { RewardsCalcService } from "../services/rewardsCalc.service";
 
 /**
  * Helper to match or create a seller for a given pickup pincode
@@ -1016,4 +1017,22 @@ export const verifyCardOtpForRewards = asyncHandler(async (req: Request, res: Re
       error: err.message || "Failed to verify rewards card OTP",
     });
   }
+});
+
+/**
+ * GET /api/rewards/estimate
+ * GET /api/rewards/cikka-pay/estimate
+ * Returns real-time Cikka Pay rewards estimation and teaser text based on the 11-slab volume matrix.
+ */
+export const getCikkaPayRewardEstimate = asyncHandler(async (req: Request, res: Response) => {
+  const amountStr = (req.query.amount as string) || "0";
+  const amount = parseFloat(amountStr.replace(/,/g, "")) || 0;
+
+  const estimate = RewardsCalcService.getCikkaPayEstimate(amount);
+
+  res.status(200).json({
+    success: true,
+    amount,
+    ...estimate,
+  });
 });
