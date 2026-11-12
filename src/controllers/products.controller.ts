@@ -230,9 +230,40 @@ export const updateProduct = asyncHandler(async (req: Request, res: Response) =>
     updateData.brandName = onboardedBrand;
   }
 
-  // Do not allow sellers to self-approve a pending product directly
-  if (existing.status === "PENDING_APPROVAL" && updateData.status === "ACTIVE" && !req.admin?.id) {
-    delete updateData.status;
+  // Detect pricing or MRP update by seller
+  const requestedNewPrice = updateData.price !== undefined ? Number(updateData.price) : undefined;
+  const requestedNewMrp = updateData.mrp !== undefined ? Number(updateData.mrp) : undefined;
+  const priceChanged = requestedNewPrice !== undefined && Math.abs(requestedNewPrice - Number(existing.price)) > 0.001;
+  const mrpChanged = requestedNewMrp !== undefined && (existing.mrp === null || Math.abs(requestedNewMrp - Number(existing.mrp)) > 0.001);
+
+  if (!req.admin?.id) {
+    if (existing.pendingPrice !== null && (priceChanged || mrpChanged)) {
+      res.status(400).json({ error: "A price update request is already pending approval by Admin" });
+      return;
+    }
+
+    if (existing.status === "ACTIVE" || existing.status === "INACTIVE" || existing.status === "OUT_OF_STOCK") {
+      if (priceChanged || mrpChanged) {
+        // Record requested new price for Admin Seller Dashboard approval
+        updateData.pendingPrice = requestedNewPrice !== undefined ? requestedNewPrice : Number(existing.price);
+        if (requestedNewMrp !== undefined) {
+          updateData.pendingMrp = requestedNewMrp;
+        }
+        updateData.priceRequestedAt = new Date();
+
+        // Keep product running with its current/last price and status
+        updateData.price = existing.price;
+        if (existing.mrp !== null) {
+          updateData.mrp = existing.mrp;
+        } else {
+          delete updateData.mrp;
+        }
+        updateData.status = existing.status;
+      }
+    } else if (existing.status === "PENDING_APPROVAL" && updateData.status === "ACTIVE") {
+      // Do not allow sellers to self-approve a pending product directly
+      delete updateData.status;
+    }
   }
 
   if (variants && Array.isArray(variants)) {
@@ -255,6 +286,26 @@ export const updateProduct = asyncHandler(async (req: Request, res: Response) =>
     data: updateData,
     include: { variants: true },
   });
+
+  // Notify seller of pending price approval if pricing was requested
+  if ((priceChanged || mrpChanged) && !req.admin?.id && existing.status !== "PENDING_APPROVAL") {
+    await prisma.notification.create({
+      data: {
+        sellerId: existing.sellerId,
+        type: "PRODUCT" as any,
+        title: `Price Change Requested: ${existing.name}`,
+        body: `Your request to update price from ₹${Number(existing.price).toFixed(2)} to ₹${Number(updateData.pendingPrice).toFixed(2)} was sent to Admin. Your product remains Active at ₹${Number(existing.price).toFixed(2)} until approved.`,
+        metadata: {
+          productId: existing.id,
+          sku: existing.sku,
+          currentPrice: Number(existing.price),
+          pendingPrice: Number(updateData.pendingPrice),
+          pendingMrp: updateData.pendingMrp ? Number(updateData.pendingMrp) : undefined,
+          status: "PRICE_PENDING_APPROVAL",
+        },
+      },
+    }).catch(() => {});
+  }
 
   res.json(product);
 });
@@ -321,6 +372,15 @@ export const updateVariant = asyncHandler(async (req: Request, res: Response) =>
   }
 
   const { stockQty, price } = req.body;
+  const priceChanged = price !== undefined && Math.abs(Number(price) - Number(variant.price ?? product.price)) > 0.001;
+
+  if (priceChanged && !req.admin?.id) {
+    await prisma.product.update({
+      where: { id },
+      data: { status: "PENDING_APPROVAL" },
+    });
+  }
+
   const updated = await prisma.productVariant.update({
     where: { id: variantId },
     data: {

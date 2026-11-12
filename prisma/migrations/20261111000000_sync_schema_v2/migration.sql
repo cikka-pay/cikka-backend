@@ -124,28 +124,8 @@ ALTER TABLE "users"
 ALTER TABLE "team_members"
   ADD COLUMN IF NOT EXISTS "canViewFinancials" BOOLEAN NOT NULL DEFAULT false;
 
--- bbps_transactions
-ALTER TABLE "bbps_transactions"
-  ADD COLUMN IF NOT EXISTS "internalTxnId" TEXT,
-  ADD COLUMN IF NOT EXISTS "platformBillId" TEXT,
-  ADD COLUMN IF NOT EXISTS "paymentInstrument" TEXT DEFAULT 'UPI',
-  ADD COLUMN IF NOT EXISTS "receiptNumber" TEXT,
-  ADD COLUMN IF NOT EXISTS "receiptDate" TIMESTAMP(3),
-  ADD COLUMN IF NOT EXISTS "failureReason" TEXT,
-  ADD COLUMN IF NOT EXISTS "idempotencyKey" TEXT,
-  ADD COLUMN IF NOT EXISTS "settlementRef" TEXT;
-
-UPDATE "bbps_transactions"
-SET "internalTxnId" = 'CKK-BBPS-' || "id"
-WHERE "internalTxnId" IS NULL;
-
-ALTER TABLE "bbps_transactions"
-  ALTER COLUMN "internalTxnId" SET NOT NULL;
-
-CREATE UNIQUE INDEX IF NOT EXISTS "bbps_transactions_internalTxnId_key" ON "bbps_transactions"("internalTxnId");
-CREATE UNIQUE INDEX IF NOT EXISTS "bbps_transactions_idempotencyKey_key" ON "bbps_transactions"("idempotencyKey");
-CREATE INDEX IF NOT EXISTS "bbps_transactions_internalTxnId_idx" ON "bbps_transactions"("internalTxnId");
-CREATE INDEX IF NOT EXISTS "bbps_transactions_platformBillId_idx" ON "bbps_transactions"("platformBillId");
+-- bbps_transactions: no changes here. Its shape is owned by
+-- 20261105150000_setu_billpay_webhooks (spec 002, Setu BillPay pre-built screens).
 
 -- bbps_billers
 ALTER TABLE "bbps_billers"
@@ -296,72 +276,6 @@ DO $$ BEGIN
       FOREIGN KEY ("userId") REFERENCES "users"("id") ON DELETE CASCADE ON UPDATE CASCADE;
   END IF;
 END $$;
-
--- bbps_saved_billers
-CREATE TABLE IF NOT EXISTS "bbps_saved_billers" (
-  "id" TEXT NOT NULL,
-  "userId" TEXT NOT NULL,
-  "billerId" TEXT NOT NULL,
-  "customerParams" JSONB NOT NULL,
-  "nickname" TEXT,
-  "isActive" BOOLEAN NOT NULL DEFAULT true,
-  "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
-  "updatedAt" TIMESTAMP(3) NOT NULL,
-
-  CONSTRAINT "bbps_saved_billers_pkey" PRIMARY KEY ("id")
-);
-
-CREATE INDEX IF NOT EXISTS "bbps_saved_billers_userId_idx" ON "bbps_saved_billers"("userId");
-CREATE INDEX IF NOT EXISTS "bbps_saved_billers_userId_billerId_idx" ON "bbps_saved_billers"("userId", "billerId");
-
--- bbps_bills
-CREATE TABLE IF NOT EXISTS "bbps_bills" (
-  "id" TEXT NOT NULL,
-  "platformBillId" TEXT NOT NULL,
-  "billerBillId" TEXT,
-  "userId" TEXT,
-  "billerId" TEXT NOT NULL,
-  "customerReference" TEXT,
-  "amount" DECIMAL(10,2) NOT NULL,
-  "currency" TEXT NOT NULL DEFAULT 'INR',
-  "dueDate" TIMESTAMP(3),
-  "billDate" TIMESTAMP(3),
-  "taxes" DECIMAL(10,2),
-  "discounts" DECIMAL(10,2),
-  "fees" DECIMAL(10,2),
-  "items" JSONB,
-  "status" TEXT NOT NULL DEFAULT 'UNPAID',
-  "rawPayload" JSONB,
-  "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
-  "updatedAt" TIMESTAMP(3) NOT NULL,
-
-  CONSTRAINT "bbps_bills_pkey" PRIMARY KEY ("id")
-);
-
-CREATE UNIQUE INDEX IF NOT EXISTS "bbps_bills_platformBillId_key" ON "bbps_bills"("platformBillId");
-CREATE INDEX IF NOT EXISTS "bbps_bills_platformBillId_idx" ON "bbps_bills"("platformBillId");
-CREATE INDEX IF NOT EXISTS "bbps_bills_userId_idx" ON "bbps_bills"("userId");
-CREATE INDEX IF NOT EXISTS "bbps_bills_billerId_idx" ON "bbps_bills"("billerId");
-
--- bbps_settlements
-CREATE TABLE IF NOT EXISTS "bbps_settlements" (
-  "id" TEXT NOT NULL,
-  "settlementReference" TEXT NOT NULL,
-  "amount" DECIMAL(10,2) NOT NULL,
-  "utr" TEXT,
-  "ifsc" TEXT,
-  "instrument" TEXT,
-  "transactionDetails" JSONB,
-  "reconciliationStatus" TEXT NOT NULL DEFAULT 'PENDING',
-  "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
-  "updatedAt" TIMESTAMP(3) NOT NULL,
-
-  CONSTRAINT "bbps_settlements_pkey" PRIMARY KEY ("id")
-);
-
-CREATE UNIQUE INDEX IF NOT EXISTS "bbps_settlements_settlementReference_key" ON "bbps_settlements"("settlementReference");
-CREATE INDEX IF NOT EXISTS "bbps_settlements_settlementReference_idx" ON "bbps_settlements"("settlementReference");
-CREATE INDEX IF NOT EXISTS "bbps_settlements_reconciliationStatus_idx" ON "bbps_settlements"("reconciliationStatus");
 
 -- Enum additions for BBPS earn/debit ledger entries
 DO $$ BEGIN

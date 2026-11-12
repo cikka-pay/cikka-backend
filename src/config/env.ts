@@ -25,57 +25,14 @@ export const config = {
   externalServicesMode: EXTERNAL_SERVICES_MODE,
   isRealExternalServices: EXTERNAL_SERVICES_MODE === "real",
 
-  // Setu gateway & BBPS config (toggled via SETU_ENVIRONMENT="uat" | "production")
-  setuEnvironment: (() => {
-    const env = (process.env.SETU_ENVIRONMENT || "uat").toLowerCase();
-    return env === "production" ? "production" : "uat";
-  })(),
-  setuBaseUrl: (() => {
-    const isUat = (process.env.SETU_ENVIRONMENT || "uat").toLowerCase() !== "production";
-    if (isUat) {
-      return (process.env.SETU_UAT_BASE_URL || "https://uat.setu.co").replace(/\/+$/, "");
-    }
-    return (process.env.SETU_PROD_BASE_URL || process.env.SETU_BASE_URL || "https://coudc.setu.co").replace(/\/+$/, "");
-  })(),
-  setuClientId: (() => {
-    const isUat = (process.env.SETU_ENVIRONMENT || "uat").toLowerCase() !== "production";
-    if (isUat) {
-      return process.env.SETU_UAT_CLIENT_ID || process.env.SETU_CLIENT_ID || "";
-    }
-    return process.env.SETU_PROD_CLIENT_ID || process.env.SETU_CLIENT_ID || "";
-  })(),
-  setuSecret: (() => {
-    const isUat = (process.env.SETU_ENVIRONMENT || "uat").toLowerCase() !== "production";
-    if (isUat) {
-      return process.env.SETU_UAT_CLIENT_SECRET || process.env.SETU_SECRET || "";
-    }
-    return process.env.SETU_PROD_CLIENT_SECRET || process.env.SETU_CLIENT_SECRET || "";
-  })(),
-  setuPartnerId: (() => {
-    const isUat = (process.env.SETU_ENVIRONMENT || "uat").toLowerCase() !== "production";
-    return isUat ? (process.env.SETU_UAT_PARTNER_ID || "") : (process.env.SETU_PARTNER_ID || "");
-  })(),
-  setuOrgId: (() => {
-    const isUat = (process.env.SETU_ENVIRONMENT || "uat").toLowerCase() !== "production";
-    return isUat ? (process.env.SETU_UAT_ORG_ID || "") : (process.env.SETU_ORG_ID || "");
-  })(),
-  setuProductInstanceId: (() => {
-    const isUat = (process.env.SETU_ENVIRONMENT || "uat").toLowerCase() !== "production";
-    return isUat ? (process.env.SETU_UAT_PRODUCT_INSTANCE_ID || "") : (process.env.SETU_PRODUCT_INSTANCE_ID || "");
-  })(),
-  setuStandardAccountId: process.env.SETU_STANDARD_ACCOUNT_ID || "",
-  setuProductAccountId: process.env.SETU_PRODUCT_ACCOUNT_ID || "",
-  setuBasicAuthUser: process.env.SETU_BASIC_AUTH_USER || "setu_user",
-  setuBasicAuthPass: process.env.SETU_BASIC_AUTH_PASS || "setu_secret_pass",
-  setuBearerToken: process.env.SETU_BEARER_TOKEN,
-  setuAllowedIps: process.env.SETU_ALLOWED_IPS ? process.env.SETU_ALLOWED_IPS.split(",").map((ip) => ip.trim()) : [],
-
-  // Setu BBPS Whitelabel & Custom Payment config
-  setuBbpsSchemeId: process.env.SETU_BBPS_SCHEME_ID || "setu_bbps_scheme_id",
-  setuBbpsSecret: process.env.SETU_BBPS_SECRET || "setu_bbps_secret",
-  setuBbpsProductInstanceId: process.env.SETU_BBPS_PRODUCT_INSTANCE_ID || "12c58805-be18-4466-bd36-6b6158cbd151",
-  setuBbpsBaseUrl: process.env.SETU_BBPS_BASE_URL || "https://kms.setu.co/api/v2",
-  setuCheckStatusUrl: process.env.SETU_CHECK_STATUS_URL || "http://localhost:4000/setu/v1/checkStatus",
+  // Setu BillPay pre-built screens (spec 002). Hosts: sandbox https://sandbox-coudc.setu.co,
+  // QA https://qa-coudc.setu.co, prod https://coudc.setu.co.
+  setuBillpayBaseUrl: (process.env.SETU_BILLPAY_BASE_URL || "https://sandbox-coudc.setu.co").replace(/\/+$/, ""),
+  setuBillpayClientId: process.env.SETU_BILLPAY_CLIENT_ID,
+  setuBillpaySecret: process.env.SETU_BILLPAY_SECRET,
+  setuBillpayPartnerId: process.env.SETU_BILLPAY_PARTNER_ID,
+  setuBillpayOrgId: process.env.SETU_BILLPAY_ORG_ID,
+  setuBillpayWebhookApiKey: process.env.SETU_BILLPAY_WEBHOOK_API_KEY,
 
   // InstantPay Identity & Verification Config
   instantpayBaseUrl: process.env.INSTANTPAY_BASE_URL || "https://sandbox.instantpay.in/v1",
@@ -142,6 +99,15 @@ export const config = {
   s3SecretAccessKey: process.env.S3_SECRET_ACCESS_KEY || process.env.SECRET_ACCESS_KEY,
   s3ForcePathStyle: process.env.S3_FORCE_PATH_STYLE === "true",
   s3SignedUrlExpiry: parseInt(process.env.S3_SIGNED_URL_EXPIRY || "3600", 10),
+
+  // Async jobs (pg-boss on the main Postgres — see src/jobs/)
+  jobs: {
+    // Set to "false" on the API service once workers run in a separate service.
+    workersEnabled: process.env.JOBS_WORKERS_ENABLED !== "false",
+    // Delay before Mall purchase rewards are credited (0 = immediately).
+    // e.g. 864000 (10 days) to credit only after the delivery + T+7 return window.
+    rewardCreditDelaySeconds: parseInt(process.env.REWARD_CREDIT_DELAY_SECONDS || "0", 10),
+  },
 };
 
 

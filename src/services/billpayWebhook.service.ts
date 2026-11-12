@@ -23,19 +23,10 @@
  */
 
 import crypto from "crypto";
-import { Prisma, WalletTxType } from "../generated/prisma/client";
+import { Prisma, BbpsTxnStatus, WalletTxType } from "../generated/prisma/client";
 import type { BbpsTransaction } from "../generated/prisma/client";
 import { prisma } from "../config/prisma";
 import { walletService } from "./wallet.service";
-import { RewardsCalcService } from "./rewardsCalc.service";
-
-export const BbpsTxnStatus = {
-  PENDING: "PENDING",
-  SUCCESS: "SUCCESS",
-  FAILED: "FAILED",
-  REFUNDED: "REFUNDED",
-} as const;
-export type BbpsTxnStatus = (typeof BbpsTxnStatus)[keyof typeof BbpsTxnStatus];
 
 // ── Config (read lazily from env; wired into src/config/env.ts separately) ────────────
 
@@ -180,14 +171,10 @@ function errorText(err: unknown): string {
  *   SUCCESS  → REFUNDED (never downgraded to FAILED by a late failure event)
  *   REFUNDED → nothing (final)
  */
-export function canTransition(from: string, to: BbpsTxnStatus, event: string): boolean {
+export function canTransition(from: BbpsTxnStatus, to: BbpsTxnStatus, event: string): boolean {
   if (from === to) return false;
   switch (from) {
     case BbpsTxnStatus.PENDING:
-    case "INITIATED":
-    case "VALIDATING":
-    case "BILL_FETCHED":
-    case "PAYMENT_PROCESSING":
       return true;
     case BbpsTxnStatus.FAILED:
       return to === BbpsTxnStatus.REFUNDED || (to === BbpsTxnStatus.SUCCESS && event === "bill_payment_success");
@@ -267,20 +254,21 @@ async function findTransaction(orderId: string | null, refId: string | null): Pr
   return null;
 }
 
-type TxnFields = {
-  bbpsTxnId: string | null;
-  refId: string | null;
-  sessionId: string | null;
-  mobileNumber: string | null;
-  billerId: string | null;
-  billerName: string | null;
-  category: string | null;
-  billAmount: Prisma.Decimal | null;
-  amountPaid: Prisma.Decimal | null;
-  paidOn: Date | null;
-};
+type TxnFields = Pick<
+  Prisma.BbpsTransactionUncheckedUpdateInput,
+  | "bbpsTxnId"
+  | "refId"
+  | "sessionId"
+  | "mobileNumber"
+  | "billerId"
+  | "billerName"
+  | "category"
+  | "billAmount"
+  | "amountPaid"
+  | "paidOn"
+>;
 
-function extractFields(p: Record<string, unknown>): TxnFields {
+function extractFields(p: Record<string, unknown>): Record<keyof TxnFields, unknown> {
   return {
     bbpsTxnId: str(p.txnId),
     refId: str(p.refId),
@@ -321,20 +309,8 @@ async function applyPaymentEvent(event: string, target: BbpsTxnStatus, p: Record
       try {
         const created = await prisma.bbpsTransaction.create({
           data: {
-            internalTxnId: orderId ? `CKK-WH-${orderId}` : `CKK-WH-${crypto.randomUUID()}`,
-            refID: orderId ? `WH-${orderId}` : `WH-${crypto.randomUUID()}`,
-            refId: fields.refId,
+            ...(fields as Prisma.BbpsTransactionUncheckedCreateInput),
             setuOrderId: orderId,
-            bbpsTxnId: fields.bbpsTxnId,
-            sessionId: fields.sessionId,
-            mobileNumber: fields.mobileNumber,
-            billerId: fields.billerId ?? "UNKNOWN",
-            billerName: fields.billerName ?? "Bill Payment",
-            category: fields.category ?? "UTILITY",
-            amount: fields.amountPaid ?? fields.billAmount ?? new Prisma.Decimal(0),
-            billAmount: fields.billAmount,
-            amountPaid: fields.amountPaid,
-            paidOn: fields.paidOn,
             userId,
             status: target,
             ...errorData,
@@ -398,71 +374,36 @@ async function applyRewards(event: string, txn: Pick<BbpsTransaction, "status" |
   if (!txn.userId || !txn.setuOrderId) return;
 
   if (event === "bill_payment_success" && txn.status === BbpsTxnStatus.SUCCESS) {
-    const rawAmount = txn.amountPaid ?? txn.billAmount;
-    if (!rawAmount) return;
-    const billAmount = Number(rawAmount);
-    if (!Number.isFinite(billAmount) || billAmount <= 0) return;
-
-    // Calculate Cikka Pay rewards based on authoritative 11-slab matrix
-    const reward = RewardsCalcService.calculateCikkaPayRewards(txn.setuOrderId, billAmount);
-
-    // 1. Credit CI Points
-    if (reward.ciPointsEarned > 0) {
-      await walletService.creditPoints(txn.userId, reward.ciPointsEarned, WalletTxType.EARN_BBPS, {
-        idempotencyKey: `EARN_BBPS_PTS:${txn.setuOrderId}`,
-        description: `CI Points for bill payment${txn.billerName ? ` to ${txn.billerName}` : ""} (order ${txn.setuOrderId})`,
-      });
-    }
-
-    // 2. Credit Cashback (in paise)
-    if (reward.cashbackEarned > 0) {
-      await walletService.creditCash(txn.userId, reward.cashbackEarned * 100, WalletTxType.EARN_CASHBACK, {
-        idempotencyKey: `EARN_BBPS_CASH:${txn.setuOrderId}`,
-        description: `₹${reward.cashbackEarned} Cashback for bill payment${txn.billerName ? ` to ${txn.billerName}` : ""} (order ${txn.setuOrderId})`,
-      });
-    }
+    const { enabled, pointsPer100 } = getBbpsRewardsConfig();
+    if (!enabled || pointsPer100 <= 0) return;
+    const amount = txn.amountPaid ?? txn.billAmount;
+    if (!amount) return;
+    const points = new Prisma.Decimal(amount.toString()).mul(pointsPer100).div(100).floor().toNumber();
+    if (points <= 0) return;
+    await walletService.creditPoints(txn.userId, points, WalletTxType.EARN_BBPS, {
+      idempotencyKey: `EARN_BBPS:${txn.setuOrderId}`,
+      description: `CI Points for bill payment${txn.billerName ? ` to ${txn.billerName}` : ""} (order ${txn.setuOrderId})`,
+    });
     return;
   }
 
   if (event === "bill_payment_refunded" && txn.status === BbpsTxnStatus.REFUNDED) {
-    // 1. Reversal for CI Points (checking both new and legacy idempotency keys)
-    const earnedPoints =
-      (await prisma.loyaltyLedger.findUnique({ where: { idempotencyKey: `EARN_BBPS_PTS:${txn.setuOrderId}` } })) ||
-      (await prisma.loyaltyLedger.findUnique({ where: { idempotencyKey: `EARN_BBPS:${txn.setuOrderId}` } }));
-
-    if (earnedPoints && earnedPoints.pointsDelta > 0) {
-      try {
-        await walletService.debitPoints(earnedPoints.userId, earnedPoints.pointsDelta, WalletTxType.DEBIT_BBPS, {
-          idempotencyKey: `DEBIT_BBPS_PTS:${txn.setuOrderId}`,
-          description: `CI Points reversed: bill payment refunded (order ${txn.setuOrderId})`,
-        });
-      } catch (e) {
-        if (/Insufficient CI Points/i.test(errorText(e))) {
-          console.warn(`[BillPay webhook] Could not reverse BBPS points for order ${txn.setuOrderId}: ${errorText(e)}`);
-        } else {
-          throw e;
-        }
-      }
-    }
-
-    // 2. Reversal for Cashback
-    const earnedCash = await prisma.loyaltyLedger.findUnique({
-      where: { idempotencyKey: `EARN_BBPS_CASH:${txn.setuOrderId}` },
+    const earned = await prisma.loyaltyLedger.findUnique({
+      where: { idempotencyKey: `EARN_BBPS:${txn.setuOrderId}` },
     });
-
-    if (earnedCash && earnedCash.cashPaiseDelta > 0) {
-      try {
-        await walletService.debitCash(earnedCash.userId, earnedCash.cashPaiseDelta, WalletTxType.DEBIT_BBPS, {
-          idempotencyKey: `DEBIT_BBPS_CASH:${txn.setuOrderId}`,
-          description: `Cashback reversed: bill payment refunded (order ${txn.setuOrderId})`,
-        });
-      } catch (e) {
-        if (/Insufficient cash balance/i.test(errorText(e))) {
-          console.warn(`[BillPay webhook] Could not reverse BBPS cashback for order ${txn.setuOrderId}: ${errorText(e)}`);
-        } else {
-          throw e;
-        }
+    if (!earned || earned.pointsDelta <= 0) return;
+    try {
+      await walletService.debitPoints(earned.userId, earned.pointsDelta, WalletTxType.DEBIT_BBPS, {
+        idempotencyKey: `DEBIT_BBPS:${txn.setuOrderId}`,
+        description: `CI Points reversed: bill payment refunded (order ${txn.setuOrderId})`,
+      });
+    } catch (e) {
+      // The user already spent the points: retrying won't help, so don't fail the webhook.
+      if (/Insufficient CI Points/i.test(errorText(e))) {
+        console.warn(`[BillPay webhook] Could not reverse BBPS points for order ${txn.setuOrderId}: ${errorText(e)}`);
+        return;
       }
+      throw e;
     }
   }
 }

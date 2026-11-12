@@ -107,47 +107,6 @@ export const razorpayService = {
   },
 
   /**
-   * Verifies that the customer has actually paid: checks the checkout signature, then fetches
-   * the payment from Razorpay and confirms it belongs to the order, is authorized/captured and
-   * is for exactly `expectedAmountPaise`.
-   */
-  async verifyCapturedPayment(params: {
-    razorpay_order_id: string;
-    razorpay_payment_id: string;
-    razorpay_signature: string;
-    expectedAmountPaise: number;
-  }): Promise<{ ok: true } | { ok: false; reason: string }> {
-    const { razorpay_order_id, razorpay_payment_id, razorpay_signature, expectedAmountPaise } = params;
-
-    if (!razorpayService.verifyPaymentSignature(razorpay_order_id, razorpay_payment_id, razorpay_signature)) {
-      return { ok: false, reason: "Invalid payment signature" };
-    }
-
-    // Dev/mock payments (non-production only) cannot be fetched from Razorpay
-    if (!config.isProduction && razorpay_payment_id.startsWith("pay_dev_")) {
-      return { ok: true };
-    }
-
-    try {
-      const { client } = getRazorpayClient();
-      const payment: any = await client.payments.fetch(razorpay_payment_id);
-      if (payment.order_id !== razorpay_order_id) {
-        return { ok: false, reason: "Payment does not belong to this order" };
-      }
-      if (payment.status !== "captured" && payment.status !== "authorized") {
-        return { ok: false, reason: `Payment is ${payment.status}` };
-      }
-      if (Number(payment.amount) !== Math.round(expectedAmountPaise)) {
-        return { ok: false, reason: "Paid amount does not match the bill amount" };
-      }
-      return { ok: true };
-    } catch (err: any) {
-      const msg = err?.error?.description || err?.message || "Unable to verify payment";
-      return { ok: false, reason: msg };
-    }
-  },
-
-  /**
    * Generate an Authentic Razorpay Payment Signature
    * Algorithm: HMAC-SHA256(order_id + "|" + payment_id, KEY_SECRET)
    */

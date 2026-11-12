@@ -40,7 +40,13 @@ export const otpReal: OtpService = {
     const rawNumber = phone.replace(/^\+91/, "").replace(/\D/g, "");
 
     // Dev bypass: Absolutely no request to MSG91 or any gateway
-    if (rawNumber === "1111111111" || rawNumber === "11111111111" || rawNumber.endsWith("1111111111")) {
+    if (
+      rawNumber === "1111111111" ||
+      rawNumber === "11111111111" ||
+      rawNumber.endsWith("1111111111") ||
+      rawNumber === "9999900000" ||
+      rawNumber === "9999999999"
+    ) {
       console.log(`[MSG91 BYPASS] Intercepted bypass number ${rawNumber}. ZERO HTTP requests made to MSG91.`);
       return;
     }
@@ -138,7 +144,13 @@ export const otpReal: OtpService = {
     const rawNumber = phone.replace(/^\+91/, "").replace(/\D/g, "");
 
     // Dev bypass: Absolutely no resend request to MSG91 or any gateway
-    if (rawNumber === "1111111111" || rawNumber === "11111111111" || rawNumber.endsWith("1111111111")) {
+    if (
+      rawNumber === "1111111111" ||
+      rawNumber === "11111111111" ||
+      rawNumber.endsWith("1111111111") ||
+      rawNumber === "9999900000" ||
+      rawNumber === "9999999999"
+    ) {
       console.log(`[MSG91 BYPASS] Intercepted resend for bypass number ${rawNumber}. ZERO HTTP requests made to MSG91.`);
       return { success: true, message: "Dev bypass OTP resend simulated (No MSG91 call)" };
     }

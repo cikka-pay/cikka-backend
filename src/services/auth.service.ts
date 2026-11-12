@@ -19,15 +19,15 @@ export function isOtpValid(
   inputCode: string,
   expiresAt: Date | null
 ): boolean {
+  if (!storedCode || !expiresAt) return false;
+  if (isOtpExpired(expiresAt)) return false;
+
   // Universal developer bypass for local testing & demos (never active in production)
   if (process.env.NODE_ENV !== "production") {
     if (["1234", "1111", "111111", "482910"].includes(inputCode)) {
       return true;
     }
   }
-
-  if (!storedCode || !expiresAt) return false;
-  if (isOtpExpired(expiresAt)) return false;
 
   return storedCode === inputCode;
 }
