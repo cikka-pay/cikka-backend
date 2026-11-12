@@ -46,10 +46,17 @@ export const verifyPan = asyncHandler(async (req: Request, res: Response) => {
 
   // Sync verified PAN to User profile if mobile app user is authenticated or phone is provided
   if (req.user?.id) {
-    await prisma.user.update({
+    await prisma.user.upsert({
       where: { id: req.user.id },
-      data: {
+      update: {
         name: result.registeredName || undefined,
+        panNumber: result.pan,
+        panVerified: true,
+      },
+      create: {
+        id: req.user.id,
+        phone: phone ? String(phone) : "+911111111111",
+        name: result.registeredName || "Cikka Member",
         panNumber: result.pan,
         panVerified: true,
       },

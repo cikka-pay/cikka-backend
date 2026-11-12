@@ -37,6 +37,7 @@ router.put("/sellers/:sellerId/agreement", adminCommissionAgreement.updateSeller
 // Approved Sellers & Product Approvals
 router.get("/sellers/:id/products", adminOnboarding.getSellerProducts);
 router.patch("/products/:id/approval", adminOnboarding.updateProductApproval);
+router.patch("/products/:id/price-approval", adminOnboarding.updateProductPriceApproval);
 
 // Hubble Money Rewards Net for Website Admin
 router.get("/hubble", async (_req, res) => {

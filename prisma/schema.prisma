@@ -77,14 +77,23 @@ enum WalletTxType {
   EARN_SIGNUP         // CI Points bonus on first sign-up
   EARN_REFERRAL       // CI Points for referring a friend
   EARN_CASHBACK       // ₹5 cashback credited as cash balance
-  EARN_BBPS           // CI Points earned on Setu BBPS / Cikka Pay bill payment
   EARN_ADMIN          // Manual admin credit (adjustments / promos)
   REDEEM_REWARD       // CI Points spent at Rewards Store
   DEBIT_EXPIRY        // CI Points expired (non-cash)
   DEBIT_REFUND        // CI Points reversed on order return
-  DEBIT_BBPS          // CI Points / cashback reversed on BBPS refund
   DEBIT_ADMIN         // Manual admin debit (fraud reversal)
   CASHBACK_REDEEM     // Cash balance applied to an order
+  EARN_BBPS           // CI Points earned on a BBPS bill payment (behind BBPS_REWARDS_ENABLED)
+  DEBIT_BBPS          // CI Points reversed when a BBPS bill payment is refunded
+}
+
+// Lifecycle of a BBPS bill payment made on Setu's pre-built screens.
+// Forward-only: PENDING → SUCCESS | FAILED, SUCCESS → REFUNDED (see billpayWebhook.service.ts)
+enum BbpsTxnStatus {
+  PENDING
+  SUCCESS
+  FAILED
+  REFUNDED
 }
 
 enum FulfillmentType {
@@ -303,6 +312,11 @@ model Product {
   mrp               Decimal?      @db.Decimal(10, 2)   // Original / Maximum Retail Price
   price             Decimal       @db.Decimal(10, 2)   // Selling price on Cikka
   gstSlab           Int           @default(12)          // 0 | 5 | 12 | 18 | 28
+
+  // Pending Price Request from Seller
+  pendingPrice      Decimal?      @db.Decimal(10, 2)   // Requested selling price awaiting admin approval
+  pendingMrp        Decimal?      @db.Decimal(10, 2)   // Requested MRP awaiting admin approval
+  priceRequestedAt  DateTime?                          // Timestamp when seller requested price update
 
   // Loyalty
   loyaltyPoints     Int           @default(0)
@@ -632,6 +646,7 @@ model User {
   vouchers      UserVoucher[]
   notifications UserNotification[]
   reviews       ProductReview[]
+  bbpsTransactions BbpsTransaction[]
 
   createdAt     DateTime @default(now())
   updatedAt     DateTime @updatedAt
@@ -767,61 +782,47 @@ model PaymentTransaction {
 }
 
 // ============================================================
-// BBPS TRANSACTION — Setu Bharat BillPay Transaction Ledger
-// Stores internalTxnId and refID for strict idempotency and audit
+// BBPS TRANSACTION — one bill payment made on Setu BillPay pre-built screens
+// Written only by the Setu BillPay webhook (spec 002). Keyed by Setu's ids:
+// setuOrderId (unique) when the event carries orderId, otherwise looked up by refId.
 // ============================================================
 
 model BbpsTransaction {
-  id                 String    @id @default(uuid())
-  internalTxnId      String    @unique // e.g. CKK-BBPS-1730000000000-1234
-  refID              String    @unique // Dedup key provided by Setu (uniquePaymentRefID / refID)
-  platformBillId     String?
-  userId             String?
-  billerId           String
-  billerName         String
-  category           String
-  customerParams     Json?     // Key-value object of biller inputs e.g. { "Consumer Number": "12345678" }
-  amount             Decimal   @db.Decimal(10, 2)
-  paymentInstrument  String?   @default("UPI")
-  status             String    // INITIATED | VALIDATING | BILL_FETCHED | PAYMENT_PROCESSING | PENDING | SUCCESS | FAILED | EXPIRED | RECONCILIATION_REQUIRED
-  setuBillId         String?
-  setuPaymentId      String?
-  bbpsRefNo          String?   // BBPS trace / reference number
-  receiptNumber      String?
-  receiptDate        DateTime?
-  failureReason      String?
-  idempotencyKey     String?   @unique
-  settlementRef      String?
-  rawPayload         Json?
-  errorMessage       String?
-  errorCode          String?
-  setuOrderId        String?   @unique
-  bbpsTxnId          String?
-  refId              String?
-  sessionId          String?
-  mobileNumber       String?
-  billAmount         Decimal?  @db.Decimal(10, 2)
-  amountPaid         Decimal?  @db.Decimal(10, 2)
-  paidOn             DateTime?
-  disputeRefId       String?
-  disputeStatus      String?
+  id            String        @id @default(uuid())
+  setuOrderId   String?       @unique // Setu `orderId` — null until a payment event names it
+  bbpsTxnId     String? // BBPS txn id (`txnId`); disputes reference it
+  refId         String? // Setu `refId` (bill fetch / payment request ref) — fallback key, not unique
+  sessionId     String? // Setu link session (`sessionId`)
+  userId        String? // Our User.id, from `customerId` (= custID); null if unknown
+  user          User?         @relation(fields: [userId], references: [id], onDelete: SetNull)
+  mobileNumber  String?
+  billerId      String?
+  billerName    String?
+  category      String? // Setu `billerCategory`
+  billAmount    Decimal?      @db.Decimal(10, 2)
+  amountPaid    Decimal?      @db.Decimal(10, 2)
+  status        BbpsTxnStatus @default(PENDING)
+  paidOn        DateTime? // Setu `paidOn` (DD-MM-YYYY HH:mm:ss, IST) stored as an instant
+  errorCode     String?
+  errorMessage  String?
+  disputeRefId  String? // Setu dispute `referenceId`
+  disputeStatus String?
+  rawPayload    Json? // Last event payload that changed this row
 
-  createdAt          DateTime  @default(now())
-  updatedAt          DateTime  @updatedAt
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 
-  @@index([internalTxnId])
-  @@index([refID])
+  @@index([userId, createdAt])
   @@index([refId])
   @@index([bbpsTxnId])
-  @@index([platformBillId])
-  @@index([userId])
   @@index([status])
-  @@index([category])
   @@map("bbps_transactions")
 }
 
 // ============================================================
-// BBPS WEBHOOK EVENT — Append-only log of Setu BillPay webhook deliveries
+// BBPS WEBHOOK EVENT — append-only log of Setu BillPay webhook deliveries
+// dedupeKey = `${event}:${txnId|orderId|referenceId|refId|sessionId}` dedupes Setu retries.
+// processedAt null = stored but not (successfully) processed → a retry reprocesses it.
 // ============================================================
 
 model BbpsWebhookEvent {
@@ -862,79 +863,6 @@ model BbpsBiller {
   @@index([category])
   @@index([billerId])
   @@map("bbps_billers")
-}
-
-// ============================================================
-// BBPS SAVED BILLER — Customer's Saved Accounts & Nicknames
-// ============================================================
-
-model BbpsSavedBiller {
-  id             String   @id @default(uuid())
-  userId         String
-  billerId       String
-  customerParams Json     // Stored parameters e.g. { "Consumer Number": "12345" }
-  nickname       String?
-  isActive       Boolean  @default(true)
-
-  createdAt      DateTime @default(now())
-  updatedAt      DateTime @updatedAt
-
-  @@index([userId])
-  @@index([userId, billerId])
-  @@map("bbps_saved_billers")
-}
-
-// ============================================================
-// BBPS BILL — Setu Fetched Outstanding Bills
-// ============================================================
-
-model BbpsBill {
-  id                String    @id @default(uuid())
-  platformBillId    String    @unique // Setu platformBillId
-  billerBillId      String?
-  userId            String?
-  billerId          String
-  customerReference String?
-  amount            Decimal   @db.Decimal(10, 2)
-  currency          String    @default("INR")
-  dueDate           DateTime?
-  billDate          DateTime?
-  taxes             Decimal?  @db.Decimal(10, 2)
-  discounts         Decimal?  @db.Decimal(10, 2)
-  fees              Decimal?  @db.Decimal(10, 2)
-  items             Json?     // Individual bill line items
-  status            String    @default("UNPAID") // UNPAID | PAID | EXPIRED
-  rawPayload        Json?
-
-  createdAt         DateTime  @default(now())
-  updatedAt         DateTime  @updatedAt
-
-  @@index([platformBillId])
-  @@index([userId])
-  @@index([billerId])
-  @@map("bbps_bills")
-}
-
-// ============================================================
-// BBPS SETTLEMENT — Settlement and Reconciliation Records
-// ============================================================
-
-model BbpsSettlement {
-  id                   String   @id @default(uuid())
-  settlementReference  String   @unique
-  amount               Decimal  @db.Decimal(10, 2)
-  utr                  String?
-  ifsc                 String?
-  instrument           String?
-  transactionDetails   Json?
-  reconciliationStatus String   @default("PENDING") // PENDING | RECONCILED | DISCREPANCY
-
-  createdAt            DateTime @default(now())
-  updatedAt            DateTime @updatedAt
-
-  @@index([settlementReference])
-  @@index([reconciliationStatus])
-  @@map("bbps_settlements")
 }
 
 // ============================================================

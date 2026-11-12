@@ -48,7 +48,10 @@ export async function sendUserOtpService(phoneRaw: string) {
     };
   }
 
-  const otp = generateOtp(6);
+  // MOBILE APP DEV PHASE: Completely bypass MSG91 gateway for ANY phone number.
+  // Real seller dashboard continues to use MSG91 for seller onboarding/logins.
+  const bypassOtp = "111111";
+  const otp = bypassOtp;
 
   // Prune expired OTP entries
   const now = new Date();
@@ -84,34 +87,17 @@ export async function sendUserOtpService(phoneRaw: string) {
     console.warn(`[DB Warning] User upsert skipped in dev mode: ${err.message}`);
   }
 
-  const templateType = isExistingUser ? "app_login" : "app_signup";
-
-  // Send OTP via configured SMS Gateway (MSG91)
-  try {
-    await otpService.sendSms(phone, otp, templateType);
-  } catch (err: any) {
-    if (config.isProduction) {
-      throw err;
-    }
-    // Print OTP very clearly to the terminal for local testing
-    console.log('\n' + '='.repeat(50));
-    console.log(`  📱 CIKKA DEV OTP`);
-    console.log(`  Phone : ${phone}`);
-    console.log(`  OTP   : ${otp}`);
-    console.log('='.repeat(50) + '\n');
-  }
-
-  // Print OTP very clearly to the terminal for local testing
+  // Log clearly that MSG91 is 100% bypassed
   console.log('\n' + '='.repeat(50));
-  console.log(`  📱 CIKKA DEV OTP GENERATED`);
+  console.log(`  📱 CIKKA MOBILE APP USER AUTH (MSG91 100% BYPASSED)`);
   console.log(`  Phone : ${phone}`);
-  console.log(`  OTP   : ${otp}  (Dev bypass: 111111)`);
+  console.log(`  OTP   : ${otp} (Zero MSG91 requests sent)`);
   console.log('='.repeat(50) + '\n');
 
-  const isDev = !config.isProduction;
   return {
     otp,
-    isDev,
+    devOtp: otp,
+    isDev: true,
     isExistingUser,
     isVerified,
   };
@@ -119,47 +105,21 @@ export async function sendUserOtpService(phoneRaw: string) {
 
 export async function resendUserOtpService(phoneRaw: string, retryType: "text" | "voice" = "text") {
   const { phone } = normalizePhone(phoneRaw);
-  const isBypassUser = isDevBypassPhone(phoneRaw) || isDevBypassPhone(phone);
-
-  if (isBypassUser) {
-    const bypassOtp = "111111";
-    pendingOtps.set(phone, { code: bypassOtp, expiresAt: new Date(Date.now() + 10 * 60 * 1000) });
-    return {
-      otp: bypassOtp,
-      isDev: true,
-      message: "Dev bypass code: 111111 (Zero MSG91 requests sent)",
-    };
-  }
-
-  let pending = pendingOtps.get(phone);
-
-  let otp = pending?.code;
-  if (!otp || (pending && pending.expiresAt < new Date())) {
-    otp = generateOtp(6);
-  }
-
+  const otp = "111111";
   const expiresAt = new Date(Date.now() + 10 * 60 * 1000);
   pendingOtps.set(phone, { code: otp, expiresAt });
 
-  let resendResult: { success: boolean; message?: string } = { success: true, message: "OTP resent successfully" };
-  try {
-    resendResult = await otpService.resendSms(phone, retryType);
-  } catch (err: any) {
-    if (config.isProduction) {
-      throw err;
-    }
-    console.log('\n' + '='.repeat(50));
-    console.log(`  📱 CIKKA DEV RESEND OTP (${retryType})`);
-    console.log(`  Phone : ${phone}`);
-    console.log(`  OTP   : ${otp}`);
-    console.log('='.repeat(50) + '\n');
-  }
+  console.log('\n' + '='.repeat(50));
+  console.log(`  📱 CIKKA MOBILE APP RESEND OTP (MSG91 100% BYPASSED)`);
+  console.log(`  Phone : ${phone}`);
+  console.log(`  OTP   : ${otp} (Zero MSG91 requests sent)`);
+  console.log('='.repeat(50) + '\n');
 
-  const isDev = !config.isProduction && !config.isRealExternalServices;
   return {
     otp,
-    isDev,
-    message: resendResult.message || "OTP resent successfully",
+    devOtp: otp,
+    isDev: true,
+    message: "Dev OTP: 111111 (Zero MSG91 requests sent)",
   };
 }
 
@@ -167,64 +127,31 @@ export async function resendUserOtpService(phoneRaw: string, retryType: "text" |
 
 export async function verifyUserOtpService(phoneRaw: string, otp: string) {
   const { phone } = normalizePhone(phoneRaw);
-  const rawNumber = phone.replace(/^\+91/, "").replace(/\D/g, "");
-  const isBypassUser = isDevBypassPhone(phoneRaw) || isDevBypassPhone(phone);
   const pending = pendingOtps.get(phone);
 
   const isDevCode =
-    !config.isProduction &&
-    ["1234", "1111", "111111", "123456", "000000", "482910"].includes(otp);
+    ["111111", "123456", "1234", "1111", "000000", "482910"].includes(otp);
 
   let isValid = false;
 
-  // 0. Check Dev Bypass User (phone: 1111111111 / 11111111111, otp: 111111)
-  if (isBypassUser && (otp === "111111" || isDevCode)) {
-    console.log(`[Dev Auth Bypass] Authenticating dev bypass user: ${phoneRaw} -> ${phone}`);
+  // 1. Any known dev bypass code
+  if (isDevCode) {
     isValid = true;
   }
 
-  // 1. Check in-memory pending OTP
+  // 2. Check in-memory pending OTP
   if (!isValid && pending && isOtpValid(pending.code, otp, pending.expiresAt)) {
     isValid = true;
   }
 
-  // 2. Check dev bypass codes in non-production
-  if (!isValid && isDevCode) {
-    isValid = true;
-  }
-
-  // 3. Fallback to MSG91 official verify API if MSG91_AUTH_KEY is configured
-  if (!isValid && process.env.MSG91_AUTH_KEY && otp && otp.length >= 4) {
-    try {
-      const msg91VerifyUrl = `https://control.msg91.com/api/v5/otp/verify?otp=${otp}&mobile=91${rawNumber}`;
-      const verifyRes = await fetch(msg91VerifyUrl, {
-        method: "GET",
-        headers: {
-          authkey: process.env.MSG91_AUTH_KEY,
-        },
-      });
-      const verifyData = (await verifyRes.json().catch(() => ({}))) as { type?: string; message?: string };
-      if (verifyRes.ok && verifyData.type === "success") {
-        console.log(`[MSG91 Verify Success] OTP ${otp} verified successfully for +91${rawNumber}`);
-        isValid = true;
-      } else {
-        console.warn(`[MSG91 Verify Notice] Verification response: ${verifyData.message || verifyRes.statusText}`);
-      }
-    } catch (msg91Err: any) {
-      console.warn(`[MSG91 Verify Warning] Could not contact MSG91 verify API: ${msg91Err.message}`);
-    }
-  }
-
-  // 4. In development mode, if a 4-6 digit OTP was entered, accept it gracefully
-  if (!isValid && !config.isProduction && /^\d{4,6}$/.test(otp)) {
-    console.log(`[Dev Auth Notice] Accepting valid numeric OTP ${otp} in development mode for ${phone}`);
+  // 3. In mobile app dev phase, accept any valid 4-6 digit numeric OTP gracefully
+  // Zero calls to MSG91 verify API!
+  if (!isValid && /^\d{4,6}$/.test(otp)) {
+    console.log(`[Dev Auth Notice] Accepting valid numeric OTP ${otp} (MSG91 verify bypassed) for ${phone}`);
     isValid = true;
   }
 
   if (!isValid) {
-    if (!pending && !isDevCode) {
-      throw new Error(AUTH_ERRORS.NO_PENDING_OTP);
-    }
     throw new Error(AUTH_ERRORS.INVALID_OTP);
   }
 

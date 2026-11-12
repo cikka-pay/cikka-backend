@@ -376,27 +376,15 @@ export const updateOrderStatus = asyncHandler(async (req: Request, res: Response
  */
 export const listUserOrders = asyncHandler(async (req: Request, res: Response) => {
   const userId = req.user?.id;
-  const userPhone = (req.user as any)?.phone || (req.query.phone as string);
 
-  if (!userId && !userPhone) {
+  // Orders are only ever looked up for the authenticated user (never by a phone number in the query)
+  if (!userId) {
     res.status(401).json({ success: false, error: "Authentication required to view orders" });
     return;
   }
 
-  const orConditions: any[] = [];
-  if (userId) orConditions.push({ userId });
-  if (userPhone) {
-    orConditions.push({ customerName: { contains: userPhone } });
-  }
-
-  let dbUser = null;
-  if (userPhone && !userId) {
-    dbUser = await prisma.user.findFirst({ where: { phone: userPhone } });
-    if (dbUser) orConditions.push({ userId: dbUser.id });
-  }
-
   const orders = await prisma.order.findMany({
-    where: orConditions.length > 0 ? (orConditions.length > 1 ? { OR: orConditions } : orConditions[0]) : {},
+    where: { userId },
     orderBy: { createdAt: "desc" },
     include: {
       items: {
@@ -520,11 +508,15 @@ export const listUserOrders = asyncHandler(async (req: Request, res: Response) =
 export const cancelUserOrder = asyncHandler(async (req: Request, res: Response) => {
   const { id } = req.params;
   const userId = req.user?.id;
+  if (!userId) {
+    res.status(401).json({ success: false, error: "Authentication required to cancel an order" });
+    return;
+  }
 
   const order = await prisma.order.findFirst({
     where: {
       OR: [{ id }, { orderNumber: id }],
-      ...(userId ? { userId } : {}),
+      userId,
     },
     include: { items: true },
   });
@@ -539,6 +531,21 @@ export const cancelUserOrder = asyncHandler(async (req: Request, res: Response) 
       success: false,
       error: "Order has already been dispatched and cannot be cancelled directly. Please initiate an exchange or return upon delivery.",
     });
+    return;
+  }
+
+  if (order.status !== OrderStatus.PENDING && order.status !== OrderStatus.PACKED) {
+    res.status(400).json({ success: false, error: `Order cannot be cancelled in status ${order.status}` });
+    return;
+  }
+
+  // Transition atomically so a repeated or concurrent cancel can't restore points/stock twice
+  const { count } = await prisma.order.updateMany({
+    where: { id: order.id, status: { in: [OrderStatus.PENDING, OrderStatus.PACKED] } },
+    data: { status: OrderStatus.CANCELLED },
+  });
+  if (count === 0) {
+    res.status(409).json({ success: false, error: "Order status changed; please refresh and try again" });
     return;
   }
 
@@ -574,10 +581,7 @@ export const cancelUserOrder = asyncHandler(async (req: Request, res: Response) 
     }
   }
 
-  const updated = await prisma.order.update({
-    where: { id: order.id },
-    data: { status: OrderStatus.CANCELLED },
-  });
+  const updated = await prisma.order.findUnique({ where: { id: order.id } });
 
   res.status(200).json({
     success: true,

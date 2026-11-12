@@ -4,7 +4,6 @@ import express from "express";
 import cors from "cors";
 import morgan from "morgan";
 import routes from "./routes/index";
-import setuRoutes from "./routes/setu.routes";
 import deeplinkRoutes from "./routes/deeplink.routes";
 import { errorHandler } from "./middleware/error.middleware";
 
@@ -36,7 +35,15 @@ app.use(cors({
   },
   credentials: true,
 }));
-app.use(express.json({ limit: "50mb" }));
+app.use(
+  express.json({
+    limit: "50mb",
+    // Keep the exact request bytes so webhook HMAC signatures (Meta, Razorpay) can be verified
+    verify: (req, _res, buf) => {
+      (req as any).rawBody = buf.toString("utf8");
+    },
+  })
+);
 app.use(express.urlencoded({ limit: "50mb", extended: true }));
 app.use(morgan("dev"));
 
@@ -51,11 +58,6 @@ if (!fs.existsSync(tmpUploadsDir)) {
 }
 app.use("/uploads", express.static(tmpUploadsDir));
 app.use("/uploads", express.static(path.resolve(process.cwd(), "uploads")));
-
-// Direct Setu endpoint matching POST {ourBaseURL}/setu/v1/*
-app.use("/setu/v1", setuRoutes);
-app.use("/bills", setuRoutes);
-app.use("/notifications", setuRoutes);
 
 // API v1 routes
 app.use("/api", routes);

@@ -191,7 +191,9 @@ export class RewardsCalcService {
    */
   static findSlab(amount: number): CikkaPayRewardSlab | null {
     if (amount <= 0) return null;
-    return CIKKA_PAY_SLABS.find((s) => amount >= s.minAmount && amount <= s.maxAmount) || null;
+    // Slabs are listed in whole rupees (1–10, 11–50, …). Treat each upper bound as "below the next
+    // slab's minimum" so amounts with paise (e.g. ₹10.50, ₹50.40) never fall between slabs.
+    return CIKKA_PAY_SLABS.find((s) => amount >= s.minAmount && amount < s.maxAmount + 1) || null;
   }
 
   /**

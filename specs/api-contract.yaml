@@ -12,6 +12,11 @@ components:
       type: http
       scheme: bearer
       bearerFormat: JWT
+    BillpayWebhookApiKey:
+      type: apiKey
+      in: header
+      name: X-BILL-WEBHOOK-API-KEY
+      description: Key emailed by Setu; compared against SETU_BILLPAY_WEBHOOK_API_KEY.
   schemas:
     ErrorResponse:
       type: object
@@ -36,6 +41,70 @@ components:
           enum: [INCOMPLETE, SUBMITTED, UNDER_REVIEW, VERIFIED, REJECTED]
         onboarding:
           type: object
+    BillpayErrorResponse:
+      type: object
+      properties:
+        success:
+          type: boolean
+          const: false
+        error:
+          type: string
+        code:
+          type: string
+          enum: [USER_NOT_FOUND, PHONE_NOT_VERIFIED, INVALID_PHONE, SETU_UNAVAILABLE]
+        traceId:
+          type: string
+          description: Setu trace id, present on some 502s
+      required: [success, error]
+    BillpayHistoryItem:
+      type: object
+      description: >-
+        One BBPS bill payment recorded from Setu BillPay webhooks. Money fields are
+        Decimal(10,2) serialised as fixed 2-decimal strings (e.g. "601.00").
+      properties:
+        id:
+          type: string
+        setuOrderId:
+          type: [string, "null"]
+        bbpsTxnId:
+          type: [string, "null"]
+        refId:
+          type: [string, "null"]
+        billerId:
+          type: [string, "null"]
+        billerName:
+          type: [string, "null"]
+        category:
+          type: [string, "null"]
+        mobileNumber:
+          type: [string, "null"]
+        billAmount:
+          type: [string, "null"]
+          example: "601.00"
+        amountPaid:
+          type: [string, "null"]
+          example: "601.00"
+        status:
+          type: string
+          enum: [PENDING, SUCCESS, FAILED, REFUNDED]
+        paidOn:
+          type: [string, "null"]
+          format: date-time
+        errorCode:
+          type: [string, "null"]
+        errorMessage:
+          type: [string, "null"]
+        disputeRefId:
+          type: [string, "null"]
+        disputeStatus:
+          type: [string, "null"]
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+      required: [id, status, createdAt, updatedAt]
 security:
   - BearerAuth: []
 paths:
@@ -839,3 +908,238 @@ paths:
       responses:
         "200":
           description: Success
+  /bbps/session:
+    post:
+      tags: [BBPS]
+      summary: Create a one-time Setu BillPay link for the logged-in user (user JWT)
+      description: >-
+        Uses the user's verified phone and `custID = user.id`. Open `link` in a webview.
+        In stub mode a fake link is returned; in real mode a Setu failure is a 502, never fake data.
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                categoryName:
+                  type: string
+                  minLength: 1
+                  maxLength: 100
+                billerId:
+                  type: string
+                  minLength: 1
+                  maxLength: 100
+                redirectTo:
+                  type: string
+                  enum: [transactions, disputes]
+      responses:
+        "200":
+          description: Link created
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    const: true
+                  link:
+                    type: string
+                  sessionId:
+                    type: string
+                required: [success, link, sessionId]
+        "400":
+          description: Validation error, or PHONE_NOT_VERIFIED / INVALID_PHONE
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/BillpayErrorResponse"
+        "401":
+          description: Missing or invalid user JWT
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: USER_NOT_FOUND
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/BillpayErrorResponse"
+        "502":
+          description: SETU_UNAVAILABLE — Setu Create link failed (real mode)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/BillpayErrorResponse"
+  /bbps/history:
+    get:
+      tags: [BBPS]
+      summary: The caller's last 50 bill payments, newest first (user JWT)
+      responses:
+        "200":
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    const: true
+                  history:
+                    type: array
+                    maxItems: 50
+                    items:
+                      $ref: "#/components/schemas/BillpayHistoryItem"
+                required: [success, history]
+        "401":
+          description: Missing or invalid user JWT
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+  /bbps/history/{id}:
+    get:
+      tags: [BBPS]
+      summary: One of the caller's bill payments (user JWT)
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    const: true
+                  payment:
+                    $ref: "#/components/schemas/BillpayHistoryItem"
+                required: [success, payment]
+        "401":
+          description: Missing or invalid user JWT
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: Not found, or not the caller's payment
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    const: false
+                  error:
+                    type: string
+  /webhooks/setu/billpay:
+    post:
+      tags: [BBPS]
+      summary: Setu BillPay webhook (called by Setu)
+      description: >-
+        Idempotent: each event is stored once (dedupe key `event:(txnId|orderId|referenceId|refId|sessionId)`);
+        re-deliveries answer `duplicate`. Payment status only moves forward
+        (PENDING → SUCCESS | FAILED, FAILED → SUCCESS on bill_payment_success, SUCCESS → REFUNDED).
+        Unknown events are stored and acknowledged. All payload values are strings.
+      security:
+        - BillpayWebhookApiKey: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                event:
+                  type: string
+                  enum:
+                    - bill_fetch_success
+                    - bill_fetch_failure
+                    - bill_collection_failure
+                    - bill_payment_success
+                    - bill_payment_failure
+                    - bill_payment_refunded
+                    - dispute_raised
+                    - dispute_status_change
+                status:
+                  type: string
+                txnId:
+                  type: string
+                orderId:
+                  type: string
+                refId:
+                  type: string
+                sessionId:
+                  type: string
+                customerId:
+                  type: string
+                  description: Our User.id (custID sent in Create link)
+                mobileNumber:
+                  type: string
+                billerId:
+                  type: string
+                billerName:
+                  type: string
+                billerCategory:
+                  type: string
+                billAmount:
+                  type: string
+                amountPaid:
+                  type: string
+                paidOn:
+                  type: string
+                  description: DD-MM-YYYY HH:mm:ss (IST)
+                error:
+                  description: Plain string, JSON string or object
+                referenceId:
+                  type: string
+                issueType:
+                  type: string
+                txnDate:
+                  type: string
+              required: [event]
+              additionalProperties: true
+      responses:
+        "200":
+          description: Stored (and processed) or a duplicate re-delivery
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    enum: [acknowledged, duplicate]
+                required: [status]
+        "400":
+          description: Body is not a JSON object, or `event` is missing
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          description: Missing or wrong X-BILL-WEBHOOK-API-KEY, or no key configured on our side
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "500":
+          description: Processing failed after the event was stored; Setu retries and the retry reprocesses it
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    const: error

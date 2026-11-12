@@ -1,0 +1,6 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": { "noEmit": true, "rootDir": "." , "types": ["vitest/globals", "node"] },
+  "include": ["src/types/**/*", "src/lib/jobs/**/*", "src/jobs/**/*", "src/__tests__/lib/**/*", "src/__tests__/integration/jobs-*.ts", "src/__tests__/unit/reward-credit-job.test.ts"],
+  "exclude": ["node_modules", "dist"]
+}

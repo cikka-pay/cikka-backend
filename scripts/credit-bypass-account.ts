@@ -3,8 +3,11 @@ import { PrismaClient, WalletTxType } from "../src/generated/prisma/client";
 import { PrismaPg } from "@prisma/adapter-pg";
 import pg from "pg";
 
+if (!process.env.DATABASE_URL) {
+  throw new Error("DATABASE_URL must be set to run this script.");
+}
 const pool = new pg.Pool({
-  connectionString: process.env.DATABASE_URL || "postgresql://postgres:Vedant%40123@localhost:5432/cikka_dashboard?schema=public",
+  connectionString: process.env.DATABASE_URL,
 });
 const adapter = new PrismaPg(pool);
 const prisma = new PrismaClient({ adapter });

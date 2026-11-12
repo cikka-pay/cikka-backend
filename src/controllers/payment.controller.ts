@@ -14,6 +14,7 @@ import { walletService } from "../services/wallet.service";
 import { asyncHandler } from "../utils/asyncHandler";
 import { orderSlaService } from "../services/order-sla.service";
 import { metaWhatsAppService } from "../services/meta-whatsapp.service";
+import { jobQueue } from "../jobs";
 
 /**
  * POST /api/payment/create-order
@@ -282,23 +283,12 @@ export const verifyPayment = asyncHandler(async (req: Request, res: Response) =>
   });
 });
 
-async function resolveTargetUserId(
-  userId: string | null | undefined,
-  customerPhone: string | undefined
-): Promise<string | null> {
-  if (userId) return userId;
-  if (!customerPhone) return null;
-
-  const clean = String(customerPhone).replace(/\D/g, "").slice(-10);
-  if (!clean) return null;
-
-  const user = await prisma.user.findFirst({
-    where: {
-      OR: [{ phone: { contains: clean } }, { phone: String(customerPhone) }],
-    },
-    select: { id: true },
-  });
-  return user?.id || null;
+/**
+ * Wallet owner for a verified payment: only the authenticated buyer. A phone number in the
+ * request body is never used — it would let a guest spend or receive another user's balance.
+ */
+function resolveTargetUserId(req: Request): string | null {
+  return req.user?.id || null;
 }
 
 function resolveOrderRupees(
@@ -372,7 +362,7 @@ async function settleOrderRewardsAndCashback(
     processedOrders: any[];
   }
 ) {
-  const targetUserId = await resolveTargetUserId((req as any).user?.id, opts.customerPhone);
+  const targetUserId = resolveTargetUserId(req);
   await debitAppliedCashback(targetUserId, req, opts.orderId, opts.paymentId);
 
   const totalRupees = resolveOrderRupees(req.body);
@@ -380,13 +370,8 @@ async function settleOrderRewardsAndCashback(
     opts.processedOrders.some((p: any) => p.is_special_seller) || Boolean(req.body.is_special_seller);
   const mallRewards = RewardsCalcService.calculateMallPurchaseRewards(totalRupees, hasSpecialSeller);
 
-  await creditMallRewards(
-    targetUserId,
-    opts.customerPhone,
-    opts.orderId,
-    opts.paymentId,
-    mallRewards
-  );
+  // Credit asynchronously through the reward.credit job (idempotent per Razorpay order)
+  await enqueueMallRewardCredit(targetUserId ?? undefined, opts.orderId, opts.paymentId, mallRewards);
 
   return mallRewards;
 }
@@ -422,7 +407,7 @@ async function settleVerificationRewards(
   );
 
   if (isBillPayment) {
-    const targetUserId = await resolveTargetUserId((req as any).user?.id, opts.customerPhone);
+    const targetUserId = resolveTargetUserId(req);
     await debitAppliedCashback(targetUserId, req, opts.orderId, opts.paymentId);
 
     const totalRupees = resolveOrderRupees(req.body, true);
@@ -439,7 +424,7 @@ async function settleVerificationRewards(
       }
       if (billRewards.cashbackEarned > 0) {
         await walletService
-          .creditCash(targetUserId, billRewards.cashbackEarned * 100, WalletTxType.EARN_CASHBACK, {
+          .creditCash(targetUserId, Math.round(billRewards.cashbackEarned * 100), WalletTxType.EARN_CASHBACK, {
             idempotencyKey: `EARN_CC_CASH:${opts.paymentId}`,
             description: `₹${billRewards.cashbackEarned} Cashback for bill payment (₹${totalRupees})`,
           })
@@ -470,42 +455,36 @@ async function settleVerificationRewards(
   };
 }
 
-async function creditMallRewards(
-  userId: string | null | undefined,
-  customerPhone: string | undefined,
-  razorpay_order_id: string,
-  razorpay_payment_id: string,
-  mallRewards: any
-) {
-  const targetUserId = await resolveTargetUserId(userId, customerPhone);
-
-  if (targetUserId) {
-    try {
-      if (mallRewards.cashbackEarned > 0) {
-        await walletService.applyEntry({
-          userId: targetUserId,
-          txType: WalletTxType.EARN_CASHBACK,
-          cashPaiseDelta: mallRewards.cashbackEarned * 100,
-          idempotencyKey: `MALL_CB:${razorpay_order_id}`,
-          orderId: razorpay_order_id,
-          razorpayPaymentId: razorpay_payment_id,
-          description: "Cikka Mall Cashback",
-        });
-      }
-      if (mallRewards.ciPointsEarned > 0) {
-        await walletService.applyEntry({
-          userId: targetUserId,
-          txType: WalletTxType.EARN_ORDER,
-          pointsDelta: mallRewards.ciPointsEarned,
-          idempotencyKey: `MALL_PTS:${razorpay_order_id}`,
-          orderId: razorpay_order_id,
-          razorpayPaymentId: razorpay_payment_id,
-          description: "Cikka Mall CI Points",
-        });
-      }
-    } catch (err: any) {
-      console.warn(`[Mall Rewards Credit Warning]: ${err.message}`);
-    }
+/**
+ * Enqueue the wallet credit for a verified Mall purchase. Never fails the
+ * payment response: the money is already captured, so an enqueue error is
+ * logged loudly instead. The job is deduplicated per Razorpay order, and the
+ * handler is idempotent on the ledger, so retries/duplicates are safe.
+ */
+export async function enqueueMallRewardCredit(
+  userId: string | undefined,
+  razorpayOrderId: string,
+  razorpayPaymentId: string,
+  rewards: { ciPointsEarned: number; cashbackEarned: number }
+): Promise<void> {
+  if (!userId) return;
+  if (rewards.ciPointsEarned <= 0 && rewards.cashbackEarned <= 0) return;
+  try {
+    await jobQueue.enqueue(
+      "reward.credit",
+      {
+        userId,
+        razorpayOrderId,
+        razorpayPaymentId,
+        ciPoints: rewards.ciPointsEarned,
+        cashbackRupees: rewards.cashbackEarned,
+      },
+      { key: razorpayOrderId, delaySeconds: config.jobs.rewardCreditDelaySeconds }
+    );
+  } catch (err: any) {
+    console.error(
+      `❌ [jobs] FAILED to enqueue reward.credit for order ${razorpayOrderId} (user ${userId}): ${err?.message || err}`
+    );
   }
 }
 

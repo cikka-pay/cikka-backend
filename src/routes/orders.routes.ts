@@ -5,11 +5,9 @@ import {
   getOrder,
   listOrders,
   updateOrderStatus,
-  listUserOrders,
-  cancelUserOrder,
 } from "../controllers/orders.controller";
 import { validate } from "../middleware/validate.middleware";
-import { requireRole, optionalUserAuth } from "../middleware/auth.middleware";
+import { requireRole } from "../middleware/auth.middleware";
 
 const router = Router();
 
@@ -37,9 +35,6 @@ const updateStatusSchema = z.object({
 
 router.get("/", validate({ query: orderQuerySchema }), listOrders);
 router.post("/", createOrder);
-router.get("/user", optionalUserAuth, listUserOrders);
-router.get("/my-orders", optionalUserAuth, listUserOrders);
-router.post("/:id/cancel", optionalUserAuth, cancelUserOrder);
 router.get("/:id", getOrder);
 router.patch("/:id/status", requireRole(["ADMIN", "EXECUTIVE"]), validate({ body: updateStatusSchema }), updateOrderStatus);
 

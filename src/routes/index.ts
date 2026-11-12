@@ -2,12 +2,12 @@ import { Router } from "express";
 import { optionalUserAuth, requireSellerAuth } from "../middleware/auth.middleware";
 import adminRoutes from "./admin.routes";
 import authRoutes from "./auth.routes";
-import bbpsRoutes from "./bbps.routes";
-import cikkaPayRoutes from "./cikka-pay.routes";
+import userAuthRoutes from "./user-auth.routes";
+import billpayRoutes from "./billpay.routes";
+import billpayHistoryRoutes from "./billpayHistory.routes";
+import billpayWebhookRoutes from "./billpayWebhook.routes";
 import instantpayRoutes from "./instantpay.routes";
 import onboardingRoutes from "./onboarding.routes";
-import setuRoutes from "./setu.routes";
-import userAuthRoutes from "./user-auth.routes";
 
 import dashboardRoutes from "./dashboard.routes";
 import inventoryRoutes from "./inventory.routes";
@@ -27,6 +27,7 @@ import shipwayRoutes from "./shipway.routes";
 import whatsappRoutes from "./whatsapp.routes";
 import userAddressRoutes from "./user-address.routes";
 import userNotificationRoutes from "./user-notification.routes";
+import userOrdersRoutes from "./user-orders.routes";
 import userVoucherRoutes from "./user-voucher.routes";
 import walletRoutes from "./wallet.routes";
 
@@ -57,14 +58,16 @@ router.use("/customer-auth", userAuthRoutes); // Backward compatibility alias
 router.use("/user/address", userAddressRoutes);
 router.use("/user/addresses", userAddressRoutes);
 router.use("/user-address", userAddressRoutes);
-router.use("/user/orders", ordersRoutes);
-router.use("/user-orders", ordersRoutes);
+router.use("/user/orders", userOrdersRoutes);
+router.use("/user-orders", userOrdersRoutes);
 router.use("/reviews", reviewsRoutes);
 router.use("/cards", cardsRoutes);
 router.use("/user/cards", cardsRoutes);
-router.use("/setu/v1", setuRoutes);
-router.use("/bbps", bbpsRoutes);
-router.use("/cikka-pay", cikkaPayRoutes);
+// BBPS bill pay via Setu pre-built screens (spec 002): /api/bbps/session, /api/bbps/history[/:id]
+router.use("/bbps", billpayHistoryRoutes);
+router.use("/bbps", billpayRoutes);
+// Setu BillPay webhook (X-BILL-WEBHOOK-API-KEY auth, no JWT)
+router.use("/webhooks/setu/billpay", billpayWebhookRoutes);
 router.use("/kyc", instantpayRoutes);
 router.use("/instantpay", instantpayRoutes);
 router.use("/pan", instantpayRoutes);

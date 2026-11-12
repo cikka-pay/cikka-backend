@@ -58,6 +58,7 @@ const EARN_TYPES = new Set<WalletTxType>([
   WalletTxType.EARN_CASHBACK,
   WalletTxType.EARN_BBPS,
   WalletTxType.EARN_ADMIN,
+  WalletTxType.EARN_BBPS,
 ]);
 
 const REDEEM_TYPES = new Set<WalletTxType>([
@@ -85,18 +86,32 @@ export const walletService = {
    * Returns zeros if the wallet has not been initialised yet.
    */
   async getBalance(userId: string): Promise<WalletBalance> {
-    let wallet = await prisma.userWallet.findUnique({ where: { userId } });
-    if (!wallet && (userId === "dev-bypass-1" || userId === "dev-bypass-user-id")) {
-      const bypassUser = await prisma.user.findFirst({
-        where: { phone: { contains: "1111111111" } },
-        include: { wallet: true },
-      });
-      if (bypassUser?.wallet) {
-        wallet = bypassUser.wallet;
+    try {
+      const wallet = await prisma.userWallet.findUnique({ where: { userId } });
+      if (!wallet) {
+        return {
+          ciPoints: 0,
+          cashPaise: 0,
+          cashRupees: 0,
+          lifetimeEarnedPoints: 0,
+          lifetimeRedeemedPoints: 0,
+          lifetimeEarnedPaise: 0,
+          lifetimeRedeemedPaise: 0,
+          walletId: "",
+        };
       }
-    }
-
-    if (!wallet) {
+      return {
+        ciPoints: wallet.ciPoints,
+        cashPaise: wallet.cashPaise,
+        cashRupees: wallet.cashPaise / 100,
+        lifetimeEarnedPoints: wallet.lifetimeEarnedPoints,
+        lifetimeRedeemedPoints: wallet.lifetimeRedeemedPoints,
+        lifetimeEarnedPaise: wallet.lifetimeEarnedPaise,
+        lifetimeRedeemedPaise: wallet.lifetimeRedeemedPaise,
+        walletId: wallet.id,
+      };
+    } catch (err: any) {
+      console.warn(`[WalletService Warning] getBalance fallback: ${err.message}`);
       return {
         ciPoints: 0,
         cashPaise: 0,
@@ -108,36 +123,31 @@ export const walletService = {
         walletId: "",
       };
     }
-    return {
-      ciPoints: wallet.ciPoints,
-      cashPaise: wallet.cashPaise,
-      cashRupees: wallet.cashPaise / 100,
-      lifetimeEarnedPoints: wallet.lifetimeEarnedPoints,
-      lifetimeRedeemedPoints: wallet.lifetimeRedeemedPoints,
-      lifetimeEarnedPaise: wallet.lifetimeEarnedPaise,
-      lifetimeRedeemedPaise: wallet.lifetimeRedeemedPaise,
-      walletId: wallet.id,
-    };
   },
 
   /**
    * Paginated ledger history for a user.
    */
   async getLedger(userId: string, limit = 20, cursor?: string) {
-    const entries = await prisma.loyaltyLedger.findMany({
-      where: { userId },
-      orderBy: { createdAt: "desc" },
-      take: limit + 1,
-      ...(cursor ? { cursor: { id: cursor }, skip: 1 } : {}),
-    });
+    try {
+      const entries = await prisma.loyaltyLedger.findMany({
+        where: { userId },
+        orderBy: { createdAt: "desc" },
+        take: limit + 1,
+        ...(cursor ? { cursor: { id: cursor }, skip: 1 } : {}),
+      });
 
-    let nextCursor: string | null = null;
-    if (entries.length > limit) {
-      const nextItem = entries.pop();
-      nextCursor = nextItem?.id ?? null;
+      let nextCursor: string | null = null;
+      if (entries.length > limit) {
+        const nextItem = entries.pop();
+        nextCursor = nextItem?.id ?? null;
+      }
+
+      return { entries, nextCursor };
+    } catch (err: any) {
+      console.warn(`[WalletService Warning] getLedger fallback: ${err.message}`);
+      return { entries: [], nextCursor: null };
     }
-
-    return { entries, nextCursor };
   },
 
   /**
@@ -256,14 +266,16 @@ export const walletService = {
         },
       });
 
-      // 2f. Synchronize User model denormalized balance to prevent split-brain state
-      await tx.user.update({
+      // 2f. Synchronize User model denormalized balance. updateMany (not update) so a missing
+      // user row is a no-op rather than an error; cashbackBalance is Decimal, so pass an exact
+      // string, never a float.
+      await tx.user.updateMany({
         where: { id: userId },
         data: {
           ciPoints: newCiPoints,
-          cashbackBalance: Number((newCashPaise / 100).toFixed(2)),
+          cashbackBalance: (newCashPaise / 100).toFixed(2),
         },
-      }).catch(() => { });
+      });
 
       // 2g. Append the immutable ledger entry
       const entry = await tx.loyaltyLedger.create({
@@ -285,6 +297,58 @@ export const walletService = {
 
       return { entry, wallet: updatedWallet };
     });
+
+    // 3. In-app notification — written AFTER the ledger transaction commits. Inside the
+    // transaction a failed insert would abort the whole Postgres transaction and lose the
+    // wallet entry; out here a failure only loses the notification.
+    try {
+      const newCiPoints = result.wallet.ciPoints;
+      const newCashPaise = result.wallet.cashPaise;
+      let notifTitle = "Wallet Updated";
+      let notifCategory = "rewards";
+      let notifBody = description || "Your Cikka wallet balance has been updated.";
+
+      if (txType === WalletTxType.EARN_CASHBACK && cashPaiseDelta > 0) {
+        notifTitle = `₹${(cashPaiseDelta / 100).toFixed(2)} Cashback Credited!`;
+        notifCategory = "rewards";
+        notifBody = description || `Instant cashback of ₹${(cashPaiseDelta / 100).toFixed(2)} credited to your account.`;
+      } else if (
+        (txType === WalletTxType.EARN_ORDER || txType === WalletTxType.EARN_BBPS) &&
+        pointsDelta > 0
+      ) {
+        notifTitle = `+${pointsDelta.toLocaleString("en-IN")} CI Points Earned!`;
+        notifCategory = txType === WalletTxType.EARN_BBPS ? "bills" : "rewards";
+        notifBody = description || `${pointsDelta} CI Points have been added to your vault balance.`;
+      } else if (txType === WalletTxType.REDEEM_REWARD && pointsDelta < 0) {
+        notifTitle = `${Math.abs(pointsDelta).toLocaleString("en-IN")} CI Points Redeemed`;
+        notifCategory = "rewards";
+        notifBody = description || `Points burned for redemption #${redemptionId || ""}.`;
+      } else if (txType === WalletTxType.CASHBACK_REDEEM && cashPaiseDelta < 0) {
+        notifTitle = `₹${(Math.abs(cashPaiseDelta) / 100).toFixed(2)} Cash Applied`;
+        notifCategory = "bills";
+        notifBody = description || `Cashback balance applied towards transaction.`;
+      }
+
+      await prisma.userNotification.create({
+        data: {
+          userId,
+          category: notifCategory,
+          title: notifTitle,
+          body: notifBody,
+          metadata: {
+            txType,
+            pointsDelta,
+            cashPaiseDelta,
+            balanceAfterPoints: newCiPoints,
+            balanceAfterPaise: newCashPaise,
+            orderId,
+            redemptionId,
+          },
+        },
+      });
+    } catch (notifErr: any) {
+      console.warn(`[WalletService] Notification write failed (ledger entry kept): ${notifErr?.message}`);
+    }
 
     return {
       ledgerEntryId: result.entry.id,

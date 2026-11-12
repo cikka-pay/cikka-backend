@@ -91,21 +91,25 @@ describe("Payment forgery guards in production", () => {
   });
 });
 
-describe("Setu webhook auth", () => {
-  it("rejects unauthenticated webhooks in production", async () => {
-    delete process.env.SETU_STRICT_AUTH;
-    const res = await request(app).post("/setu/v1/getPaymentStatus").send({ refId: "x" });
+describe("Setu BillPay webhook auth", () => {
+  it("rejects BillPay webhooks when no API key is configured in production", async () => {
+    delete process.env.SETU_BILLPAY_WEBHOOK_API_KEY;
+    const res = await request(app).post("/api/webhooks/setu/billpay").send({ event: "bill_fetch_success" });
     expect(res.status).toBe(401);
   });
 
-  it("accepts webhooks with valid basic auth in production", async () => {
-    process.env.SETU_BASIC_AUTH_USER = "u";
-    process.env.SETU_BASIC_AUTH_PASS = "p";
+  it("rejects BillPay webhooks with a wrong API key in production", async () => {
+    process.env.SETU_BILLPAY_WEBHOOK_API_KEY = "the-real-key";
     const res = await request(app)
-      .post("/setu/v1/checkStatus")
-      .set("Authorization", `Basic ${Buffer.from("u:p").toString("base64")}`)
-      .send({});
-    expect(res.status).not.toBe(401);
+      .post("/api/webhooks/setu/billpay")
+      .set("X-BILL-WEBHOOK-API-KEY", "wrong-key")
+      .send({ event: "bill_fetch_success" });
+    expect(res.status).toBe(401);
+  });
+
+  it("no longer serves the retired /setu/v1 webhooks", async () => {
+    const res = await request(app).post("/setu/v1/getPaymentStatus").send({ refId: "x" });
+    expect(res.status).toBe(404);
   });
 });
 
@@ -128,9 +132,9 @@ describe("Dev bypasses still work outside production", () => {
     expect(razorpayService.verifyPaymentSignature("order_dev_1", "pay_dev_1", "mock_signature_valid")).toBe(true);
   });
 
-  it("allows unauthenticated Setu webhooks", async () => {
-    delete process.env.SETU_STRICT_AUTH;
-    const res = await request(app).post("/setu/v1/checkStatus").send({});
-    expect(res.status).not.toBe(401);
+  it("still rejects BillPay webhooks without an API key", async () => {
+    delete process.env.SETU_BILLPAY_WEBHOOK_API_KEY;
+    const res = await request(app).post("/api/webhooks/setu/billpay").send({ event: "bill_fetch_success" });
+    expect(res.status).toBe(401);
   });
 });
