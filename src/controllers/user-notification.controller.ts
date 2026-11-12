@@ -1,6 +1,7 @@
 import { Request, Response } from "express";
 import { asyncHandler } from "../utils/asyncHandler";
 import { prisma } from "../config/prisma";
+import { isExcludedUserNotification } from "../utils/userNotifications";
 
 export const getUserNotifications = asyncHandler(async (req: Request, res: Response) => {
   const userId = req.user?.id;
@@ -17,16 +18,17 @@ export const getUserNotifications = asyncHandler(async (req: Request, res: Respo
     whereClause.category = category;
   }
 
-  const [notifications, unreadCount] = await Promise.all([
-    prisma.userNotification.findMany({
-      where: whereClause,
-      orderBy: { createdAt: "desc" },
-      take: limit,
-    }),
-    prisma.userNotification.count({
-      where: { userId, read: false },
-    }),
-  ]);
+  const allMatching = await prisma.userNotification.findMany({
+    where: whereClause,
+    orderBy: { createdAt: "desc" },
+    take: Math.max(limit * 4, 100),
+  });
+
+  const visibleNotifications = allMatching.filter(
+    (n) => !isExcludedUserNotification(n),
+  );
+  const unreadCount = visibleNotifications.filter((n) => !n.read).length;
+  const notifications = visibleNotifications.slice(0, limit);
 
   const formatted = notifications.map((n) => ({
     id: n.id,

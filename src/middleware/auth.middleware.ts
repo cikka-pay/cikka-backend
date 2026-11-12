@@ -155,6 +155,14 @@ export function optionalAnyAuth(req: Request, res: Response, next: NextFunction)
         next();
         return;
       } catch (_err2) {
+        try {
+          const payload = verifyAdminToken(token);
+          req.admin = { id: payload.id, email: payload.email, role: payload.role };
+          next();
+          return;
+        } catch (_adminErr) {
+          // Token invalid — proceed unauthenticated
+        }
         // Token invalid — proceed unauthenticated
       }
     }

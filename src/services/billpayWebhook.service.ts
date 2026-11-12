@@ -342,6 +342,27 @@ async function applyPaymentEvent(event: string, target: BbpsTxnStatus, p: Record
           },
         });
         await applyRewards(event, created);
+        if (target === BbpsTxnStatus.FAILED && userId) {
+          const { createUserNotificationSafely } = await import("../utils/userNotifications");
+          await createUserNotificationSafely({
+            userId,
+            category: "bills",
+            title: `${created.billerName || "Bill"} Payment Failed`,
+            body: err.message || `Payment of ₹${Number(created.amount).toLocaleString("en-IN")} could not be completed.`,
+            screen: "payment-history",
+            params: {
+              highlightTxId: created.bbpsTxnId || created.refId || created.setuOrderId || created.internalTxnId,
+              initialFilter: "failed",
+            },
+            actionLabel: "View Failed Bill",
+            metadata: {
+              bbpsTxnId: created.bbpsTxnId || created.refId || created.internalTxnId,
+              billerName: created.billerName,
+              amount: Number(created.amount),
+              status: "FAILED",
+            },
+          });
+        }
         return;
       } catch (e) {
         if (isUniqueViolation(e)) continue; // a concurrent delivery created it — re-read
@@ -377,6 +398,34 @@ async function applyPaymentEvent(event: string, target: BbpsTxnStatus, p: Record
     }
 
     await applyRewards(event, { ...existing, ...(data as Partial<BbpsTransaction>) });
+    if (
+      target === BbpsTxnStatus.FAILED &&
+      transition &&
+      existing.status !== BbpsTxnStatus.FAILED &&
+      (userId || existing.userId)
+    ) {
+      const { createUserNotificationSafely } = await import("../utils/userNotifications");
+      const targetUserId = (userId || existing.userId) as string;
+      const amtNum = Number(fields.amountPaid ?? fields.billAmount ?? existing.amount ?? 0);
+      await createUserNotificationSafely({
+        userId: targetUserId,
+        category: "bills",
+        title: `${existing.billerName || fields.billerName || "Bill"} Payment Failed`,
+        body: err.message || `Payment of ₹${amtNum.toLocaleString("en-IN")} failed. Tap to inspect or raise an issue.`,
+        screen: "payment-history",
+        params: {
+          highlightTxId: existing.bbpsTxnId || fields.bbpsTxnId || existing.refId || existing.setuOrderId || existing.internalTxnId,
+          initialFilter: "failed",
+        },
+        actionLabel: "View Failed Bill",
+        metadata: {
+          bbpsTxnId: existing.bbpsTxnId || fields.bbpsTxnId || existing.refId || existing.internalTxnId,
+          billerName: existing.billerName || fields.billerName,
+          amount: amtNum,
+          status: "FAILED",
+        },
+      });
+    }
     return;
   }
 

@@ -6,6 +6,7 @@ import { walletService } from '../services/wallet.service';
 import { RewardsCalcService } from '../services/rewardsCalc.service';
 import { prisma } from '../config/prisma';
 import { WalletTxType } from '../generated/prisma/client';
+import { createUserNotificationSafely } from '../utils/userNotifications';
 
 /**
  * Resolve a Hubble user identifier to an authoritative database User record.
@@ -510,9 +511,9 @@ export class HubbleController {
             for (let i = 0; i < orderResult.vouchers.length; i++) {
               const v = orderResult.vouchers[i];
               const vRef = v.id ? `${orderReference}_${v.id}` : `${orderReference}_${i}`;
-              const validDate = v.validTill ? new Date(v.validTill) : new Date(Date.now() + 365 * 86400000);
 
-              await prisma.userVoucher.create({
+              // Reward Store policy: coupons never expire (validTill = null).
+              const createdVoucher = await prisma.userVoucher.create({
                 data: {
                   userId: authUserId,
                   orderReference: vRef,
@@ -524,9 +525,29 @@ export class HubbleController {
                   cardPin: v.cardPin || null,
                   denomination: Number(v.amount) || denomNum,
                   pointsBurned: RewardsCalcService.calculateCouponPointsRequired(Number(v.amount) || denomNum),
-                  validTill: isNaN(validDate.getTime()) ? null : validDate,
+                  validTill: null,
                   cardType: v.cardType || brand?.cardType || "CARD_AND_PIN_NO_SECURED",
                   status: "ACTIVE",
+                },
+              });
+
+              await createUserNotificationSafely({
+                userId: authUserId,
+                category: "rewards",
+                title: `${brandTitle} Coupon Ready`,
+                body: `₹${(Number(v.amount) || denomNum).toLocaleString("en-IN")} ${brandTitle} voucher added to My Coupons (Never Expires).`,
+                screen: "my-coupons",
+                params: {
+                  voucherId: createdVoucher.id,
+                  brandTitle,
+                  tab: "active",
+                },
+                actionLabel: "View Coupon",
+                metadata: {
+                  orderReference: vRef,
+                  voucherId: createdVoucher.id,
+                  brandTitle,
+                  denomination: Number(v.amount) || denomNum,
                 },
               });
             }

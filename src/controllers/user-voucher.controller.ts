@@ -29,8 +29,13 @@ export const listUserVouchers = asyncHandler(async (req: Request, res: Response)
     });
   }
 
-  // Only real vouchers purchased by the user from PostgreSQL
-  const vouchers = dbVouchers;
+  // Reward Store policy: coupons never expire — normalize validTill & legacy EXPIRED rows.
+  const vouchers = dbVouchers.map((v) => ({
+    ...v,
+    validTill: null,
+    neverExpires: true,
+    status: v.status === "EXPIRED" ? "ACTIVE" : v.status,
+  }));
 
   // Compute brand groupings
   const brandMap = new Map<string, {
@@ -109,15 +114,23 @@ export const getVoucherById = asyncHandler(async (req: Request, res: Response) =
     return;
   }
 
-  res.status(200).json({ success: true, voucher });
+  res.status(200).json({
+    success: true,
+    voucher: {
+      ...voucher,
+      validTill: null,
+      neverExpires: true,
+      status: voucher.status === "EXPIRED" ? "ACTIVE" : voucher.status,
+    },
+  });
 });
 
 export const updateVoucherStatus = asyncHandler(async (req: Request, res: Response) => {
   const { id } = req.params;
   const { status } = req.body;
 
-  if (!status || !["ACTIVE", "REDEEMED", "EXPIRED"].includes(status)) {
-    res.status(400).json({ success: false, error: "Valid status required: ACTIVE, REDEEMED, or EXPIRED" });
+  if (!status || !["ACTIVE", "REDEEMED"].includes(status)) {
+    res.status(400).json({ success: false, error: "Valid status required: ACTIVE or REDEEMED" });
     return;
   }
 
@@ -131,6 +144,7 @@ export const updateVoucherStatus = asyncHandler(async (req: Request, res: Respon
     where: { id },
     data: {
       status: status as any,
+      validTill: null,
       redeemedAt: status === "REDEEMED" ? new Date() : null,
     },
   });
@@ -138,7 +152,11 @@ export const updateVoucherStatus = asyncHandler(async (req: Request, res: Respon
   res.status(200).json({
     success: true,
     message: `Voucher marked as ${status}`,
-    voucher: updated,
+    voucher: {
+      ...updated,
+      validTill: null,
+      neverExpires: true,
+    },
   });
 });
 

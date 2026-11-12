@@ -63,12 +63,12 @@ const updateVariantSchema = z.object({
   price: z.number().positive().optional(),
 });
 
-import { requireRole, requireSellerAuth, optionalUserAuth } from "../middleware/auth.middleware";
+import { requireRole, requireSellerAuth, optionalAnyAuth } from "../middleware/auth.middleware";
 import reviewsRoutes from "./reviews.routes";
 
-// Protected Mall Catalog Endpoints: ONLY Sellers, Admins, or PAN-Verified Mobile Users can access
-router.get("/", optionalUserAuth, validate({ query: productQuerySchema }), listProducts);
-router.get("/:id", optionalUserAuth, getProduct);
+// Public for active Mall browsing; seller/admin tokens scope or unlock all statuses
+router.get("/", optionalAnyAuth, validate({ query: productQuerySchema }), listProducts);
+router.get("/:id", optionalAnyAuth, getProduct);
 router.use("/:id/reviews", reviewsRoutes);
 
 // Creation and modification allowed for ADMIN and EXECUTIVE on seller endpoints

@@ -284,9 +284,15 @@ export async function createBillpaySessionService(
   if (hasOAuthCreds) {
     try {
       const headers = await getSetuHeaders();
-      if (!headers["X-Setu-Product-Instance-Id"] && config.setuBbpsProductInstanceId) {
-        headers["X-Setu-Product-Instance-Id"] = config.setuBbpsProductInstanceId;
-        headers["X-Product-Instance-Id"] = config.setuBbpsProductInstanceId;
+      const resolvedInstanceId =
+        config.setuProductInstanceId || config.setuBbpsProductInstanceId;
+      if (
+        !headers["X-Setu-Product-Instance-Id"] &&
+        !headers["X-Setu-Product-Instance-ID"] &&
+        resolvedInstanceId
+      ) {
+        headers["X-Setu-Product-Instance-Id"] = resolvedInstanceId;
+        headers["X-Product-Instance-Id"] = resolvedInstanceId;
       }
 
       const base = config.setuBaseUrl.replace(/\/+$/, "");

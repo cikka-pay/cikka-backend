@@ -10,6 +10,7 @@
 
 import { prisma } from "../config/prisma";
 import { WalletTxType } from "../generated/prisma/client";
+import { WalletNotificationMeta } from "../utils/userNotifications";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -36,6 +37,7 @@ export interface LedgerEntryInput {
   razorpayPaymentId?: string;
   description?: string;
   expiresAt?: Date;
+  notificationMeta?: WalletNotificationMeta;
 }
 
 export interface LedgerResult {
@@ -160,6 +162,7 @@ export const walletService = {
       razorpayPaymentId,
       description,
       expiresAt,
+      notificationMeta,
     } = input;
 
     // Validate — exactly one dimension must be non-zero
@@ -279,52 +282,6 @@ export const walletService = {
           expiresAt,
         },
       });
-
-      // 2h. Create persistent In-App UserNotification
-      try {
-        let notifTitle = "Wallet Updated";
-        let notifCategory = "rewards";
-        let notifBody = description || "Your Cikka wallet balance has been updated.";
-
-        if (txType === WalletTxType.EARN_CASHBACK && cashPaiseDelta > 0) {
-          notifTitle = `₹${(cashPaiseDelta / 100).toFixed(2)} Cashback Credited!`;
-          notifCategory = "rewards";
-          notifBody = description || `Instant cashback of ₹${(cashPaiseDelta / 100).toFixed(2)} credited to your account.`;
-        } else if (
-          (txType === WalletTxType.EARN_ORDER || txType === WalletTxType.EARN_BBPS) &&
-          pointsDelta > 0
-        ) {
-          notifTitle = `+${pointsDelta.toLocaleString("en-IN")} CI Points Earned!`;
-          notifCategory = txType === WalletTxType.EARN_BBPS ? "bills" : "rewards";
-          notifBody = description || `${pointsDelta} CI Points have been added to your vault balance.`;
-        } else if (txType === WalletTxType.REDEEM_REWARD && pointsDelta < 0) {
-          notifTitle = `${Math.abs(pointsDelta).toLocaleString("en-IN")} CI Points Redeemed`;
-          notifCategory = "rewards";
-          notifBody = description || `Points burned for redemption #${redemptionId || ""}.`;
-        } else if (txType === WalletTxType.CASHBACK_REDEEM && cashPaiseDelta < 0) {
-          notifTitle = `₹${(Math.abs(cashPaiseDelta) / 100).toFixed(2)} Cash Applied`;
-          notifCategory = "bills";
-          notifBody = description || `Cashback balance applied towards transaction.`;
-        }
-
-        await tx.userNotification.create({
-          data: {
-            userId,
-            category: notifCategory,
-            title: notifTitle,
-            body: notifBody,
-            metadata: {
-              txType,
-              pointsDelta,
-              cashPaiseDelta,
-              balanceAfterPoints: newCiPoints,
-              balanceAfterPaise: newCashPaise,
-              orderId,
-              redemptionId,
-            },
-          },
-        });
-      } catch (_notifErr) { }
 
       return { entry, wallet: updatedWallet };
     });

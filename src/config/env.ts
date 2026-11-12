@@ -53,15 +53,21 @@ export const config = {
   })(),
   setuPartnerId: (() => {
     const isUat = (process.env.SETU_ENVIRONMENT || "uat").toLowerCase() !== "production";
-    return isUat ? (process.env.SETU_UAT_PARTNER_ID || "") : (process.env.SETU_PARTNER_ID || "");
+    return isUat
+      ? (process.env.SETU_UAT_PARTNER_ID || process.env.SETU_PARTNER_ID || "")
+      : (process.env.SETU_PROD_PARTNER_ID || process.env.SETU_PARTNER_ID || "");
   })(),
   setuOrgId: (() => {
     const isUat = (process.env.SETU_ENVIRONMENT || "uat").toLowerCase() !== "production";
-    return isUat ? (process.env.SETU_UAT_ORG_ID || "") : (process.env.SETU_ORG_ID || "");
+    return isUat
+      ? (process.env.SETU_UAT_ORG_ID || process.env.SETU_ORG_ID || "")
+      : (process.env.SETU_PROD_ORG_ID || process.env.SETU_ORG_ID || "");
   })(),
   setuProductInstanceId: (() => {
     const isUat = (process.env.SETU_ENVIRONMENT || "uat").toLowerCase() !== "production";
-    return isUat ? (process.env.SETU_UAT_PRODUCT_INSTANCE_ID || "") : (process.env.SETU_PRODUCT_INSTANCE_ID || "");
+    return isUat
+      ? (process.env.SETU_UAT_PRODUCT_INSTANCE_ID || process.env.SETU_PRODUCT_INSTANCE_ID || "")
+      : (process.env.SETU_PROD_PRODUCT_INSTANCE_ID || process.env.SETU_PRODUCT_INSTANCE_ID || "");
   })(),
   setuStandardAccountId: process.env.SETU_STANDARD_ACCOUNT_ID || "",
   setuProductAccountId: process.env.SETU_PRODUCT_ACCOUNT_ID || "",
@@ -73,7 +79,22 @@ export const config = {
   // Setu BBPS Whitelabel & Custom Payment config
   setuBbpsSchemeId: process.env.SETU_BBPS_SCHEME_ID || "setu_bbps_scheme_id",
   setuBbpsSecret: process.env.SETU_BBPS_SECRET || "setu_bbps_secret",
-  setuBbpsProductInstanceId: process.env.SETU_BBPS_PRODUCT_INSTANCE_ID || "12c58805-be18-4466-bd36-6b6158cbd151",
+  setuBbpsProductInstanceId: (() => {
+    const isUat = (process.env.SETU_ENVIRONMENT || "uat").toLowerCase() !== "production";
+    if (!isUat) {
+      return (
+        process.env.SETU_BBPS_PRODUCT_INSTANCE_ID ||
+        process.env.SETU_PROD_PRODUCT_INSTANCE_ID ||
+        process.env.SETU_PRODUCT_INSTANCE_ID ||
+        ""
+      );
+    }
+    return (
+      process.env.SETU_BBPS_PRODUCT_INSTANCE_ID ||
+      process.env.SETU_UAT_PRODUCT_INSTANCE_ID ||
+      "12c58805-be18-4466-bd36-6b6158cbd151"
+    );
+  })(),
   setuBbpsBaseUrl: process.env.SETU_BBPS_BASE_URL || "https://kms.setu.co/api/v2",
   setuCheckStatusUrl: process.env.SETU_CHECK_STATUS_URL || "http://localhost:4000/setu/v1/checkStatus",
 

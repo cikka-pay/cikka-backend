@@ -5,6 +5,7 @@ import cors from "cors";
 import morgan from "morgan";
 import routes from "./routes/index";
 import setuRoutes from "./routes/setu.routes";
+import deeplinkRoutes from "./routes/deeplink.routes";
 import { errorHandler } from "./middleware/error.middleware";
 
 const app = express();
@@ -59,6 +60,9 @@ app.use("/notifications", setuRoutes);
 // API v1 routes
 app.use("/api", routes);
 app.use("/api/v1", routes);
+
+// Public universal link & deep-link web fallbacks
+app.use(deeplinkRoutes);
 
 
 app.use((_req, res) => {

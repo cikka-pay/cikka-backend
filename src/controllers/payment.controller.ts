@@ -940,6 +940,27 @@ export async function executeOrderFulfillmentPipeline(params: OrderFulfillmentPa
         });
       }
 
+      if (createdOrder.userId) {
+        const { createUserNotificationSafely } = await import("../utils/userNotifications");
+        await createUserNotificationSafely({
+          userId: createdOrder.userId,
+          category: "orders",
+          title: `Order Confirmed · #${itemOrderId}`,
+          body: `${name} (₹${Number(itemPrice).toLocaleString("en-IN")}) is confirmed and scheduled with ${itemCarrier}.`,
+          screen: "orders",
+          params: {
+            highlightOrderId: createdOrder.id,
+            orderNumber: itemOrderId,
+          },
+          actionLabel: "Track Order",
+          metadata: {
+            orderId: createdOrder.id,
+            orderNumber: itemOrderId,
+            courier: itemCarrier,
+          },
+        });
+      }
+
       processedOrders.push({
         order_number: itemOrderId,
         awb: null,

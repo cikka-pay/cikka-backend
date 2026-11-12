@@ -6,6 +6,7 @@ import {
   earnPoints,
   earnCashback,
   withdrawFunds,
+  rateAppReward,
 } from "../controllers/wallet.controller";
 
 const router = Router();
@@ -21,5 +22,8 @@ router.get("/ledger", getWalletLedger);
 
 // POST /api/wallet/withdraw      — withdraw cashback or CI points atomically
 router.post("/withdraw", withdrawFunds);
+
+// POST /api/wallet/rate-app-reward — credit 150 CI Points once per user for rating Cikka
+router.post("/rate-app-reward", rateAppReward);
 
 export default router;

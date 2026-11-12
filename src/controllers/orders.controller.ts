@@ -6,6 +6,7 @@ import { walletService } from "../services/wallet.service";
 import { shipwayService } from "../services/shipway.service";
 import { orderSlaService } from "../services/order-sla.service";
 import { metaWhatsAppService } from "../services/meta-whatsapp.service";
+import { createUserNotificationSafely } from "../utils/userNotifications";
 
 export const listOrders = asyncHandler(async (req: Request, res: Response) => {
   const sellerId = req.seller!.id;
@@ -301,6 +302,53 @@ export const updateOrderStatus = asyncHandler(async (req: Request, res: Response
       courier: assignedCourier,
     },
   });
+
+  if (updatedOrder.userId) {
+    const statusLabelMap: Record<string, { title: string; body: string }> = {
+      PACKED: {
+        title: `Order Packed · #${updatedOrder.orderNumber}`,
+        body: `Your order has been packed${assignedCourier ? ` and assigned to ${assignedCourier}` : ""}.`,
+      },
+      SHIPPED: {
+        title: `Order Dispatched · #${updatedOrder.orderNumber}`,
+        body: `${assignedAwb ? `Tracking AWB ${assignedAwb} via ${assignedCourier || "Courier"}. ` : ""}Tap to track live delivery progress.`,
+      },
+      OUT_FOR_DELIVERY: {
+        title: `Out for Delivery · #${updatedOrder.orderNumber}`,
+        body: "Your package is out for delivery today.",
+      },
+      DELIVERED: {
+        title: `Order Delivered · #${updatedOrder.orderNumber}`,
+        body: "Your Cikka Mall delivery is complete. Tap to view your order.",
+      },
+      CANCELLED: {
+        title: `Order Cancelled · #${updatedOrder.orderNumber}`,
+        body: "This order was cancelled. Tap to review order & refund details.",
+      },
+    };
+    const msg = statusLabelMap[String(status).toUpperCase()];
+    if (msg) {
+      await createUserNotificationSafely({
+        userId: updatedOrder.userId,
+        category: "orders",
+        title: msg.title,
+        body: msg.body,
+        screen: "orders",
+        params: {
+          highlightOrderId: updatedOrder.id,
+          orderNumber: updatedOrder.orderNumber,
+        },
+        actionLabel: "Track Order",
+        metadata: {
+          orderId: updatedOrder.id,
+          orderNumber: updatedOrder.orderNumber,
+          status: String(status),
+          awb: assignedAwb,
+          courier: assignedCourier,
+        },
+      });
+    }
+  }
 
   const labelUrl = assignedAwb ? `https://app.shipway.com/label/${encodeURIComponent(assignedAwb)}` : null;
   if (status === "PACKED" && labelUrl) {

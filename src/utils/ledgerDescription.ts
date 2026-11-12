@@ -71,6 +71,9 @@ export function formatCustomerLedgerDescription(
   if (/^withdrawal\s+of\s+/i.test(raw)) {
     return normalizedType === "CASHBACK_REDEEM" ? "Cashback Withdrawal" : "CI Points Redemption";
   }
+  if (/rate\s+cikka/i.test(raw)) {
+    return "Rate Cikka Bonus";
+  }
 
   // General sanitization fallback for any remaining vendor or opaque ID text
   let cleaned = raw

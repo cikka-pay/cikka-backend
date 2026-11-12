@@ -6,6 +6,7 @@ import { getBillerDetailsService } from "./setuBiller.service";
 import { RewardsCalcService } from "../rewardsCalc.service";
 import { walletService } from "../wallet.service";
 import { WalletTxType, Prisma } from "../../generated/prisma/client";
+import { createUserNotificationSafely } from "../../utils/userNotifications";
 
 export interface InitiatePaymentInput {
   userId?: string | null;
@@ -271,6 +272,20 @@ export async function payBillService(input: InitiatePaymentInput): Promise<Payme
           cashPaiseDelta: rewards.cashbackEarned * 100,
           idempotencyKey: `BBPS_CB:${internalTxnId}`,
           description: `Cikka Pay Cashback for ${billerName}`,
+          notificationMeta: {
+            category: "bills",
+            screen: "payment-history",
+            params: {
+              highlightTxId: bbpsRefNo || refID || internalTxnId,
+              initialFilter: "utilities",
+            },
+            actionLabel: "View Receipt",
+            extra: {
+              bbpsTxnId: bbpsRefNo || internalTxnId,
+              billerName,
+              amount: payableAmount,
+            },
+          },
         });
       }
 
@@ -278,15 +293,69 @@ export async function payBillService(input: InitiatePaymentInput): Promise<Payme
       if (rewards.ciPointsEarned > 0) {
         await walletService.applyEntry({
           userId,
-          txType: WalletTxType.EARN_ORDER,
+          txType: WalletTxType.EARN_BBPS,
           pointsDelta: rewards.ciPointsEarned,
           idempotencyKey: `BBPS_PTS:${internalTxnId}`,
           description: `Cikka Pay CI Points for ${billerName}`,
+          notificationMeta: {
+            category: "bills",
+            screen: "payment-history",
+            params: {
+              highlightTxId: bbpsRefNo || refID || internalTxnId,
+              initialFilter: "utilities",
+            },
+            actionLabel: "View Receipt",
+            extra: {
+              bbpsTxnId: bbpsRefNo || internalTxnId,
+              billerName,
+              amount: payableAmount,
+            },
+          },
+        });
+      }
+
+      if (rewards.cashbackEarned <= 0 && rewards.ciPointsEarned <= 0) {
+        await createUserNotificationSafely({
+          userId,
+          category: "bills",
+          title: `${billerName} Bill Paid`,
+          body: `Payment of ₹${payableAmount.toLocaleString("en-IN")} was settled via BBPS.`,
+          screen: "payment-history",
+          params: {
+            highlightTxId: bbpsRefNo || refID || internalTxnId,
+            initialFilter: "utilities",
+          },
+          actionLabel: "View Receipt",
+          metadata: {
+            bbpsTxnId: bbpsRefNo || internalTxnId,
+            billerName,
+            amount: payableAmount,
+            status: fulfilmentStatus,
+          },
         });
       }
     } catch (rewardErr: any) {
       console.warn(`[SetuPayment Rewards Warning] Failed to credit rewards: ${rewardErr.message}`);
     }
+  } else if (fulfilmentStatus === "FAILED" && userId) {
+    await createUserNotificationSafely({
+      userId,
+      category: "bills",
+      title: `${billerName} Payment Failed`,
+      body: `Payment of ₹${payableAmount.toLocaleString("en-IN")} failed. Tap to inspect transaction details.`,
+      screen: "payment-history",
+      params: {
+        highlightTxId: bbpsRefNo || refID || internalTxnId,
+        initialFilter: "failed",
+      },
+      actionLabel: "View Failed Bill",
+      metadata: {
+        bbpsTxnId: bbpsRefNo || internalTxnId,
+        billerName,
+        amount: payableAmount,
+        status: "FAILED",
+      },
+    });
   }
 
   const finalResult: PaymentFulfilmentResult = {

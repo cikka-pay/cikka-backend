@@ -13,6 +13,7 @@ import { prisma } from "../config/prisma";
 import { config } from "../config/env";
 import { OrderStatus, NotificationType, WalletTxType } from "../generated/prisma/client";
 import { RewardsCalcService } from "../services/rewardsCalc.service";
+import { createUserNotificationSafely } from "../utils/userNotifications";
 
 /**
  * Helper to match or create a seller for a given pickup pincode
@@ -575,6 +576,27 @@ async function executeRedemptionFulfillment(params: {
       },
     },
   }).catch(() => {});
+
+  if (resolvedUserId) {
+    await createUserNotificationSafely({
+      userId: resolvedUserId,
+      category: "orders",
+      title: `Reward Order Confirmed · #${finalOrderId}`,
+      body: `${product_name} (${numPointsBurned.toLocaleString("en-IN")} CI Points) is confirmed and being packed.`,
+      screen: "orders",
+      params: {
+        highlightOrderId: dbOrder.id,
+        orderNumber: finalOrderId,
+      },
+      actionLabel: "Track Order",
+      metadata: {
+        orderId: dbOrder.id,
+        orderNumber: finalOrderId,
+        redemptionId,
+        pointsBurned: numPointsBurned,
+      },
+    });
+  }
 
   // 10. Automated Meta WhatsApp alert to seller
   const rewardsSellerPhone = seller.phone || (seller.onboarding as any)?.signatoryMobile;

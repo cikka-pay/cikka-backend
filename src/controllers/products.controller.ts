@@ -338,8 +338,8 @@ export const updateVariant = asyncHandler(async (req: Request, res: Response) =>
  */
 export const listMallCatalogProducts = asyncHandler(async (req: Request, res: Response) => {
   const { page = "1", limit = "60", category, q } = req.query as any;
-  const pageNum = parseInt(page, 10) || 1;
-  const limitNum = parseInt(limit, 10) || 60;
+  const pageNum = Math.max(1, parseInt(page, 10) || 1);
+  const limitNum = Math.min(500, Math.max(1, parseInt(limit, 10) || 60));
   const skip = (pageNum - 1) * limitNum;
 
   const where: Prisma.ProductWhereInput = {
@@ -370,13 +370,7 @@ export const listMallCatalogProducts = asyncHandler(async (req: Request, res: Re
           select: {
             id: true,
             businessName: true,
-            email: true,
-            onboarding: {
-              select: {
-                businessName: true,
-                pickupAddress: true,
-              },
-            },
+            onboardingStatus: true,
           },
         },
       },
