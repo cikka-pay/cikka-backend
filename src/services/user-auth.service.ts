@@ -209,85 +209,182 @@ export async function verifyUserOtpService(phoneRaw: string, otp: string) {
 }
 
 export async function getUserProfileService(userId: string) {
-  let user = null;
-  try {
-    user = await prisma.user.findUnique({
-      where: { id: userId },
-      select: {
-        id: true,
-        phone: true,
-        name: true,
-        email: true,
-        phoneVerified: true,
-        panVerified: true,
-        panNumber: true,
-        profilePic: true,
-        createdAt: true,
-      },
-    });
-  } catch (_e) {}
-
-  if (!user) {
-    // In development mode, fallback to dev user profile
-    return {
-      id: userId,
-      phone: "+911111111111",
-      name: "Cikka Member",
-      email: null,
+  let user = await prisma.user.findUnique({
+    where: { id: userId },
+    select: {
+      id: true,
+      phone: true,
+      name: true,
+      email: true,
       phoneVerified: true,
       panVerified: true,
-      panNumber: "AAAAA1111A",
-      profilePic: null,
-      createdAt: new Date(),
-    };
+      panNumber: true,
+      profilePic: true,
+      ciPoints: true,
+      cashbackBalance: true,
+      wallet: {
+        select: {
+          ciPoints: true,
+          cashPaise: true,
+        },
+      },
+      createdAt: true,
+    },
+  });
+
+  if (!user) {
+    // Auto-heal missing user records (e.g. dev-bypass-1 or stale session token)
+    const isDev = userId === "dev-bypass-1" || userId === "dev-bypass-user-id" || userId.startsWith("user_") || userId.startsWith("dev-");
+    const fallbackPhone = (userId === "dev-bypass-1" || userId === "dev-bypass-user-id")
+      ? "+911111111111"
+      : `+91${userId.replace(/\D/g, "").padEnd(10, "0").slice(0, 10)}`;
+
+    try {
+      user = await prisma.user.upsert({
+        where: { id: userId },
+        update: {},
+        create: {
+          id: userId,
+          phone: fallbackPhone,
+          phoneVerified: true,
+          name: isDev ? "DEV BYPASS USER" : null,
+        },
+        select: {
+          id: true,
+          phone: true,
+          name: true,
+          email: true,
+          phoneVerified: true,
+          panVerified: true,
+          panNumber: true,
+          profilePic: true,
+          ciPoints: true,
+          cashbackBalance: true,
+          wallet: {
+            select: {
+              ciPoints: true,
+              cashPaise: true,
+            },
+          },
+          createdAt: true,
+        },
+      });
+    } catch (_upsertErr) {
+      user = await prisma.user.findFirst({
+        where: { phone: fallbackPhone },
+        select: {
+          id: true,
+          phone: true,
+          name: true,
+          email: true,
+          phoneVerified: true,
+          panVerified: true,
+          panNumber: true,
+          profilePic: true,
+          ciPoints: true,
+          cashbackBalance: true,
+          wallet: {
+            select: {
+              ciPoints: true,
+              cashPaise: true,
+            },
+          },
+          createdAt: true,
+        },
+      });
+    }
+
+    if (!user) {
+      throw new Error(AUTH_ERRORS.USER_NOT_FOUND);
+    }
   }
 
-  return user;
+  // Authoritative balance from double-entry UserWallet takes precedence
+  const effectiveCiPoints = user.wallet ? user.wallet.ciPoints : user.ciPoints;
+  const effectiveCashback = user.wallet
+    ? user.wallet.cashPaise / 100
+    : Number(user.cashbackBalance);
+
+  return {
+    ...user,
+    ciPoints: effectiveCiPoints,
+    cashbackBalance: effectiveCashback,
+  };
 }
 
 export async function updateUserProfileService(
   userId: string,
   data: { name?: string; email?: string; profilePic?: string | null }
 ) {
-  try {
-    const user = await prisma.user.upsert({
-      where: { id: userId },
-      update: data,
-      create: {
-        id: userId,
-        phone: "+911111111111",
-        name: data.name || "Cikka Member",
-        email: data.email || null,
-        phoneVerified: true,
-        panVerified: true,
-        profilePic: data.profilePic || null,
-      },
-      select: {
-        id: true,
-        phone: true,
-        name: true,
-        email: true,
-        phoneVerified: true,
-        panVerified: true,
-        panNumber: true,
-        profilePic: true,
-        createdAt: true,
-      },
+  // Check if the user exists by id
+  let existing = await prisma.user.findUnique({
+    where: { id: userId },
+    select: { id: true, phone: true },
+  });
+
+  if (!existing) {
+    const isDev = userId === "dev-bypass-1" || userId === "dev-bypass-user-id" || userId.startsWith("user_") || userId.startsWith("dev-");
+    const fallbackPhone = (userId === "dev-bypass-1" || userId === "dev-bypass-user-id")
+      ? "+911111111111"
+      : `+91${userId.replace(/\D/g, "").padEnd(10, "0").slice(0, 10)}`;
+
+    // Try to find user by fallback phone
+    existing = await prisma.user.findFirst({
+      where: { phone: fallbackPhone },
+      select: { id: true, phone: true },
     });
 
-    return user;
-  } catch (err: any) {
-    // Graceful fallback for mock sessions
-    return {
-      id: userId,
-      phone: "+911111111111",
-      name: data.name || "Cikka Member",
-      email: data.email || null,
+    if (!existing) {
+      // Create the missing user record
+      try {
+        return await prisma.user.create({
+          data: {
+            id: userId,
+            phone: fallbackPhone,
+            phoneVerified: true,
+            name: isDev ? (data.name || "DEV BYPASS USER") : data.name,
+            ...data,
+          },
+          select: {
+            id: true,
+            phone: true,
+            name: true,
+            email: true,
+            phoneVerified: true,
+            panVerified: true,
+            panNumber: true,
+            profilePic: true,
+            createdAt: true,
+          },
+        });
+      } catch (_createErr) {
+        // If creation raced or failed on phone constraint, find the user who holds that phone
+        existing = await prisma.user.findFirst({
+          where: { phone: fallbackPhone },
+          select: { id: true, phone: true },
+        });
+        if (!existing) {
+          throw new Error(AUTH_ERRORS.USER_NOT_FOUND);
+        }
+      }
+    }
+  }
+
+  const user = await prisma.user.update({
+    where: { id: existing.id },
+    data,
+    select: {
+      id: true,
+      phone: true,
+      name: true,
+      email: true,
       phoneVerified: true,
       panVerified: true,
-      panNumber: null,
-      profilePic: data.profilePic || null,
-      createdAt: new Date(),
-    };
-  }
+      panNumber: true,
+      profilePic: true,
+      createdAt: true,
+    },
+  });
+
+  return user;
 }

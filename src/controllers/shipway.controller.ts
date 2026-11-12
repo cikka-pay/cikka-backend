@@ -23,6 +23,13 @@ function mapShipwayToPrismaStatus(shipwayStatus: string): OrderStatus | null {
  */
 export const dispatchOrder = asyncHandler(async (req: Request, res: Response) => {
   const sellerId = req.seller?.id;
+  const isAdmin = Boolean(req.admin?.id);
+
+  if (!sellerId && !isAdmin) {
+    res.status(401).json({ success: false, error: "Seller or admin authentication required" });
+    return;
+  }
+
   const { orderId, carrierId, carrierName, shippingMode = "standard" } = req.body;
 
   if (!orderId) {
@@ -30,11 +37,11 @@ export const dispatchOrder = asyncHandler(async (req: Request, res: Response) =>
     return;
   }
 
-  // Find order scoped to seller (or allow admin/first seller fallback)
+  // Find order scoped to seller (or allow admin to dispatch any order)
   const orderWhere: any = {
     OR: [{ id: orderId }, { orderNumber: orderId }],
   };
-  if (sellerId) {
+  if (sellerId && !isAdmin) {
     orderWhere.sellerId = sellerId;
   }
 
@@ -47,14 +54,17 @@ export const dispatchOrder = asyncHandler(async (req: Request, res: Response) =>
   });
 
   if (!order) {
-    res.status(404).json({ success: false, error: "Order not found" });
+    res.status(404).json({ success: false, error: "Order not found or not owned by seller" });
     return;
   }
 
   // Resolve Seller Pickup Pincode from onboarding
   const pickupAddress = order.seller?.onboarding?.pickupAddress as any;
   const fromPincode = pickupAddress?.pincode || pickupAddress?.pin || "122008";
-  const toPincode = (order as any).pincode || "110001";
+  const toPincode = order.pincode || "110001";
+  const toAddress = order.shippingAddress || (order.customerCity ? `${order.customerCity}, Pincode: ${toPincode}` : "Delivery Address");
+  const toPhone = order.customerPhone || "9876543210";
+  const toEmail = order.customerEmail || "customer@cikka.club";
 
   // Calculate or use requested courier
   let selectedCarrier: any = null;
@@ -80,7 +90,9 @@ export const dispatchOrder = asyncHandler(async (req: Request, res: Response) =>
     carrier_name: selectedCarrier?.courier_name,
     carrier_id: selectedCarrier?.carrier_id,
     customer_name: order.customerName,
-    delivery_address: `${order.customerCity || "City"}, Pincode: ${toPincode}`,
+    customer_email: toEmail,
+    customer_phone: toPhone,
+    delivery_address: toAddress,
     city: order.customerCity || "Mumbai",
     pincode: toPincode,
     pickup_pincode: fromPincode,
@@ -143,6 +155,13 @@ export const dispatchOrder = asyncHandler(async (req: Request, res: Response) =>
  */
 export const bookReversePickup = asyncHandler(async (req: Request, res: Response) => {
   const sellerId = req.seller?.id;
+  const isAdmin = Boolean(req.admin?.id);
+
+  if (!sellerId && !isAdmin) {
+    res.status(401).json({ success: false, error: "Seller or admin authentication required" });
+    return;
+  }
+
   const { returnId, carrierName } = req.body;
 
   if (!returnId) {
@@ -160,6 +179,11 @@ export const bookReversePickup = asyncHandler(async (req: Request, res: Response
 
   if (!returnRecord) {
     res.status(404).json({ success: false, error: "Return record not found" });
+    return;
+  }
+
+  if (sellerId && !isAdmin && returnRecord.order?.sellerId !== sellerId) {
+    res.status(403).json({ success: false, error: "Unauthorized: return does not belong to your store" });
     return;
   }
 
@@ -226,10 +250,29 @@ export const bookReversePickup = asyncHandler(async (req: Request, res: Response
  * Action Non-Delivery Report (Reattempt, Update Address, or RTO)
  */
 export const resolveNdr = asyncHandler(async (req: Request, res: Response) => {
+  const sellerId = req.seller?.id;
+  const isAdmin = Boolean(req.admin?.id);
+
+  if (!sellerId && !isAdmin) {
+    res.status(401).json({ success: false, error: "Seller or admin authentication required" });
+    return;
+  }
+
   const { orderId, action, reattemptDate, updatedAddress, updatedPhone, remarks } = req.body;
 
   if (!orderId || !action) {
     res.status(400).json({ success: false, error: "orderId and action are required" });
+    return;
+  }
+
+  const orderWhere: any = { OR: [{ orderNumber: orderId }, { id: orderId }] };
+  if (sellerId && !isAdmin) {
+    orderWhere.sellerId = sellerId;
+  }
+
+  const order = await prisma.order.findFirst({ where: orderWhere });
+  if (!order) {
+    res.status(404).json({ success: false, error: "Order not found or not owned by seller" });
     return;
   }
 
@@ -238,11 +281,6 @@ export const resolveNdr = asyncHandler(async (req: Request, res: Response) => {
     updatedAddress,
     updatedPhone,
     remarks,
-  });
-
-  // Find and update local order notification if needed
-  const order = await prisma.order.findFirst({
-    where: { OR: [{ orderNumber: orderId }, { id: orderId }] },
   });
 
   if (order && order.sellerId) {
@@ -297,18 +335,23 @@ export const getShipwayDashboardStats = asyncHandler(async (req: Request, res: R
   });
 });
 
-async function resolveOrderLabelData(idOrAwb: string) {
+async function resolveOrderLabelData(idOrAwb: string, sellerId?: string, isAdmin?: boolean) {
   const cleanId = idOrAwb.replace(/^#/, "").trim();
 
+  const whereClause: any = {
+    OR: [
+      { id: cleanId },
+      { orderNumber: cleanId },
+      { orderNumber: `#${cleanId}` },
+      { trackingNumber: cleanId },
+    ],
+  };
+  if (sellerId && !isAdmin) {
+    whereClause.sellerId = sellerId;
+  }
+
   const order = await prisma.order.findFirst({
-    where: {
-      OR: [
-        { id: cleanId },
-        { orderNumber: cleanId },
-        { orderNumber: `#${cleanId}` },
-        { trackingNumber: cleanId },
-      ],
-    },
+    where: whereClause,
     include: {
       items: { include: { product: true } },
       seller: { include: { onboarding: true } },
@@ -370,7 +413,10 @@ async function resolveOrderLabelData(idOrAwb: string) {
  */
 export const getShippingLabel = asyncHandler(async (req: Request, res: Response) => {
   const { id } = req.params;
-  const labelData = await resolveOrderLabelData(id);
+  const sellerId = req.seller?.id;
+  const isAdmin = Boolean(req.admin?.id);
+
+  const labelData = await resolveOrderLabelData(id, sellerId, isAdmin);
 
   if (!labelData) {
     res.status(404).json({
@@ -389,7 +435,10 @@ export const getShippingLabel = asyncHandler(async (req: Request, res: Response)
  */
 export const printShippingLabel = asyncHandler(async (req: Request, res: Response) => {
   const { id } = req.params;
-  const data = await resolveOrderLabelData(id);
+  const sellerId = req.seller?.id;
+  const isAdmin = Boolean(req.admin?.id);
+
+  const data = await resolveOrderLabelData(id, sellerId, isAdmin);
 
   if (!data || !data.labelUrl) {
     res.status(404).send(`
@@ -414,6 +463,14 @@ export const printShippingLabel = asyncHandler(async (req: Request, res: Respons
  * POST /api/shipway/push-order
  */
 export const pushOrder = asyncHandler(async (req: Request, res: Response) => {
+  const sellerId = req.seller?.id;
+  const isAdmin = Boolean(req.admin?.id);
+
+  if (!sellerId && !isAdmin) {
+    res.status(401).json({ success: false, error: "Seller or admin authentication required" });
+    return;
+  }
+
   const { order_id, carrier_name, awb_number, customer_name, customer_email, customer_phone, delivery_address, city, state, pincode, total_amount } = req.body;
 
   if (!order_id) {
@@ -461,25 +518,60 @@ export const getShipmentDetails = asyncHandler(async (req: Request, res: Respons
     return;
   }
 
+  const cleanId = String(orderId).replace(/^#/, "").trim();
+
+  // Check if order exists in DB
+  const existingOrder = await prisma.order.findFirst({
+    where: {
+      OR: [{ orderNumber: cleanId }, { orderNumber: `#${cleanId}` }, { id: cleanId }, { trackingNumber: cleanId }],
+    },
+    select: { id: true, status: true, trackingNumber: true, courier: true, customerName: true },
+  });
+
+  // If order is still PENDING, do NOT mark as shipped!
+  // It MUST stay in PENDING so the seller can click 'Pack Order' in the dashboard!
+  if (existingOrder && existingOrder.status === OrderStatus.PENDING) {
+    res.status(200).json({
+      success: true,
+      status: "Success",
+      response: {
+        current_status: "Order Placed",
+        current_status_code: "PLCD",
+        carrier: existingOrder.courier || "Delhivery Express Air (0.5kg)",
+        customer_name: existingOrder.customerName || "Customer",
+        scans: [
+          {
+            status: "Order Placed by Customer",
+            location: "Cikka Mall Marketplace",
+            timestamp: new Date().toISOString(),
+            time: "Just Now",
+            remarks: "Order placed. Awaiting seller packaging and AWB generation from dashboard.",
+          },
+        ],
+      },
+    });
+    return;
+  }
+
   const result = await shipwayService.getOrderShipmentDetails(orderId as string);
 
-  // Sync live tracking status to the database order record
+  // Sync live tracking status to the database order record ONLY IF order has already been packed/shipped
   const liveAwb = result?.response?.awbno;
   const liveCarrier = result?.response?.carrier;
   const liveStatusCode = result?.response?.current_status_code;
   const mappedStatus = liveStatusCode ? mapShipwayToPrismaStatus(liveStatusCode) : null;
 
-  if (mappedStatus || (liveAwb && !liveAwb.startsWith("AWB-") && !liveAwb.startsWith("R-SW"))) {
-    prisma.order.updateMany({
-      where: {
-        OR: [{ orderNumber: orderId as string }, { id: orderId as string }],
-      },
-      data: {
-        ...(liveAwb && { trackingNumber: liveAwb }),
-        ...(liveCarrier && { courier: liveCarrier }),
-        ...(mappedStatus && { status: mappedStatus }),
-      },
-    }).catch((e) => console.warn(`[Order Tracking Sync Notice]: ${e.message}`));
+  if (existingOrder && existingOrder.status !== OrderStatus.PENDING) {
+    if (mappedStatus || (liveAwb && !liveAwb.startsWith("AWB-") && !liveAwb.startsWith("R-SW"))) {
+      prisma.order.update({
+        where: { id: existingOrder.id },
+        data: {
+          ...(liveAwb && { trackingNumber: liveAwb }),
+          ...(liveCarrier && { courier: liveCarrier }),
+          ...(mappedStatus && { status: mappedStatus }),
+        },
+      }).catch((e) => console.warn(`[Order Tracking Sync Notice]: ${e.message}`));
+    }
   }
 
   res.status(200).json({

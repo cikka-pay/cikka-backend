@@ -3,6 +3,7 @@ import { asyncHandler } from "../utils/asyncHandler";
 import { prisma } from "../config/prisma";
 import { razorpayRouteService } from "../services/razorpayRoute.service";
 import { disburseSettlement } from "../services/settlement.service";
+import { config } from "../config/env";
 
 /**
  * POST /api/razorpay-route/webhook
@@ -17,12 +18,18 @@ export const handleRouteWebhook = asyncHandler(async (req: Request, res: Respons
   const signature = (req.headers["x-razorpay-signature"] as string) || "";
   const rawBody = (req as any).rawBody || JSON.stringify(req.body);
 
-  // If signature is supplied, verify it
-  if (signature && process.env.RAZORPAY_WEBHOOK_SECRET) {
+  const webhookSecret = process.env.RAZORPAY_WEBHOOK_SECRET || (config as any).razorpayWebhookSecret;
+
+  // Enforce webhook signature verification
+  if (config.isProduction || webhookSecret) {
+    if (!signature) {
+      res.status(401).json({ success: false, error: "Missing x-razorpay-signature header" });
+      return;
+    }
     const isValid = razorpayRouteService.verifyWebhookSignature(rawBody, signature);
     if (!isValid) {
       console.warn("[Razorpay Route Webhook] Invalid webhook signature received.");
-      res.status(400).json({ success: false, error: "Invalid webhook signature" });
+      res.status(401).json({ success: false, error: "Invalid webhook signature" });
       return;
     }
   }

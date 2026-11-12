@@ -155,6 +155,14 @@ export function optionalAnyAuth(req: Request, res: Response, next: NextFunction)
         next();
         return;
       } catch (_err2) {
+        try {
+          const payload = verifyAdminToken(token);
+          req.admin = { id: payload.id, email: payload.email, role: payload.role };
+          next();
+          return;
+        } catch (_adminErr) {
+          // Token invalid — proceed unauthenticated
+        }
         // Token invalid — proceed unauthenticated
       }
     }
@@ -223,6 +231,43 @@ export function requireAdminAuth(req: Request, res: Response, next: NextFunction
   }
 }
 
+// Verifies either seller JWT or admin JWT for seller operations
+export function requireSellerOrAdminAuth(req: Request, res: Response, next: NextFunction): void {
+  const header = req.headers.authorization || "";
+  const [scheme, token] = header.split(" ");
+
+  if (scheme !== "Bearer" || !token) {
+    res.status(401).json({ error: AUTH_ERRORS.MISSING_AUTH_HEADER });
+    return;
+  }
+
+  // 1. Try Seller Token
+  try {
+    const payload = verifySellerToken(token);
+    const sellerId = typeof payload.sub === "object" && payload.sub !== null
+      ? ((payload.sub as any).id || String(payload.sub))
+      : (payload.sub as string);
+
+    req.seller = {
+      id: sellerId,
+      teamMemberId: payload.teamMemberId as string | undefined,
+      role: (payload as any).role || "ADMIN",
+    };
+    next();
+    return;
+  } catch (_sellerErr) {}
+
+  // 2. Try Admin Token
+  try {
+    const payload = verifyAdminToken(token);
+    req.admin = { id: payload.id, email: payload.email, role: payload.role };
+    next();
+    return;
+  } catch (_adminErr) {}
+
+  res.status(401).json({ error: "Invalid or expired seller or admin token" });
+}
+
 /**
  * Restricts Cikka Mall product access to:
  * 1. Authenticated Sellers (for seller dashboard management)
@@ -256,7 +301,15 @@ export async function requirePanVerifiedUserOrSellerAuth(
       token.includes("bypass") ||
       token.includes("dev-local")
     ) {
-      req.user = { id: "dev-bypass-1" };
+      try {
+        const dbBypass = await prisma.user.findFirst({
+          where: { phone: { contains: "1111111111" } },
+          select: { id: true },
+        });
+        req.user = { id: dbBypass?.id || "975ada92-b982-4205-8c49-4f2723fce75a" };
+      } catch {
+        req.user = { id: "975ada92-b982-4205-8c49-4f2723fce75a" };
+      }
       next();
       return;
     }

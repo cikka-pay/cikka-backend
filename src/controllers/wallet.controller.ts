@@ -6,10 +6,14 @@
  */
 
 import { Request, Response } from "express";
+import { prisma } from "../config/prisma";
 import { asyncHandler } from "../utils/asyncHandler";
 import { walletService } from "../services/wallet.service";
 import { WalletTxType } from "../generated/prisma/client";
 import { z } from "zod";
+import { formatCustomerLedgerDescription } from "../utils/ledgerDescription";
+
+const APP_RATING_REWARD_POINTS = 150;
 
 // ── GET /api/wallet/balance ───────────────────────────────────────────────────
 /**
@@ -23,10 +27,19 @@ export const getWalletBalance = asyncHandler(async (req: Request, res: Response)
     return;
   }
 
-  const balance = await walletService.getBalance(userId);
+  const [balance, ratingRewardEntry] = await Promise.all([
+    walletService.getBalance(userId),
+    prisma.loyaltyLedger.findUnique({
+      where: { idempotencyKey: `APP_RATING:${userId}` },
+      select: { id: true },
+    }),
+  ]);
+  const appRatingClaimed = Boolean(ratingRewardEntry);
+
   res.status(200).json({
     success: true,
     userId,
+    app_rating_claimed: appRatingClaimed,
     balance: {
       ci_points: balance.ciPoints,
       cash_paise: balance.cashPaise,
@@ -35,6 +48,7 @@ export const getWalletBalance = asyncHandler(async (req: Request, res: Response)
       lifetime_redeemed_points: balance.lifetimeRedeemedPoints,
       lifetime_earned_rupees: balance.lifetimeEarnedPaise / 100,
       lifetime_redeemed_rupees: balance.lifetimeRedeemedPaise / 100,
+      app_rating_claimed: appRatingClaimed,
     },
   });
 });
@@ -70,7 +84,7 @@ export const getWalletLedger = asyncHandler(async (req: Request, res: Response) 
       balance_after_rupees: e.balanceAfterPaise / 100,
       order_id: e.orderId,
       redemption_id: e.redemptionId,
-      description: e.description,
+      description: formatCustomerLedgerDescription(e.description, e.txType),
       expires_at: e.expiresAt,
       created_at: e.createdAt,
     })),
@@ -189,6 +203,8 @@ const WithdrawSchema = z.object({
   type: z.enum(["cashback", "points"]),
   amount: z.number().positive(),
   description: z.string().optional(),
+  // Required: a client-generated key (e.g. a UUID per withdrawal attempt) so retries never debit twice
+  idempotency_key: z.string().min(8).max(128),
 });
 
 export const withdrawFunds = asyncHandler(async (req: Request, res: Response) => {
@@ -204,7 +220,19 @@ export const withdrawFunds = asyncHandler(async (req: Request, res: Response) =>
     return;
   }
 
-  const { type, amount, description } = parse.data;
+  const { type, amount, description, idempotency_key } = parse.data;
+
+  // Safeguard limits
+  if (type === "cashback" && amount > 25000) {
+    res.status(400).json({ success: false, error: "Maximum single withdrawal limit for cashback is ₹25,000" });
+    return;
+  }
+  if (type === "points" && amount > 100000) {
+    res.status(400).json({ success: false, error: "Maximum single withdrawal limit for CI Points is 100,000 pts" });
+    return;
+  }
+
+  const idem = `WITHDRAW:${userId}:${idempotency_key}`;
 
   try {
     if (type === "cashback") {
@@ -214,7 +242,8 @@ export const withdrawFunds = asyncHandler(async (req: Request, res: Response) =>
         amountPaise,
         WalletTxType.CASHBACK_REDEEM,
         {
-          description: description || `Withdrawal of ₹${amount.toFixed(2)} to Cikka Account`,
+          idempotencyKey: idem,
+          description: formatCustomerLedgerDescription(description, WalletTxType.CASHBACK_REDEEM) || "Cashback Withdrawal",
         }
       );
       res.status(200).json({
@@ -231,7 +260,8 @@ export const withdrawFunds = asyncHandler(async (req: Request, res: Response) =>
         points,
         WalletTxType.REDEEM_REWARD,
         {
-          description: description || `Withdrawal of ${points} CI Points to Cikka Account`,
+          idempotencyKey: idem,
+          description: formatCustomerLedgerDescription(description, WalletTxType.REDEEM_REWARD) || "CI Points Redemption",
         }
       );
       res.status(200).json({
@@ -248,4 +278,66 @@ export const withdrawFunds = asyncHandler(async (req: Request, res: Response) =>
       error: err.message || "Withdrawal failed",
     });
   }
+});
+
+const rateAppSchema = z.object({
+  rating: z.number().int().min(1).max(5).optional(),
+  feedback: z.string().trim().max(500).optional(),
+});
+
+// ── POST /api/wallet/rate-app-reward ─────────────────────────────────────────
+/**
+ * Idempotently credits 150 CI Points to the user's Rewards Wallet when they rate Cikka.
+ */
+export const rateAppReward = asyncHandler(async (req: Request, res: Response) => {
+  const userId = req.user?.id;
+  if (!userId) {
+    res.status(401).json({ success: false, error: "Authentication required" });
+    return;
+  }
+
+  const parsed = rateAppSchema.safeParse(req.body ?? {});
+  if (!parsed.success) {
+    res.status(400).json({
+      success: false,
+      error: parsed.error.issues[0]?.message || "Invalid rating payload",
+    });
+    return;
+  }
+
+  const rating = parsed.data.rating ?? 5;
+  const feedback = parsed.data.feedback;
+
+  const result = await walletService.creditPoints(
+    userId,
+    APP_RATING_REWARD_POINTS,
+    WalletTxType.EARN_ADMIN,
+    {
+      idempotencyKey: `APP_RATING:${userId}`,
+      description: "Rate Cikka & Earn 150 CI Points",
+      notificationMeta: {
+        category: "rewards",
+        title: "+150 CI Points Credited!",
+        body: "Thanks for rating Cikka — 150 CI Points have been credited to your Rewards Wallet.",
+        screen: "wallet",
+        params: { tab: "points" },
+        actionLabel: "Open Wallet",
+        extra: {
+          source: "APP_RATING",
+          rating,
+          ...(feedback ? { feedback } : {}),
+        },
+      },
+    }
+  );
+
+  res.status(200).json({
+    success: true,
+    alreadyClaimed: Boolean(result.duplicate),
+    app_rating_claimed: true,
+    pointsAwarded: result.duplicate ? 0 : APP_RATING_REWARD_POINTS,
+    balance_after_points: result.balanceAfterPoints,
+    balance_after_cash_rupees: result.balanceAfterPaise / 100,
+    ledgerEntryId: result.ledgerEntryId,
+  });
 });

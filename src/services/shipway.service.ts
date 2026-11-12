@@ -6,6 +6,8 @@ const SHIPWAY_SECONDARY_URL = "https://shipway.in/api";
 
 export interface ShipwayPushOrderDTO {
   order_id: string;
+  order_status?: string;
+  shipment_status?: string;
   carrier_id?: string | number;
   carrier_name?: string;
   awb_number?: string;
@@ -153,8 +155,46 @@ export const shipwayService = {
     awbNumber: string,
     includeHistory: boolean = true
   ): Promise<{ status: string; data?: any; tracking_details?: any }> {
-    const authHeaders = getAuthHeader();
     const cleanAwb = awbNumber.trim();
+
+    if (config.shipwayMockMode) {
+      return {
+        status: "success",
+        data: { awb: cleanAwb, status: "In Transit" },
+        tracking_details: {
+          shipment_status: "INT",
+          track_url: `https://app.shipway.com/t/${encodeURIComponent(cleanAwb)}`,
+          shipment_details: [
+            {
+              current_status: "In Transit",
+              courier_name: "Delhivery Express Air",
+              origin: "Gurugram Warehouse (122008)",
+              destination: "Customer Destination Hub",
+              consignee_name: "Cikka Mall Customer",
+            },
+          ],
+          tracking_history: [
+            {
+              date: new Date().toISOString(),
+              activity: "In Transit to Delivery Station",
+              location: "Mumbai Gateway",
+            },
+            {
+              date: new Date(Date.now() - 3600000).toISOString(),
+              activity: "Shipment Picked Up from Seller",
+              location: "Gurugram Hub",
+            },
+            {
+              date: new Date(Date.now() - 7200000).toISOString(),
+              activity: "Manifest Created & AWB Assigned",
+              location: "Gurugram Fulfillment Center",
+            },
+          ],
+        },
+      };
+    }
+
+    const authHeaders = getAuthHeader();
     const historyFlag = includeHistory ? "1" : "0";
 
     const baseUrls = [SHIPWAY_PRIMARY_URL, SHIPWAY_SECONDARY_URL];
@@ -203,6 +243,34 @@ export const shipwayService = {
     label_url?: string;
     data?: any;
   }> {
+    if (config.shipwayMockMode) {
+      const mockCarrier = (data.carrier_name || "Delhivery Express Air (0.5kg)").replace(/^Shipway\s+/i, "");
+      const carrierPrefix = mockCarrier.toLowerCase().includes("bluedart") ? "BD" : "DEL";
+      const randomDigits = Math.floor(10000000 + Math.random() * 90000000);
+      const mockAwb = data.awb_number || `${carrierPrefix}-LOCAL-${randomDigits}`;
+      const mockLabelUrl = `https://app.shipway.com/label/${encodeURIComponent(mockAwb)}`;
+
+      console.log(
+        `[Shipway Mock Mode] Intercepted pushOrderData for Order #${data.order_id}. Simulated Carrier: "${mockCarrier}", AWB: "${mockAwb}"`
+      );
+
+      return {
+        status: "success",
+        message: "Order allocated simulated carrier AWB (Local Dev Mode - Zero External API Calls)",
+        awb_number: mockAwb,
+        carrier_name: mockCarrier,
+        label_url: mockLabelUrl,
+        data: {
+          success: true,
+          order_id: data.order_id,
+          awb_number: mockAwb,
+          carrier_name: mockCarrier,
+          label_url: mockLabelUrl,
+          mock: true,
+        },
+      };
+    }
+
     const creds = getCredentials();
     const authHeaders = getAuthHeader();
     const nameParts = (data.customer_name || "Cikka Customer").trim().split(" ");
@@ -236,19 +304,21 @@ export const shipwayService = {
     const warehouseId = data.warehouse_id || "108162";
     const returnWarehouseId = data.return_warehouse_id || warehouseId;
 
-    // Official V2 Orders Payload - Pushes order into Shipway Dashboard with auto-allocated AWB and shipping workflow
+    const isPendingPlacement = (data.order_status || "").toLowerCase() === "pending" || (data.shipment_status || "").toLowerCase() === "placed";
+
+    // Official V2 Orders Payload - Pushes order into Shipway Dashboard
     const v2Payload: any = {
       order_id: data.order_id,
-      order_status: "In Transit",
-      shipment_status: "INT",
+      order_status: isPendingPlacement ? "Pending" : "In Transit",
+      shipment_status: isPendingPlacement ? "PLACED" : "INT",
       carrier_id: selectedCarrierInfo ? String(selectedCarrierInfo.carrier_id) : undefined,
       carrier_name: selectedCarrierInfo ? selectedCarrierInfo.courier_name : (data.carrier_name || "Bluedart"),
       warehouse_id: warehouseId,
       return_warehouse_id: returnWarehouseId,
-      auto_manifest: "1",
-      generate_label: "1",
-      assign_awb: "1",
-      auto_assign_awb: "1",
+      auto_manifest: isPendingPlacement ? "0" : "1",
+      generate_label: isPendingPlacement ? "0" : "1",
+      assign_awb: isPendingPlacement ? "0" : "1",
+      auto_assign_awb: isPendingPlacement ? "0" : "1",
       awb_number: data.awb_number || "",
       gst_no: "",
       seller_gst_no: "",
@@ -365,9 +435,52 @@ export const shipwayService = {
    * Tries GET /api/tracking first, falls back to POST /getOrderShipmentDetails
    */
   async getOrderShipmentDetails(orderIdOrAwb: string): Promise<{ status: string; response: ShipwayTrackingDetails }> {
+    const cleanId = orderIdOrAwb.trim();
+
+    if (config.shipwayMockMode) {
+      const now = new Date();
+      return {
+        status: "Success",
+        response: {
+          current_status: "In Transit",
+          current_status_code: "INT",
+          carrier: "Delhivery Express Air (0.5kg)",
+          from: "Gurugram Warehouse (122008)",
+          to: "Destination Hub (400001)",
+          customer_name: "Cikka Mall Customer",
+          pickup_date: now.toISOString().split("T")[0],
+          delivered_date: null,
+          awbno: cleanId,
+          track_url: `https://app.shipway.com/t/${encodeURIComponent(cleanId)}`,
+          scans: [
+            {
+              status: "Order Manifested & AWB Allocated",
+              location: "Seller Warehouse",
+              timestamp: new Date(now.getTime() - 7200000).toISOString(),
+              time: "10:00 AM",
+              remarks: "Order packed and registered with courier partner",
+            },
+            {
+              status: "Shipment Handed Over to Courier Partner",
+              location: "Origin Sorting Hub",
+              timestamp: new Date(now.getTime() - 3600000).toISOString(),
+              time: "11:30 AM",
+              remarks: "Parcel collected by logistics agent",
+            },
+            {
+              status: "In Transit",
+              location: "Primary Regional Hub",
+              timestamp: now.toISOString(),
+              time: "01:15 PM",
+              remarks: "In transit to destination delivery center",
+            },
+          ],
+        },
+      };
+    }
+
     const creds = getCredentials();
     const authHeaders = getAuthHeader();
-    const cleanId = orderIdOrAwb.trim();
 
     // If cleanId looks like an AWB number (starts with digits/letters length >= 8), try GET /api/tracking first
     if (/^[A-Za-z0-9]{8,20}$/.test(cleanId)) {
@@ -481,6 +594,14 @@ export const shipwayService = {
     callbackUrl: string,
     events: string = "INT,OOD,DEL,UND,RTO,RTD"
   ): Promise<{ status: string; message: string; status_code?: string }> {
+    if (config.shipwayMockMode) {
+      return {
+        status: "success",
+        message: "Webhooks configured successfully (Local Mock Mode)",
+        status_code: "200",
+      };
+    }
+
     const creds = getCredentials();
     const authHeaders = getAuthHeader();
     const payload = {
@@ -524,6 +645,13 @@ export const shipwayService = {
    * Endpoint: POST https://app.shipway.com/api/delete_webhooks
    */
   async deleteWebhooks(): Promise<{ status: string; message: string }> {
+    if (config.shipwayMockMode) {
+      return {
+        status: "success",
+        message: "Webhooks deleted successfully (Local Mock Mode)",
+      };
+    }
+
     const creds = getCredentials();
     const authHeaders = getAuthHeader();
     const payload = {
@@ -568,6 +696,50 @@ export const shipwayService = {
     paymentType: "prepaid" | "cod" = "prepaid",
     weight: number = 0.5
   ): Promise<{ status: string; rate_card?: any[]; error?: string }> {
+    if (config.shipwayMockMode) {
+      return {
+        status: "success",
+        rate_card: [
+          {
+            carrier_id: 1,
+            courier_name: "Delhivery Express Air (0.5kg)",
+            delivery_charge: 42.0,
+            rto_charge: 38.0,
+            charged_weight: weight,
+            zone: 2,
+            estimated_days: 2,
+          },
+          {
+            carrier_id: 2,
+            courier_name: "Bluedart Express (0.5kg)",
+            delivery_charge: 48.0,
+            rto_charge: 45.0,
+            charged_weight: weight,
+            zone: 2,
+            estimated_days: 2,
+          },
+          {
+            carrier_id: 3,
+            courier_name: "Delhivery Surface (0.5kg)",
+            delivery_charge: 32.0,
+            rto_charge: 30.0,
+            charged_weight: weight,
+            zone: 3,
+            estimated_days: 4,
+          },
+          {
+            carrier_id: 4,
+            courier_name: "Ekart Express (0.5kg)",
+            delivery_charge: 39.0,
+            rto_charge: 35.0,
+            charged_weight: weight,
+            zone: 1,
+            estimated_days: 1,
+          },
+        ],
+      };
+    }
+
     const authHeaders = getAuthHeader();
     try {
       const endpoint = `${SHIPWAY_PRIMARY_URL}/getshipwaycarrierrates?fromPincode=${encodeURIComponent(fromPincode)}&toPincode=${encodeURIComponent(toPincode)}&paymentType=${encodeURIComponent(paymentType)}&weight=${weight}`;
@@ -597,6 +769,18 @@ export const shipwayService = {
    * Endpoint: GET https://app.shipway.com/api/getcarrier
    */
   async getCarriers(): Promise<{ status: string; carriers?: any[]; error?: string }> {
+    if (config.shipwayMockMode) {
+      return {
+        status: "success",
+        carriers: [
+          { id: 1, name: "Delhivery Express Air" },
+          { id: 2, name: "Bluedart Express" },
+          { id: 3, name: "Delhivery Surface" },
+          { id: 4, name: "Ekart Express" },
+        ],
+      };
+    }
+
     const authHeaders = getAuthHeader();
     try {
       const endpoint = `${SHIPWAY_PRIMARY_URL}/getcarrier`;
@@ -624,6 +808,15 @@ export const shipwayService = {
    * Endpoint: GET https://app.shipway.com/api/getwarehouses
    */
   async getWarehouses(): Promise<{ status: string; warehouses?: any[]; error?: string }> {
+    if (config.shipwayMockMode) {
+      return {
+        status: "success",
+        warehouses: [
+          { id: "108162", name: "Cikka Gurugram Primary Fulfillment Center", pincode: "122008", city: "Gurugram" },
+        ],
+      };
+    }
+
     const authHeaders = getAuthHeader();
     try {
       const endpoint = `${SHIPWAY_PRIMARY_URL}/getwarehouses`;
@@ -658,6 +851,16 @@ export const shipwayService = {
     pincode: string,
     paymentType: "P" | "C" = "P"
   ): Promise<{ status: string; serviceability?: any[]; error?: string }> {
+    if (config.shipwayMockMode) {
+      return {
+        status: "success",
+        serviceability: [
+          { courier: "Delhivery", serviceable: true, cod: true, prepaid: true },
+          { courier: "Bluedart", serviceable: true, cod: true, prepaid: true },
+        ],
+      };
+    }
+
     const authHeaders = getAuthHeader();
     try {
       const endpoint = `${SHIPWAY_PRIMARY_URL}/pincodeserviceable?pincode=${encodeURIComponent(pincode)}&payment_type=${paymentType}`;
@@ -850,9 +1053,21 @@ export const shipwayService = {
     refundAmount: number;
     carrierName?: string;
   }): Promise<{ status: string; reverseAwb?: string; courier: string; labelUrl?: string; message: string }> {
+    const courier = data.carrierName || "Delhivery Reverse Express";
+
+    if (config.shipwayMockMode) {
+      const mockReverseAwb = `REV-LOCAL-${Math.floor(10000000 + Math.random() * 90000000)}`;
+      return {
+        status: "success",
+        reverseAwb: mockReverseAwb,
+        courier,
+        labelUrl: `https://app.shipway.com/label/${mockReverseAwb}`,
+        message: "Reverse pickup scheduled successfully (Local Mock Mode)",
+      };
+    }
+
     const creds = getCredentials();
     const authHeaders = getAuthHeader();
-    const courier = data.carrierName || "Delhivery Reverse Express";
 
     const payload = {
       order_id: `RET-${data.returnId.slice(0, 8)}`,
@@ -915,6 +1130,13 @@ export const shipwayService = {
     action: "reattempt" | "rto" | "update_address",
     details?: { reattemptDate?: string; updatedAddress?: string; updatedPhone?: string; remarks?: string }
   ): Promise<{ status: string; message: string }> {
+    if (config.shipwayMockMode) {
+      return {
+        status: "success",
+        message: `NDR instruction (${action}) simulated successfully (Local Mock Mode)`,
+      };
+    }
+
     const creds = getCredentials();
     const authHeaders = getAuthHeader();
 

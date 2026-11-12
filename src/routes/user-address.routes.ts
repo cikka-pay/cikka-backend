@@ -4,8 +4,11 @@ import {
   saveUserAddress,
   deleteUserAddress,
 } from "../controllers/user-address.controller";
+import { optionalUserAuth } from "../middleware/auth.middleware";
 
 const router = Router();
+
+router.use(optionalUserAuth);
 
 // GET all addresses / default address
 router.get("/", getUserAddress);

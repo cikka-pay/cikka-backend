@@ -1,5 +1,6 @@
 import { Router } from "express";
-import { requireSellerAuth } from "../middleware/auth.middleware";
+import { optionalUserAuth, requireSellerAuth } from "../middleware/auth.middleware";
+import adminRoutes from "./admin.routes";
 import authRoutes from "./auth.routes";
 import userAuthRoutes from "./user-auth.routes";
 import billpayRoutes from "./billpay.routes";
@@ -7,23 +8,27 @@ import billpayHistoryRoutes from "./billpayHistory.routes";
 import billpayWebhookRoutes from "./billpayWebhook.routes";
 import instantpayRoutes from "./instantpay.routes";
 import onboardingRoutes from "./onboarding.routes";
-import adminRoutes from "./admin.routes";
 
 import dashboardRoutes from "./dashboard.routes";
-import productsRoutes from "./products.routes";
-import ordersRoutes from "./orders.routes";
 import inventoryRoutes from "./inventory.routes";
-import settlementsRoutes from "./settlements.routes";
-import returnsRoutes from "./returns.routes";
 import notificationsRoutes from "./notifications.routes";
+import ordersRoutes from "./orders.routes";
+import productsRoutes from "./products.routes";
+import returnsRoutes from "./returns.routes";
 import settingsRoutes from "./settings.routes";
+import settlementsRoutes from "./settlements.routes";
 import teamRoutes from "./team.routes";
 
+import cardsRoutes from "./cards.routes";
 import paymentRoutes from "./payment.routes";
+import reviewsRoutes from "./reviews.routes";
 import rewardsRoutes from "./rewards.routes";
 import shipwayRoutes from "./shipway.routes";
+import whatsappRoutes from "./whatsapp.routes";
 import userAddressRoutes from "./user-address.routes";
-import cardsRoutes from "./cards.routes";
+import userNotificationRoutes from "./user-notification.routes";
+import userOrdersRoutes from "./user-orders.routes";
+import userVoucherRoutes from "./user-voucher.routes";
 import walletRoutes from "./wallet.routes";
 
 import hubbleRoutes from "./hubble.routes";
@@ -53,6 +58,9 @@ router.use("/customer-auth", userAuthRoutes); // Backward compatibility alias
 router.use("/user/address", userAddressRoutes);
 router.use("/user/addresses", userAddressRoutes);
 router.use("/user-address", userAddressRoutes);
+router.use("/user/orders", userOrdersRoutes);
+router.use("/user-orders", userOrdersRoutes);
+router.use("/reviews", reviewsRoutes);
 router.use("/cards", cardsRoutes);
 router.use("/user/cards", cardsRoutes);
 // BBPS bill pay via Setu pre-built screens (spec 002): /api/bbps/session, /api/bbps/history[/:id]
@@ -66,8 +74,13 @@ router.use("/pan", instantpayRoutes);
 router.use("/hubble", hubbleRoutes);
 router.use("/hubble.sso", hubbleRoutes);
 
-// User Wallet — CI Points & cashback double-entry ledger
+// User Wallet & In-App Notifications
 router.use("/wallet", walletRoutes);
+router.use("/user/vouchers", userVoucherRoutes);
+router.use("/user-vouchers", userVoucherRoutes);
+router.use("/vouchers", userVoucherRoutes);
+router.use("/user-notifications", userNotificationRoutes);
+router.use("/user/notifications", userNotificationRoutes);
 
 // Razorpay Route Split & Settlement Routes (/api/razorpay-route/*)
 router.use("/razorpay-route", razorpayRouteRoutes);
@@ -81,21 +94,25 @@ router.use("/rewards", rewardsRoutes);
 
 // Shipway Experience Endpoints (/api/shipway/...)
 router.use("/shipway", shipwayRoutes);
+// Meta WhatsApp Cloud API Webhooks (/api/whatsapp/webhook, /api/webhooks/whatsapp)
+router.use("/whatsapp", whatsappRoutes);
+router.use("/webhooks/whatsapp", whatsappRoutes);
 
 
-// Public Return Request Endpoint (Customer App / Postman)
-import { createReturn, createExchange } from "../controllers/returns.controller";
-router.post("/returns/request", createReturn);
-router.post("/returns/create", createReturn);
-router.post("/returns/exchange", createExchange);
+// Return Request Endpoint (Customer App / Postman)
+import { createExchange, createReturn } from "../controllers/returns.controller";
+router.post("/returns/request", optionalUserAuth, createReturn);
+router.post("/returns/create", optionalUserAuth, createReturn);
+router.post("/returns/exchange", optionalUserAuth, createExchange);
 
 // Public Cikka Mall Catalog (Product exploration & single-loop exchanges)
-import { listMallCatalogProducts } from "../controllers/products.controller";
 import { createOrder } from "../controllers/orders.controller";
+import { listMallCatalogProducts, getMallQuote } from "../controllers/products.controller";
 router.get("/mall/products", listMallCatalogProducts);
 router.get("/products/mall", listMallCatalogProducts);
-// Public order simulation endpoint (customer app / Postman testing)
-router.post("/orders/create", createOrder);
+router.post("/mall/quote", optionalUserAuth, getMallQuote);
+// Order simulation endpoint (customer app / Postman testing)
+router.post("/orders/create", optionalUserAuth, createOrder);
 
 
 
