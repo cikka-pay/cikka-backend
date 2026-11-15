@@ -1,0 +1,12 @@
+# Manual image build: gcloud builds submit --config infra/gcp/cloudbuild.yaml \
+#   --substitutions=_TAG=<tag> --service-account=projects/cikka-application/serviceAccounts/cloud-builder@cikka-application.iam.gserviceaccount.com
+# (CI builds in GitHub Actions instead; see .github/workflows/deploy-gcp.yml.)
+steps:
+  - name: gcr.io/cloud-builders/docker
+    args: ["build", "-t", "${_IMAGE}:${_TAG}", "."]
+images: ["${_IMAGE}:${_TAG}"]
+substitutions:
+  _IMAGE: asia-south1-docker.pkg.dev/cikka-application/cikka/cikka-backend
+  _TAG: manual
+options:
+  logging: CLOUD_LOGGING_ONLY

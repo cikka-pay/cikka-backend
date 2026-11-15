@@ -71,10 +71,10 @@ export const config = {
     (process.env.RAILWAY_PUBLIC_DOMAIN ? `https://${process.env.RAILWAY_PUBLIC_DOMAIN}` : "")
   ).replace(/\/+$/, ""),
 
-  // File storage provider: "railway" (Railway Bucket, production) or "local" (dev / tests).
+  // File storage provider: "gcs" (Google Cloud Storage), "railway" (S3-compatible bucket) or "local" (dev / tests).
   // Defaults to "railway" once bucket credentials are present. "s3" is accepted as an alias.
   storageProvider: (() => {
-    const p = (process.env.STORAGE_PROVIDER || (process.env.S3_BUCKET || process.env.BUCKET ? "railway" : "local")).toLowerCase();
+    const p = (process.env.STORAGE_PROVIDER || (process.env.GCS_BUCKET_NAME ? "gcs" : process.env.S3_BUCKET || process.env.BUCKET ? "railway" : "local")).toLowerCase();
     return p === "s3" ? "railway" : p;
   })(),
 
