@@ -12,6 +12,12 @@ import {
  *  - POST {base}/api/v2/ethereal/link (X-PARTNER-ID + Bearer token) → { link, sessionId }
  *
  * Every failure throws SetuBillpayError. There is deliberately no stub fallback here.
+ *
+ * Setu only accepts requests from Indian IPs (403 with no traceId otherwise). Production
+ * runs on Cloud Run in asia-south1 (Mumbai), so calls go out directly.
+ *
+ * Non-2xx responses are logged (status, first 500 chars of the body, `server` and request-id
+ * headers). Request bodies, the secret and tokens are never logged.
  */
 
 export interface SetuBillpayClientOptions {
@@ -21,6 +27,13 @@ export interface SetuBillpayClientOptions {
   partnerId?: string;
   orgId?: string;
 }
+
+type ResolvedOptions = Required<SetuBillpayClientOptions>;
+
+type SetuStep = "token" | "link";
+
+/** Max chars of a Setu error body we log. */
+const LOG_BODY_LIMIT = 500;
 
 /** Refresh the token this long before Setu says it expires. */
 const TOKEN_REFRESH_MARGIN_MS = 60_000;
@@ -35,18 +48,52 @@ interface CachedToken {
 
 type JsonObject = Record<string, any>;
 
-async function readJson(res: Response): Promise<JsonObject | null> {
+async function readBody(res: Response): Promise<{ text: string; json: JsonObject | null }> {
+  let text = "";
   try {
-    const text = await res.text();
-    if (!text) return null;
-    const parsed = JSON.parse(text);
-    return parsed && typeof parsed === "object" ? parsed : null;
+    text = await res.text();
   } catch {
-    return null;
+    return { text: "", json: null };
+  }
+  if (!text) return { text, json: null };
+  try {
+    const parsed = JSON.parse(text);
+    return { text, json: parsed && typeof parsed === "object" ? parsed : null };
+  } catch {
+    return { text, json: null };
   }
 }
 
-function errorFromResponse(res: Response, body: JsonObject | null, fallbackMessage: string): SetuBillpayError {
+function logSetuHttpError(step: SetuStep, res: Response, text: string): void {
+  const snippet = text
+    .slice(0, LOG_BODY_LIMIT)
+    // Defensive: an error body should never carry a token, but never log one if it does.
+    .replace(/("(?:token|access_token|secret)"\s*:\s*")[^"]*"/gi, '$1<redacted>"');
+  console.error(`[Setu BillPay] ${step} request failed: HTTP ${res.status}`, {
+    status: res.status,
+    server: res.headers.get("server") ?? undefined,
+    requestId: res.headers.get("x-amzn-requestid") ?? res.headers.get("x-request-id") ?? undefined,
+    body: snippet,
+  });
+}
+
+function describeNetworkError(e: any): string {
+  // fetch wraps the useful bit (e.g. ENOTFOUND, ECONNRESET) a few causes deep.
+  const parts = [e?.message || "network error"];
+  let cause = e?.cause;
+  for (let depth = 0; cause && depth < 4; depth++, cause = cause.cause) {
+    const code = typeof cause.code === "string" ? cause.code : undefined;
+    if (code || cause.message) parts.push(`(${[code, cause.message].filter(Boolean).join(": ")})`);
+  }
+  return parts.join(" ");
+}
+
+function errorFromResponse(
+  step: SetuStep,
+  res: Response,
+  body: JsonObject | null,
+  fallbackMessage: string
+): SetuBillpayError {
   const err = body?.error;
   return new SetuBillpayError(
     (typeof err?.message === "string" && err.message) || fallbackMessage,
@@ -54,6 +101,7 @@ function errorFromResponse(res: Response, body: JsonObject | null, fallbackMessa
       status: res.status,
       code: (typeof err?.code === "string" && err.code) || `HTTP_${res.status}`,
       traceId: typeof body?.traceId === "string" ? body.traceId : undefined,
+      step,
     }
   );
 }
@@ -71,7 +119,7 @@ export function createSetuBillpayClient(
   let cached: CachedToken | null = null;
   let inflight: Promise<string> | null = null;
 
-  function requireOptions(): Required<SetuBillpayClientOptions> {
+  function requireOptions(): ResolvedOptions {
     const opts = getOptions();
     const missing = (["clientId", "secret", "partnerId", "orgId"] as const).filter((k) => !opts[k]);
     if (missing.length > 0) {
@@ -80,10 +128,10 @@ export function createSetuBillpayClient(
         code: "CONFIG_MISSING",
       });
     }
-    return { ...opts, baseUrl: opts.baseUrl.replace(/\/+$/, "") } as Required<SetuBillpayClientOptions>;
+    return { ...opts, baseUrl: opts.baseUrl.replace(/\/+$/, "") } as ResolvedOptions;
   }
 
-  async function post(url: string, headers: Record<string, string>, body: unknown): Promise<Response> {
+  async function post(step: SetuStep, url: string, headers: Record<string, string>, body: unknown): Promise<Response> {
     try {
       return await fetch(url, {
         method: "POST",
@@ -91,18 +139,23 @@ export function createSetuBillpayClient(
         body: JSON.stringify(body),
       });
     } catch (e: any) {
-      throw new SetuBillpayError(`Could not reach Setu BillPay: ${e?.message || "network error"}`, {
+      throw new SetuBillpayError(`Could not reach Setu BillPay: ${describeNetworkError(e)}`, {
         status: 0,
         code: "NETWORK_ERROR",
+        step,
       });
     }
   }
 
-  async function fetchToken(opts: Required<SetuBillpayClientOptions>): Promise<string> {
-    const res = await post(`${opts.baseUrl}/api/v2/auth/token`, {}, { clientID: opts.clientId, secret: opts.secret });
-    const body = await readJson(res);
+  async function fetchToken(opts: ResolvedOptions): Promise<string> {
+    const res = await post("token", `${opts.baseUrl}/api/v2/auth/token`, {}, {
+      clientID: opts.clientId,
+      secret: opts.secret,
+    });
+    const { text, json: body } = await readBody(res);
     if (!res.ok || body?.success === false) {
-      throw errorFromResponse(res, body, "Setu BillPay token request failed");
+      logSetuHttpError("token", res, text);
+      throw errorFromResponse("token", res, body, "Setu BillPay token request failed");
     }
     const token = body?.token;
     if (typeof token !== "string" || !token) {
@@ -110,6 +163,7 @@ export function createSetuBillpayClient(
         status: res.status,
         code: "INVALID_TOKEN_RESPONSE",
         traceId: body?.traceId,
+        step: "token",
       });
     }
     const expiresIn = Number(body?.expiresIn);
@@ -120,7 +174,7 @@ export function createSetuBillpayClient(
     return token;
   }
 
-  async function getToken(opts: Required<SetuBillpayClientOptions>, forceRefresh = false): Promise<string> {
+  async function getToken(opts: ResolvedOptions, forceRefresh = false): Promise<string> {
     if (!forceRefresh && cached && now() < cached.refreshAt) return cached.token;
     if (!inflight) {
       inflight = fetchToken(opts).finally(() => {
@@ -151,6 +205,7 @@ export function createSetuBillpayClient(
 
       const send = async (token: string) =>
         post(
+          "link",
           `${opts.baseUrl}/api/v2/ethereal/link`,
           { "X-PARTNER-ID": opts.partnerId, Authorization: `Bearer ${token}` },
           payload
@@ -159,19 +214,22 @@ export function createSetuBillpayClient(
       let res = await send(await getToken(opts));
       if (res.status === 401) {
         // Token revoked/expired early: drop it and retry exactly once with a fresh one.
+        logSetuHttpError("link", res, (await readBody(res)).text);
         cached = null;
         res = await send(await getToken(opts, true));
       }
 
-      const body = await readJson(res);
+      const { text, json: body } = await readBody(res);
       if (!res.ok || body?.success === false) {
-        throw errorFromResponse(res, body, "Setu BillPay create link failed");
+        logSetuHttpError("link", res, text);
+        throw errorFromResponse("link", res, body, "Setu BillPay create link failed");
       }
       if (typeof body?.link !== "string" || !body.link || body?.sessionId == null) {
         throw new SetuBillpayError("Setu BillPay create link response had no link", {
           status: res.status,
           code: "INVALID_LINK_RESPONSE",
           traceId: body?.traceId,
+          step: "link",
         });
       }
 

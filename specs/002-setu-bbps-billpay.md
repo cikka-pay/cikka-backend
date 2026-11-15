@@ -91,6 +91,13 @@ overwrite a final status with an earlier event.
 Stub mode (`EXTERNAL_SERVICES_MODE=stub`) returns a fake link; real mode **never** falls
 back to stub data on error — it returns 502.
 
+Setu's APIs only accept requests from Indian IPs and answer anything else with **403 and no
+traceId**. Production runs on Cloud Run in `asia-south1` (Mumbai), so calls go out directly.
+
+Every non-2xx from Setu is logged with status, the first 500 chars of the body, and the
+`server` and `x-amzn-requestid`/`x-request-id` headers (never the request body or token).
+Check config + reachability with `npm run setu:smoke`.
+
 ## Implementation plan
 
 1. **Setu client** `src/external/setu/billpay.client.ts` (+ stub): token fetch with cache,

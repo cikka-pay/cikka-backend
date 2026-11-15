@@ -42,12 +42,15 @@ export class SetuBillpayError extends Error {
   readonly status: number;
   readonly code: string;
   readonly traceId?: string;
+  /** Which call failed: "token" or "link". Unset for config errors. */
+  readonly step?: "token" | "link";
 
-  constructor(message: string, opts: { status: number; code: string; traceId?: string }) {
+  constructor(message: string, opts: { status: number; code: string; traceId?: string; step?: "token" | "link" }) {
     super(message);
     this.name = "SetuBillpayError";
     this.status = opts.status;
     this.code = opts.code;
     this.traceId = opts.traceId;
+    this.step = opts.step;
   }
 }
