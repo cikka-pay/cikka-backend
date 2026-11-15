@@ -1,0 +1,48 @@
+name: Deploy to GCP (Cloud Run)
+
+# Builds the Dockerfile, pushes to Artifact Registry and rolls a new Cloud Run
+# revision. Only the image changes here: env vars, secrets, Cloud SQL binding,
+# scaling etc. live on the service (see infra/gcp/) and carry over between
+# revisions. Auth is keyless via Workload Identity Federation.
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: gcp-production
+  cancel-in-progress: false
+
+env:
+  PROJECT_ID: cikka-application
+  REGION: asia-south1
+  SERVICE: cikka-backend
+  IMAGE: asia-south1-docker.pkg.dev/cikka-application/cikka/cikka-backend
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: projects/348448179748/locations/global/workloadIdentityPools/github/providers/github-actions
+          service_account: github-deployer@cikka-application.iam.gserviceaccount.com
+
+      - uses: google-github-actions/setup-gcloud@v2
+
+      - name: Build and push image
+        run: |
+          gcloud auth configure-docker "$REGION-docker.pkg.dev" --quiet
+          docker build -t "$IMAGE:$GITHUB_SHA" .
+          docker push "$IMAGE:$GITHUB_SHA"
+
+      - name: Deploy new revision
+        run: |
+          gcloud run deploy "$SERVICE" \
+            --project "$PROJECT_ID" --region "$REGION" \
+            --image "$IMAGE:$GITHUB_SHA" --quiet

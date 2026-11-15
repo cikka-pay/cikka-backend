@@ -9,6 +9,7 @@ import { kybStub } from "./kyb/kyb.stub";
 import { kybReal } from "./kyb/kyb.real";
 import { storageStub } from "./storage/storage.stub";
 import { storageRailway } from "./storage/storage.railway";
+import { storageGcs } from "./storage/storage.gcs";
 import { setuBillpayReal } from "./setu/billpay.client";
 import { setuBillpayStub } from "./setu/billpay.stub";
 import { instantpayStub } from "./instantpay/instantpay.stub";
@@ -30,19 +31,20 @@ export const otpService: OtpService = mode === "real" ? otpReal : otpStub;
 export const kybService: KybService = mode === "real" ? kybReal : kybStub;
 
 // Storage is chosen independently of EXTERNAL_SERVICES_MODE (see config.storageProvider):
-// Railway Bucket in production, local disk for dev / tests.
+// GCS on GCP, an S3-compatible bucket ("railway"), or local disk for dev / tests.
 const storageProviders: Record<string, StorageService> = {
+  gcs: storageGcs,
   railway: storageRailway,
   local: storageStub,
 };
 const storageProvider = config.storageProvider;
 if (!storageProviders[storageProvider]) {
-  throw new Error(`Invalid STORAGE_PROVIDER="${storageProvider}". Must be "railway" or "local".`);
+  throw new Error(`Invalid STORAGE_PROVIDER="${storageProvider}". Must be "gcs", "railway" or "local".`);
 }
 if (storageProvider === "local" && config.isProduction) {
   console.warn(
     "[External Services] WARNING: STORAGE_PROVIDER=local in production — uploads are written to the " +
-      "container disk and lost on every redeploy. Connect a Railway Bucket (BUCKET, ACCESS_KEY_ID, ...)."
+      "container disk and lost on every redeploy. Set STORAGE_PROVIDER=gcs with GCS_BUCKET_NAME."
   );
 }
 export const storageService: StorageService = storageProviders[storageProvider];
