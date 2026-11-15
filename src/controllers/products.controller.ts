@@ -517,12 +517,18 @@ export const getMallQuote = asyncHandler(async (req: Request, res: Response) => 
 
   let cashbackBalance: number | null = null;
   if (authUserId) {
-    const walletBal = await walletService.getBalance(authUserId);
-    cashbackBalance = Math.max(0, Number(walletBal.cashRupees.toFixed(2)));
+    try {
+      const walletBal = await walletService.getBalance(authUserId);
+      cashbackBalance = Math.max(0, Number(walletBal.cashRupees.toFixed(2)));
+    } catch {
+      cashbackBalance = typeof req.body?.availableCashback === 'number' ? Math.max(0, Number(req.body.availableCashback)) : 0;
+    }
+  } else if (typeof req.body?.availableCashback === 'number') {
+    cashbackBalance = Math.max(0, Number(req.body.availableCashback));
   }
 
-  const maxCashbackUsable = cashbackBalance !== null ? Math.floor(cashbackBalance) : 0;
-  const cashbackDiscount = useCashback ? Math.min(Math.round(subtotal * 0.2), 200, maxCashbackUsable) : 0;
+  const maxCashbackUsable = cashbackBalance !== null ? Math.min(Math.floor(cashbackBalance), 200) : 0;
+  const cashbackDiscount = useCashback ? Math.min(Math.round(subtotal * 0.2), maxCashbackUsable) : 0;
   const couponDiscount = 0;
   const ciPointsDiscount = 0;
   const totalDiscount = cashbackDiscount + couponDiscount + ciPointsDiscount;
