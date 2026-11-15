@@ -52,6 +52,12 @@ export const restock = asyncHandler(async (req: Request, res: Response) => {
   const { productId, variantId, quantity } = req.body;
   const sellerId = req.seller!.id;
 
+  const numQty = Number(quantity);
+  if (!numQty || !Number.isInteger(numQty) || numQty <= 0) {
+    res.status(400).json({ error: "Invalid restock quantity. Must be a positive integer." });
+    return;
+  }
+
   const product = await prisma.product.findFirst({
     where: { id: productId, sellerId },
   });
@@ -72,13 +78,13 @@ export const restock = asyncHandler(async (req: Request, res: Response) => {
 
     const updated = await prisma.productVariant.update({
       where: { id: variantId },
-      data: { stockQty: { increment: quantity } },
+      data: { stockQty: { increment: numQty } },
     });
     res.json({ stockQty: updated.stockQty });
   } else {
     const updated = await prisma.product.update({
       where: { id: productId },
-      data: { stockQty: { increment: quantity } },
+      data: { stockQty: { increment: numQty } },
     });
     res.json({ stockQty: updated.stockQty });
   }

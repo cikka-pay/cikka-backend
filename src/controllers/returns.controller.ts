@@ -1,10 +1,11 @@
 import { Request, Response } from "express";
 import { asyncHandler } from "../utils/asyncHandler";
 import { prisma } from "../config/prisma";
-import { Prisma, ReturnStatus, NotificationType } from "../generated/prisma/client";
+import { Prisma, ReturnStatus, NotificationType, WalletTxType } from "../generated/prisma/client";
 import { shipwayService } from "../services/shipway.service";
 import { razorpayRouteService } from "../services/razorpayRoute.service";
 import { razorpayService } from "../services/razorpay.service";
+import { walletService } from "../services/wallet.service";
 
 export const listReturns = asyncHandler(async (req: Request, res: Response) => {
   const sellerId = req.seller!.id;
@@ -130,14 +131,25 @@ export const updateReturnStatus = asyncHandler(async (req: Request, res: Respons
   if (status === "APPROVED" || status === "REFUNDED") {
     try {
       // Find the pending settlement associated with this seller and order
-      const settlement = await prisma.settlement.findFirst({
+      const settlement = (await prisma.settlement.findFirst({
+        where: {
+          sellerId,
+          transferStatus: "ON_HOLD",
+          razorpayTransferId: { not: null },
+          OR: [
+            { orderId: ret.order.id },
+            { orderNumber: ret.order.orderNumber },
+          ],
+        },
+        orderBy: { createdAt: "desc" },
+      })) || (await prisma.settlement.findFirst({
         where: {
           sellerId,
           transferStatus: "ON_HOLD",
           razorpayTransferId: { not: null },
         },
         orderBy: { createdAt: "desc" },
-      });
+      }));
 
       if (settlement && settlement.razorpayTransferId) {
         console.log(`[Return Clawback] Initiating reversal for transfer ${settlement.razorpayTransferId}`);
@@ -176,15 +188,44 @@ export const updateReturnStatus = asyncHandler(async (req: Request, res: Respons
       }
 
       // If status is REFUNDED, issue customer card/points refund
-      if (status === "REFUNDED" && settlement?.razorpayPaymentId) {
-        customerRefundResult = await razorpayService.refundPayment(
-          settlement.razorpayPaymentId,
-          Math.round(Number(ret.refundAmount) * 100),
-          {
-            returnId: ret.id,
-            orderNumber: ret.order.orderNumber,
+      if (status === "REFUNDED") {
+        if (settlement?.razorpayPaymentId) {
+          customerRefundResult = await razorpayService.refundPayment(
+            settlement.razorpayPaymentId,
+            Math.round(Number(ret.refundAmount) * 100),
+            {
+              returnId: ret.id,
+              orderNumber: ret.order.orderNumber,
+            }
+          );
+        }
+
+        // Rewards Store CI Points Restoration: If this order was redeemed with points, refund them
+        if (
+          (ret.order.orderNumber.startsWith("ORD-RW-") || ret.order.customerName?.includes("RDM-")) &&
+          ret.order.userId
+        ) {
+          try {
+            const burnedPoints = Number(ret.order.totalAmount);
+            if (burnedPoints > 0) {
+              await walletService.creditPoints(
+                ret.order.userId,
+                burnedPoints,
+                WalletTxType.EARN_ADMIN,
+                {
+                  description: "Order Returned • Points Restored",
+                  idempotencyKey: `RETURN_REWARD_RESTORE:${ret.id}`,
+                  orderId: ret.order.orderNumber,
+                }
+              );
+              console.log(
+                `[Reward Store Return] Restored ${burnedPoints} CI Points to user ${ret.order.userId} for Return #${ret.id}`
+              );
+            }
+          } catch (restoreErr: any) {
+            console.warn("[Reward Points Restoration Warning]:", restoreErr.message);
           }
-        );
+        }
       }
     } catch (clawbackErr: any) {
       console.warn("[Return Clawback/Refund Error]:", clawbackErr.message || clawbackErr);
@@ -207,27 +248,39 @@ export const updateReturnStatus = asyncHandler(async (req: Request, res: Respons
 
 export const createReturn = asyncHandler(async (req: Request, res: Response) => {
   const { orderId, orderNumber, productId, reason, refundAmount } = req.body;
+  const authUserId = (req as any).user?.id;
+  const authUserPhone = (req as any).user?.phone;
+
+  if (!orderId && !orderNumber) {
+    res.status(400).json({ error: "orderId or orderNumber is required to initiate a return" });
+    return;
+  }
 
   let order = null;
   if (orderId) {
     order = await prisma.order.findUnique({
       where: { id: orderId },
-      include: { items: { include: { product: true } }, seller: { include: { onboarding: true } } },
+      include: { items: { include: { product: true } }, seller: { include: { onboarding: true } }, user: true },
     });
   } else if (orderNumber) {
     order = await prisma.order.findUnique({
       where: { orderNumber },
-      include: { items: { include: { product: true } }, seller: { include: { onboarding: true } } },
-    });
-  } else {
-    order = await prisma.order.findFirst({
-      orderBy: { createdAt: "desc" },
-      include: { items: { include: { product: true } }, seller: { include: { onboarding: true } } },
+      include: { items: { include: { product: true } }, seller: { include: { onboarding: true } }, user: true },
     });
   }
 
   if (!order) {
     res.status(404).json({ error: "Order not found to initiate return" });
+    return;
+  }
+
+  // Authorization check: User can only return their own order
+  if (authUserId && order.userId && order.userId !== authUserId) {
+    res.status(403).json({ error: "Unauthorized: You can only return your own orders" });
+    return;
+  }
+  if (authUserPhone && order.user?.phone && order.user.phone !== authUserPhone && (!order.userId || order.userId !== authUserId)) {
+    res.status(403).json({ error: "Unauthorized: You can only return your own orders" });
     return;
   }
 
@@ -240,8 +293,13 @@ export const createReturn = asyncHandler(async (req: Request, res: Response) => 
     prodId = anyProd?.id;
   }
 
-  const effectiveRefundAmount =
-    refundAmount !== undefined ? Number(refundAmount) : Number(order.totalAmount);
+  const maxAllowed = Number(order.totalAmount);
+  const requestedAmount = refundAmount !== undefined ? Number(refundAmount) : maxAllowed;
+  if (isNaN(requestedAmount) || requestedAmount <= 0) {
+    res.status(400).json({ error: "Invalid refund amount requested" });
+    return;
+  }
+  const effectiveRefundAmount = Math.min(requestedAmount, maxAllowed);
 
   // =========================================================================
   // SCENARIO 1: ORDER IS IN-TRANSIT (Cancellation / Return before delivery)
@@ -397,9 +455,16 @@ export const createReturn = asyncHandler(async (req: Request, res: Response) => 
  */
 export const createExchange = asyncHandler(async (req: Request, res: Response) => {
   const { orderId, orderNumber, productId, newProductId, newVariantId, reason } = req.body;
+  const authUserId = (req as any).user?.id;
+  const authUserPhone = (req as any).user?.phone;
 
   if (!newProductId) {
     res.status(400).json({ error: "newProductId is required to process an exchange" });
+    return;
+  }
+
+  if (!orderId && !orderNumber) {
+    res.status(400).json({ error: "orderId or orderNumber is required to process an exchange" });
     return;
   }
 
@@ -407,22 +472,27 @@ export const createExchange = asyncHandler(async (req: Request, res: Response) =
   if (orderId) {
     order = await prisma.order.findUnique({
       where: { id: orderId },
-      include: { items: { include: { product: true } }, seller: { include: { onboarding: true } } },
+      include: { items: { include: { product: true } }, seller: { include: { onboarding: true } }, user: true },
     });
   } else if (orderNumber) {
     order = await prisma.order.findUnique({
       where: { orderNumber },
-      include: { items: { include: { product: true } }, seller: { include: { onboarding: true } } },
-    });
-  } else {
-    order = await prisma.order.findFirst({
-      orderBy: { createdAt: "desc" },
-      include: { items: { include: { product: true } }, seller: { include: { onboarding: true } } },
+      include: { items: { include: { product: true } }, seller: { include: { onboarding: true } }, user: true },
     });
   }
 
   if (!order) {
     res.status(404).json({ error: "Original order not found for exchange" });
+    return;
+  }
+
+  // Authorization check: User can only exchange their own order
+  if (authUserId && order.userId && order.userId !== authUserId) {
+    res.status(403).json({ error: "Unauthorized: You can only exchange your own orders" });
+    return;
+  }
+  if (authUserPhone && order.user?.phone && order.user.phone !== authUserPhone && (!order.userId || order.userId !== authUserId)) {
+    res.status(403).json({ error: "Unauthorized: You can only exchange your own orders" });
     return;
   }
 

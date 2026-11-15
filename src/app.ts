@@ -4,6 +4,7 @@ import express from "express";
 import cors from "cors";
 import morgan from "morgan";
 import routes from "./routes/index";
+import deeplinkRoutes from "./routes/deeplink.routes";
 import { errorHandler } from "./middleware/error.middleware";
 
 const app = express();
@@ -34,7 +35,15 @@ app.use(cors({
   },
   credentials: true,
 }));
-app.use(express.json({ limit: "50mb" }));
+app.use(
+  express.json({
+    limit: "50mb",
+    // Keep the exact request bytes so webhook HMAC signatures (Meta, Razorpay) can be verified
+    verify: (req, _res, buf) => {
+      (req as any).rawBody = buf.toString("utf8");
+    },
+  })
+);
 app.use(express.urlencoded({ limit: "50mb", extended: true }));
 app.use(morgan("dev"));
 
@@ -53,6 +62,9 @@ app.use("/uploads", express.static(path.resolve(process.cwd(), "uploads")));
 // API v1 routes
 app.use("/api", routes);
 app.use("/api/v1", routes);
+
+// Public universal link & deep-link web fallbacks
+app.use(deeplinkRoutes);
 
 
 app.use((_req, res) => {

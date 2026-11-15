@@ -5,7 +5,7 @@ import { isSafeKey } from "../external/storage/storage.utils";
 import { uploadFile } from "../services/upload.service";
 
 // Folders a client may upload into via POST /uploads/image.
-const IMAGE_FOLDERS = ["images", "products", "logos", "avatars"] as const;
+const IMAGE_FOLDERS = ["images", "products", "logos", "avatars", "reviews"] as const;
 
 // GET /files/<key> — public, streams a stored file (product images, logos).
 // Keys are unguessable (timestamp + namespaced by owner), and served with a
@@ -54,8 +54,19 @@ export const uploadImageHandler = asyncHandler(async (req: Request, res: Respons
   }
 
   // Namespace by owner: sellers/<id> or users/<id>.
-  const entityId = req.seller ? `seller-${req.seller.id}` : `user-${req.user!.id}`;
+  const entityId = req.seller ? `seller-${req.seller.id}` : req.user ? `user-${req.user.id}` : 'guest';
 
+  const result = await uploadFile({ file: req.file, folder: requested, entityId });
+  res.status(201).json({ url: result.url, key: result.key });
+});
+
+export const uploadMediaHandler = asyncHandler(async (req: Request, res: Response) => {
+  if (!req.file) {
+    res.status(400).json({ error: 'No media file uploaded (expected field "file")' });
+    return;
+  }
+  const requested = typeof req.query.folder === "string" ? req.query.folder : "reviews";
+  const entityId = req.seller ? `seller-${req.seller.id}` : req.user ? `user-${req.user.id}` : "guest";
   const result = await uploadFile({ file: req.file, folder: requested, entityId });
   res.status(201).json({ url: result.url, key: result.key });
 });

@@ -2,6 +2,7 @@ import "dotenv/config";
 import app from "./app";
 import { initSettlementCron } from "./cron/settlement.cron";
 import { initReturnSLACron } from "./cron/return-sla.cron";
+import { initOrderSLACron } from "./cron/order-sla.cron";
 import { startJobs, stopJobs } from "./jobs";
 
 const port = parseInt(process.env.PORT as string, 10) || 4000;
@@ -20,6 +21,7 @@ const server = app.listen(port, "0.0.0.0", () => {
   // Start background cron jobs
   initSettlementCron();
   initReturnSLACron();
+  initOrderSLACron();
 
   // Start async job queue + workers (pg-boss)
   startJobs().catch((err) => console.error("❌ [jobs] failed to start:", err));

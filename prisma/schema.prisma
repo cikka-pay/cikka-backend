@@ -42,6 +42,12 @@ enum SettlementStatus {
   PAID
 }
 
+enum VoucherStatus {
+  ACTIVE
+  REDEEMED
+  EXPIRED
+}
+
 enum ReturnStatus {
   REQUESTED
   APPROVED
@@ -340,6 +346,7 @@ model Product {
   orderItems  OrderItem[]
   returns     Return[]
   variants    ProductVariant[]
+  reviews     ProductReview[]
 
   @@index([sellerId])
   @@index([sellerId, status])
@@ -371,6 +378,34 @@ model ProductVariant {
 }
 
 // ============================================================
+// PRODUCT REVIEW — Customer ratings, reviews, photos & videos
+// ============================================================
+
+model ProductReview {
+  id         String   @id @default(uuid())
+  productId  String
+  product    Product  @relation(fields: [productId], references: [id], onDelete: Cascade)
+  userId     String?
+  user       User?    @relation(fields: [userId], references: [id], onDelete: SetNull)
+  userName   String
+  userPhone  String?
+  rating     Int      @default(5)
+  title      String?
+  comment    String
+  photos     String[] @default([])
+  videoUrl   String?
+  helpfulYes Int      @default(0)
+  helpfulNo  Int      @default(0)
+  verified   Boolean  @default(true)
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  @@index([productId])
+  @@index([userId])
+  @@map("product_reviews")
+}
+
+// ============================================================
 // ORDER — One order = one transaction for this seller
 // ============================================================
 
@@ -378,10 +413,16 @@ model Order {
   id           String      @id @default(uuid())
   sellerId     String
   seller       Seller      @relation(fields: [sellerId], references: [id])
+  userId       String?
+  user         User?       @relation(fields: [userId], references: [id], onDelete: SetNull)
 
   orderNumber     String      @unique
   customerName    String
+  customerEmail   String?
+  customerPhone   String?
   customerCity    String?
+  shippingAddress String?     @db.Text
+  pincode         String?
   status          OrderStatus @default(PENDING)
   totalAmount     Decimal     @db.Decimal(10, 2)
 
@@ -389,6 +430,14 @@ model Order {
   trackingNumber  String?
   courier         String?     // Courier partner name e.g. "Delhivery", "Blue Dart"
   deliveredAt     DateTime?   // Timestamp when package reached the customer (triggers T+7 hold countdown)
+
+  // WhatsApp Automation & SLA Tracking
+  packDeadline         DateTime?   // Initial deadline for seller to pack (e.g. Next Day 12:00 PM)
+  cancellationDeadline DateTime?   // Hard SLA auto-cancel deadline (packDeadline + 48 hours)
+  whatsappNotifiedAt   DateTime?   // Timestamp when WhatsApp alert was dispatched
+  whatsappMessageId    String?     // Meta WhatsApp Cloud API outbound message identifier
+  whatsappActionAt     DateTime?   // When seller clicked Pack or Cancel in WhatsApp
+  whatsappActionTaken  String?     // "PACK" | "CANCEL" | null
 
   createdAt    DateTime    @default(now())
   updatedAt    DateTime    @updatedAt
@@ -400,6 +449,8 @@ model Order {
 
   @@index([sellerId, createdAt])
   @@index([sellerId, status])
+  @@index([userId])
+  @@index([pincode])
   @@map("orders")
 }
 
@@ -591,6 +642,10 @@ model User {
   savedCards    UserSavedCard[]
   wallet        UserWallet?
   ledgerEntries LoyaltyLedger[]
+  orders        Order[]
+  vouchers      UserVoucher[]
+  notifications UserNotification[]
+  reviews       ProductReview[]
   bbpsTransactions BbpsTransaction[]
 
   createdAt     DateTime @default(now())
@@ -648,6 +703,58 @@ model UserSavedCard {
   @@index([phone])
   @@index([razorpayTokenId])
   @@map("user_saved_cards")
+}
+
+// ============================================================
+// USER NOTIFICATION — In-app notifications for mobile app users
+// ============================================================
+
+
+model UserVoucher {
+  id             String        @id @default(uuid())
+  userId         String
+  user           User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  orderReference String        @unique
+  productId      String
+  brandTitle     String
+  brandCategory  String?
+  brandLogo      String?
+
+  cardNumber     String
+  cardPin        String?
+  denomination   Int
+  pointsBurned   Int
+  validTill      DateTime?
+  cardType       String?
+
+  status         VoucherStatus @default(ACTIVE)
+  redeemedAt     DateTime?
+
+  createdAt      DateTime      @default(now())
+  updatedAt      DateTime      @updatedAt
+
+  @@index([userId, status])
+  @@index([userId, brandTitle])
+  @@map("user_vouchers")
+}
+
+model UserNotification {
+  id        String   @id @default(uuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  category  String   @default("rewards") // rewards | bills | orders | security
+  title     String
+  body      String
+  read      Boolean  @default(false)
+  metadata  Json?
+
+  createdAt DateTime @default(now())
+
+  @@index([userId, read])
+  @@index([userId, createdAt])
+  @@map("user_notifications")
 }
 
 
@@ -736,24 +843,30 @@ model BbpsWebhookEvent {
 // ============================================================
 
 model BbpsBiller {
-  id              String   @id @default(uuid())
-  billerId        String   @unique // e.g. "BESCOM000KAR01", "HDFCCARD00001"
-  billerName      String
-  category        String   // ELECTRICITY | CREDIT_CARD | WATER | GAS | DTH | MOBILE_POSTPAID | BROADBAND
-  logoUrl         String?
-  coverageArea    String?
-  paramsSchema    Json     // Array of required input field keys [{ name: "accountNumber", label: "Account Number", regex: "..." }]
-  isActive        Boolean  @default(true)
+  id                    String   @id @default(uuid())
+  billerId              String   @unique // e.g. "BESCOM000KAR01", "HDFCCARD00001"
+  productInstanceId     String?  // Setu product instance mapping
+  billerName            String
+  category              String   // ELECTRICITY | CREDIT_CARD | WATER | GAS | DTH | MOBILE_POSTPAID | BROADBAND
+  description           String?
+  logoUrl               String?
+  coverageArea          String?
+  paramsSchema          Json     // Array of required input field keys [{ name: "accountNumber", label: "Account Number", regex: "..." }]
+  paymentInstruments    Json?    // Supported payment instruments e.g. ["UPI", "NET_BANKING", "DEBIT_CARD"]
+  fetchRequirement      String?  // OPTIONAL | MANDATORY | NOT_SUPPORTED
+  supportBillValidation String?  // OPTIONAL | MANDATORY | NOT_SUPPORTED
+  isActive              Boolean  @default(true)
 
-  createdAt       DateTime @default(now())
-  updatedAt       DateTime @updatedAt
+  createdAt             DateTime @default(now())
+  updatedAt             DateTime @updatedAt
 
   @@index([category])
+  @@index([billerId])
   @@map("bbps_billers")
 }
 
 // ============================================================
-// BBPS BILL FETCH — Customer Bill Fetch Records
+// BBPS BILL FETCH — Customer Bill Fetch Records (Legacy)
 // ============================================================
 
 model BbpsBillFetch {
@@ -776,7 +889,7 @@ model BbpsBillFetch {
 }
 
 // ============================================================
-// BBPS BILL PAYMENT — Payment Intent & Setu Integration Orders
+// BBPS BILL PAYMENT — Payment Intent & Setu Integration Orders (Legacy)
 // ============================================================
 
 model BbpsBillPayment {

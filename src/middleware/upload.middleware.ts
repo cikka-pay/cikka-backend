@@ -30,7 +30,15 @@ export const DOC_MIMES = [
   "image/png",
 ];
 
-export const ALL_SUPPORTED_MIMES = [...new Set([...IMAGE_MIMES, ...DOC_MIMES])];
+export const MEDIA_MIMES = [
+  ...IMAGE_MIMES,
+  "video/mp4",
+  "video/quicktime",
+  "video/webm",
+  "video/x-m4v",
+];
+
+export const ALL_SUPPORTED_MIMES = [...new Set([...IMAGE_MIMES, ...DOC_MIMES, ...MEDIA_MIMES])];
 
 // ── Factory ─────────────────────────────────────────────────────────────────
 
@@ -105,6 +113,13 @@ export const uploadLogo = createUpload({
 }).single;
 
 /** Generic single file upload, max 5 MB, field = "file", any type */
+/** Review / Rich Media upload (images & video clips), max 50 MB, field = "file" or "media" */
+export const uploadMedia = createUpload({
+  field: "file",
+  maxSizeMB: 50,
+  allowedMimes: MEDIA_MIMES,
+}).single;
+
 export const uploadFile = createUpload({
   field: "file",
   maxSizeMB: 5,
