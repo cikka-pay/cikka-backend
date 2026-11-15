@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+
 import { createSetuBillpayClient } from "../../external/setu/billpay.client";
 import { setuBillpayStub } from "../../external/setu/billpay.stub";
 import { SetuBillpayError } from "../../external/setu/billpay.interface";
@@ -12,8 +13,8 @@ const OPTS = {
   orgId: "org-42",
 };
 
-function json(body: unknown, status = 200): Response {
-  return new Response(JSON.stringify(body), { status, headers: { "Content-Type": "application/json" } });
+function json(body: unknown, status = 200, headers: Record<string, string> = {}): Response {
+  return new Response(JSON.stringify(body), { status, headers: { "Content-Type": "application/json", ...headers } });
 }
 
 const tokenOk = (token: string, expiresIn = 300) => json({ success: true, token, expiresIn, traceId: "t-tok" });
@@ -28,14 +29,17 @@ const linkCalls = () => calls().filter((c) => c.url.endsWith("/api/v2/ethereal/l
 describe("Setu BillPay client (real)", () => {
   let clock = 1_000_000;
   const now = () => clock;
+  let errorSpy: ReturnType<typeof vi.spyOn>;
 
   beforeEach(() => {
     clock = 1_000_000;
     fetchMock.mockReset();
     vi.stubGlobal("fetch", fetchMock);
+    errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
   });
   afterEach(() => {
     vi.unstubAllGlobals();
+    errorSpy.mockRestore();
   });
 
   it("fetches a token once and reuses it for two links", async () => {
@@ -125,7 +129,13 @@ describe("Setu BillPay client (real)", () => {
 
     const err = await client.createLink({ mobileNumber: "123", custID: "user-1" }).catch((e) => e);
     expect(err).toBeInstanceOf(SetuBillpayError);
-    expect(err).toMatchObject({ status: 400, code: "INVALID_MOBILE", traceId: "t-err", message: "mobileNumber is invalid" });
+    expect(err).toMatchObject({
+      status: 400,
+      code: "INVALID_MOBILE",
+      traceId: "t-err",
+      message: "mobileNumber is invalid",
+      step: "link",
+    });
   });
 
   it("throws on a failed token request", async () => {
@@ -137,6 +147,7 @@ describe("Setu BillPay client (real)", () => {
       name: "SetuBillpayError",
       status: 401,
       code: "INVALID_CREDENTIALS",
+      step: "token",
     });
     expect(linkCalls()).toHaveLength(0);
   });
@@ -181,6 +192,86 @@ describe("Setu BillPay client (real)", () => {
       code: "CONFIG_MISSING",
     });
     expect(fetchMock).not.toHaveBeenCalled();
+  });
+});
+
+describe("Setu BillPay client — error logging", () => {
+  let errorSpy: ReturnType<typeof vi.spyOn>;
+  const now = () => 1_000_000;
+  beforeEach(() => {
+    fetchMock.mockReset();
+    vi.stubGlobal("fetch", fetchMock);
+    errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+  });
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    errorSpy.mockRestore();
+  });
+  const loggedText = () => JSON.stringify(errorSpy.mock.calls);
+
+  it("logs status, body snippet, server and x-amzn-requestid on a token 403 (no traceId)", async () => {
+    fetchMock.mockResolvedValueOnce(
+      new Response("<html><body>403 Forbidden</body></html>", {
+        status: 403,
+        headers: { server: "awselb/2.0", "x-amzn-requestid": "amzn-req-1" },
+      })
+    );
+    const client = createSetuBillpayClient(() => OPTS, now);
+
+    await expect(client.createLink({ mobileNumber: "9876543210", custID: "u" })).rejects.toMatchObject({
+      status: 403,
+      code: "HTTP_403",
+    });
+    expect(errorSpy).toHaveBeenCalledTimes(1);
+    const [msg, details] = errorSpy.mock.calls[0];
+    expect(msg).toBe("[Setu BillPay] token request failed: HTTP 403");
+    expect(details).toEqual({
+      status: 403,
+      server: "awselb/2.0",
+      requestId: "amzn-req-1",
+      body: "<html><body>403 Forbidden</body></html>",
+    });
+  });
+
+  it("falls back to x-request-id and truncates the body to 500 chars", async () => {
+    fetchMock
+      .mockResolvedValueOnce(tokenOk("tok-A"))
+      .mockResolvedValueOnce(
+        new Response("x".repeat(2000), { status: 500, headers: { "x-request-id": "req-77" } })
+      );
+    const client = createSetuBillpayClient(() => OPTS, now);
+
+    await expect(client.createLink({ mobileNumber: "9876543210", custID: "u" })).rejects.toMatchObject({ status: 500 });
+    const [msg, details] = errorSpy.mock.calls[0] as [string, Record<string, unknown>];
+    expect(msg).toBe("[Setu BillPay] link request failed: HTTP 500");
+    expect(details.requestId).toBe("req-77");
+    expect(details.server).toBeUndefined();
+    expect((details.body as string).length).toBe(500);
+  });
+
+  it("never logs the secret, the token, or the request body", async () => {
+    fetchMock
+      .mockResolvedValueOnce(tokenOk("tok-SECRET-TOKEN"))
+      .mockResolvedValueOnce(
+        json({ success: false, error: { code: "INVALID_ORG", message: "orgId not found" }, token: "leaked-tok" }, 400)
+      );
+    const client = createSetuBillpayClient(() => OPTS, now);
+
+    await expect(client.createLink({ mobileNumber: "9876543210", custID: "user-1" })).rejects.toMatchObject({
+      code: "INVALID_ORG",
+    });
+    const logged = loggedText();
+    expect(logged).toContain("orgId not found");
+    for (const secret of ["secret-xyz", "tok-SECRET-TOKEN", "leaked-tok", "9876543210", "client-123"]) {
+      expect(logged).not.toContain(secret);
+    }
+  });
+
+  it("does not log on success", async () => {
+    fetchMock.mockResolvedValueOnce(tokenOk("tok-A")).mockResolvedValueOnce(linkOk(1));
+    const client = createSetuBillpayClient(() => OPTS, now);
+    await client.createLink({ mobileNumber: "9876543210", custID: "u" });
+    expect(errorSpy).not.toHaveBeenCalled();
   });
 });
 
