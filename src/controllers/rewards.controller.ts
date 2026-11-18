@@ -339,7 +339,18 @@ async function executeRedemptionFulfillment(params: {
   } = params;
 
   const numProductValue = Number(product_value) || 1000;
-  const numPointsBurned = Number(points_burned) || numProductValue;
+  const isSpecialSellerOrder =
+    String(product_name || "").toLowerCase().includes("aeraa") ||
+    String(product_name || "").toLowerCase().includes("zara");
+  const commRate = isSpecialSellerOrder
+    ? RewardsCalcService.SPECIAL_SELLER_COMMISSION_RATE
+    : RewardsCalcService.NORMAL_SELLER_COMMISSION_RATE;
+  const canonicalPointsRequired = RewardsCalcService.calculateRewardProductPointsRequired(
+    numProductValue,
+    commRate
+  );
+  const numPointsBurned =
+    Number(points_burned) > 0 ? Number(points_burned) : canonicalPointsRequired;
   const expressFee = is_express ? 50.0 : 0.0;
   const customerFeePaid = Number((11.79 + expressFee).toFixed(2));
 
@@ -555,6 +566,7 @@ async function executeRedemptionFulfillment(params: {
         isExpress: Boolean(is_express),
         platformFeeDirectToCikka: 11.79,
         expressFeeDirectToCikka: expressFee,
+        redemptionSplit: RewardsCalcService.computeRedemptionSplit(numProductValue, commRate),
       } as any,
     } as any,
   });

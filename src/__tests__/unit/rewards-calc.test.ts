@@ -205,4 +205,87 @@ describe("RewardsCalcService - Unified Calculation Engine", () => {
       expect(mall25k.effectiveSavings).toBe(mall25k.cashbackEarned + Math.round(11000 / 6));
     });
   });
+
+  describe("5. Dual Calculator Mathematical Engine (CIKKA_FINANCIAL_LOGIC_SPEC Section 5)", () => {
+    it("Mode 1: Target Product Value (V) -> Required CI Points (P) = ceil(quantize(6 * (1 - c) * V))", () => {
+      // Coupon (c = 0)
+      const couponPts = RewardsCalcService.calculateRewardProductPointsRequired(1000, 0);
+      expect(couponPts).toBe(6000);
+
+      // Normal Seller (c = 0.22): saves 22% points
+      const normalPts = RewardsCalcService.calculateRewardProductPointsRequired(1000, 0.22);
+      expect(normalPts).toBe(4680);
+
+      // Special Seller (c = 0.42): saves 42% points
+      const specialPts = RewardsCalcService.calculateRewardProductPointsRequired(1000, 0.42);
+      expect(specialPts).toBe(3480);
+    });
+
+    it("Mode 2: Available CI Points Balance (P) -> Max Unlocked Product Value (V) in INR", () => {
+      const p = 2040;
+
+      // Brand Coupon (c = 0): 2040 / 6 = ₹340.00
+      const couponVal = RewardsCalcService.calculatePointsPurchasingPower(p, 0);
+      expect(couponVal).toBe(340.0);
+
+      // Normal Seller (c = 0.22): 2040 / (6 * 0.78) = ₹435.89 (+28.2% boost)
+      const normalVal = RewardsCalcService.calculatePointsPurchasingPower(p, 0.22);
+      expect(normalVal).toBe(435.89);
+      expect(RewardsCalcService.calculatePointsBoostPercentage(0.22)).toBe(28.2);
+
+      // Special Seller (c = 0.42): 2040 / (6 * 0.58) = ₹586.20 (+72.4% boost)
+      const specialVal = RewardsCalcService.calculatePointsPurchasingPower(p, 0.42);
+      expect(specialVal).toBe(586.2);
+      expect(RewardsCalcService.calculatePointsBoostPercentage(0.42)).toBe(72.4);
+    });
+  });
+
+  describe("6. BBPS Utility Bill Payment Slabs (Section 6.2 Table)", () => {
+    it("differentiates utility bill payment slabs from credit card slabs", () => {
+      // ₹100 Utility Bill matches U1 (₹50 - ₹200)
+      const util100 = RewardsCalcService.calculateBillPaymentRewards(100, undefined, true);
+      expect(util100.slabId).toBe("U1");
+      expect(util100.cashbackEarned).toBeGreaterThanOrEqual(3);
+      expect(util100.cashbackEarned).toBeLessThanOrEqual(4);
+      expect(util100.ciPointsEarned).toBeGreaterThanOrEqual(15);
+      expect(util100.ciPointsEarned).toBeLessThanOrEqual(20);
+
+      // ₹15,000 Utility Bill matches U10 (> ₹12,000)
+      const util15k = RewardsCalcService.calculateBillPaymentRewards(15000, undefined, true);
+      expect(util15k.slabId).toBe("U10");
+      expect(util15k.cashbackEarned).toBe(15);
+      expect(util15k.ciPointsEarned).toBeGreaterThanOrEqual(150);
+      expect(util15k.ciPointsEarned).toBeLessThanOrEqual(220);
+    });
+  });
+
+  describe("7. Escrow Split & Invariants (Section 4, 7, 8)", () => {
+    it("computes exact X, Y, Z split on ₹1,000 product for normal seller (22% comm)", () => {
+      const split = RewardsCalcService.computeRedemptionSplit(1000, 0.22);
+      expect(split.productGsv).toBe(1000);
+      expect(split.totalTicketY).toBe(1011.79);
+      expect(split.sellerPayout).toBe(668.56);
+      expect(split.courierPayout).toBe(64.90);
+      expect(split.whatCikkaPaysZ).toBe(782.86);
+      expect(split.cikkaEarningX).toBe(228.93);
+      expect(split.netCashBurned).toBe(771.07);
+      expect(split.pointsBurned).toBe(4680);
+      expect(split.savingsVsCoupon).toBe(228.93);
+      expect(split.invariantsVerified).toBe(true);
+    });
+
+    it("computes exact X, Y, Z split on ₹1,000 product for special seller (42% comm)", () => {
+      const split = RewardsCalcService.computeRedemptionSplit(1000, 0.42);
+      expect(split.productGsv).toBe(1000);
+      expect(split.totalTicketY).toBe(1011.79);
+      expect(split.sellerPayout).toBe(468.56);
+      expect(split.courierPayout).toBe(64.90);
+      expect(split.whatCikkaPaysZ).toBe(613.37);
+      expect(split.cikkaEarningX).toBe(398.42);
+      expect(split.netCashBurned).toBe(601.58);
+      expect(split.pointsBurned).toBe(3480);
+      expect(split.savingsVsCoupon).toBe(398.42);
+      expect(split.invariantsVerified).toBe(true);
+    });
+  });
 });

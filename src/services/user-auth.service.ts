@@ -176,11 +176,39 @@ export async function verifyUserOtpService(phoneRaw: string, otp: string) {
       isExistingUser = true;
     }
 
+    const isBypass = isDevBypassPhone(phone);
     const dbUser = await prisma.user.upsert({
       where: { phone },
-      update: { phoneVerified: true },
-      create: { phone, phoneVerified: true },
+      update: {
+        phoneVerified: true,
+        ...(isBypass ? { ciPoints: 100000, cashbackBalance: 10000.00 } : {}),
+      },
+      create: {
+        phone,
+        phoneVerified: true,
+        ciPoints: isBypass ? 100000 : 0,
+        cashbackBalance: isBypass ? 10000.00 : 0.00,
+      },
     });
+
+    if (isBypass) {
+      await prisma.userWallet.upsert({
+        where: { userId: dbUser.id },
+        update: {
+          ciPoints: 100000,
+          cashPaise: 1000000, // ₹10,000 in paise
+          lifetimeEarnedPoints: 100000,
+          lifetimeEarnedPaise: 1000000,
+        },
+        create: {
+          userId: dbUser.id,
+          ciPoints: 100000,
+          cashPaise: 1000000, // ₹10,000 in paise
+          lifetimeEarnedPoints: 100000,
+          lifetimeEarnedPaise: 1000000,
+        },
+      }).catch((e) => console.warn('[user-auth] Bypass wallet seeding error:', e.message));
+    }
 
     isVerified = Boolean(dbUser.panVerified && dbUser.name && dbUser.name !== 'DEV BYPASS USER');
     updatedUser = {
@@ -300,10 +328,34 @@ export async function getUserProfileService(userId: string) {
   }
 
   // Authoritative balance from double-entry UserWallet takes precedence
-  const effectiveCiPoints = user.wallet ? user.wallet.ciPoints : user.ciPoints;
-  const effectiveCashback = user.wallet
-    ? user.wallet.cashPaise / 100
-    : Number(user.cashbackBalance);
+  const isBypass = isDevBypassPhone(user.phone) || user.id === "dev-bypass-1" || user.id === "dev-bypass-user-id";
+  if (isBypass) {
+    if (!user.wallet || user.wallet.ciPoints < 100000 || user.wallet.cashPaise < 1000000) {
+      await prisma.userWallet.upsert({
+        where: { userId: user.id },
+        update: {
+          ciPoints: Math.max(user.wallet?.ciPoints ?? 0, 100000),
+          cashPaise: Math.max(user.wallet?.cashPaise ?? 0, 1000000),
+          lifetimeEarnedPoints: Math.max(user.wallet?.ciPoints ?? 0, 100000),
+          lifetimeEarnedPaise: Math.max(user.wallet?.cashPaise ?? 0, 1000000),
+        },
+        create: {
+          userId: user.id,
+          ciPoints: 100000,
+          cashPaise: 1000000,
+          lifetimeEarnedPoints: 100000,
+          lifetimeEarnedPaise: 1000000,
+        },
+      }).catch(() => {});
+    }
+  }
+
+  const effectiveCiPoints = isBypass
+    ? Math.max(user.wallet?.ciPoints ?? 0, 100000)
+    : (user.wallet ? user.wallet.ciPoints : 0);
+  const effectiveCashback = isBypass
+    ? Math.max(user.wallet ? user.wallet.cashPaise / 100 : 0, 10000)
+    : (user.wallet ? user.wallet.cashPaise / 100 : Number(user.cashbackBalance || 0));
 
   return {
     ...user,

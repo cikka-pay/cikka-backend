@@ -6,6 +6,14 @@ export const createBillpaySessionSchema = z
     categoryName: z.string().trim().min(1).max(100).optional(),
     billerId: z.string().trim().min(1).max(100).optional(),
     redirectTo: z.enum(["transactions", "disputes"]).optional(),
+    billParams: z
+      .array(
+        z.object({
+          name: z.string().trim().min(1),
+          value: z.string().trim().min(1),
+        })
+      )
+      .optional(),
   })
   .default({});
 

@@ -18,26 +18,58 @@ function renderDeepLinkLandingHtml(opts: {
   title: string;
   subtitle: string;
   appUrl: string;
+  canonicalUrl?: string;
   imageUrl?: string | null;
   badge?: string;
 }): string {
   const safeTitle = escapeHtml(opts.title);
   const safeSubtitle = escapeHtml(opts.subtitle);
   const safeAppUrl = escapeHtml(opts.appUrl);
+  const safeCanonicalUrl = escapeHtml(opts.canonicalUrl || opts.appUrl);
   const safeBadge = escapeHtml(opts.badge || "CIKKACLUB");
-  const ogImageTag = opts.imageUrl
-    ? `<meta property="og:image" content="${escapeHtml(opts.imageUrl)}" />`
+
+  let safeImageUrl = opts.imageUrl ? opts.imageUrl.trim() : "";
+  if (safeImageUrl && !safeImageUrl.startsWith("http://") && !safeImageUrl.startsWith("https://")) {
+    safeImageUrl = `https://api.cikka.club${safeImageUrl.startsWith("/") ? "" : "/"}${safeImageUrl}`;
+  }
+  // WhatsApp drops preview images over 300KB - ensure optimized dimensions & quality
+  if (safeImageUrl && safeImageUrl.includes("images.unsplash.com") && !safeImageUrl.includes("w=")) {
+    safeImageUrl += (safeImageUrl.includes("?") ? "&" : "?") + "w=800&q=80&auto=format";
+  }
+  const escapedImageUrl = safeImageUrl ? escapeHtml(safeImageUrl) : "";
+
+  const ogImageTags = escapedImageUrl
+    ? `
+  <meta property="og:image" content="${escapedImageUrl}" />
+  <meta property="og:image:secure_url" content="${escapedImageUrl}" />
+  <meta property="og:image:type" content="image/jpeg" />
+  <meta property="og:image:width" content="800" />
+  <meta property="og:image:height" content="600" />
+  <meta property="og:image:alt" content="${safeTitle}" />
+  <meta name="twitter:image" content="${escapedImageUrl}" />
+  <link rel="image_src" href="${escapedImageUrl}" />`
     : "";
 
   return `<!DOCTYPE html>
-<html lang="en">
+<html lang="en" prefix="og: https://ogp.me/ns#">
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1" />
   <title>${safeTitle} — Cikka</title>
+  
+  <!-- Open Graph & Social Preview Tags for WhatsApp, iMessage, Facebook, Telegram -->
+  <meta property="og:type" content="product" />
+  <meta property="og:site_name" content="Cikka Mall" />
   <meta property="og:title" content="${safeTitle}" />
   <meta property="og:description" content="${safeSubtitle}" />
-  ${ogImageTag}
+  <meta property="og:url" content="${safeCanonicalUrl}" />
+  ${ogImageTags}
+
+  <!-- Twitter Cards -->
+  <meta name="twitter:card" content="summary_large_image" />
+  <meta name="twitter:title" content="${safeTitle}" />
+  <meta name="twitter:description" content="${safeSubtitle}" />
+
   <style>
     body { margin: 0; min-height: 100vh; display: flex; align-items: center; justify-content: center; background: #06060A; color: #F8FAFC; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; padding: 24px; }
     .card { width: 100%; max-width: 420px; background: #0D0C14; border: 1px solid rgba(255,255,255,0.1); border-radius: 24px; padding: 28px 24px; text-align: center; box-shadow: 0 24px 64px rgba(0,0,0,0.55); }
@@ -128,6 +160,11 @@ function getFirstImageUrl(imageUrls: unknown): string | undefined {
 
 async function handleMallLanding(req: Request, res: Response) {
   const id = String(req.params.id || "").trim();
+  const queryTitle = String(req.query.title || "").trim();
+  const queryBrand = String(req.query.brand || "").trim();
+  const queryPrice = req.query.price ? Number(req.query.price) : undefined;
+  const queryImage = String(req.query.image || req.query.img || "").trim();
+
   const product = await prisma.product
     .findUnique({
       where: { id },
@@ -135,10 +172,18 @@ async function handleMallLanding(req: Request, res: Response) {
     })
     .catch(() => null);
 
-  const title = product?.name || "Cikka Mall Selection";
-  const subtitle = product
-    ? `${product.brandName ? `${product.brandName} · ` : ""}₹${Number(product.price || 0).toLocaleString("en-IN")} on Cikka Mall`
-    : "Explore verified luxury & lifestyle picks inside the Cikka app.";
+  const title = queryTitle || product?.name || "Cikka Mall Selection";
+  const brand = queryBrand || product?.brandName || "";
+  const price = queryPrice ?? (product?.price ? Number(product.price) : undefined);
+  let subtitle = "Explore verified luxury & lifestyle picks inside the Cikka app.";
+  if (price !== undefined) {
+    subtitle = `${brand ? `${brand} · ` : ""}₹${price.toLocaleString("en-IN")} on Cikka Mall`;
+  } else if (product) {
+    subtitle = `${product.brandName ? `${product.brandName} · ` : ""}₹${Number(product.price || 0).toLocaleString("en-IN")} on Cikka Mall`;
+  }
+
+  const imageUrl = queryImage || getFirstImageUrl(product?.imageUrls) || "https://images.unsplash.com/photo-1542291026-7eec264c27ff?w=800&q=80";
+  const canonicalUrl = `https://cikka.club/mall/${encodeURIComponent(id)}`;
 
   res.setHeader("Content-Type", "text/html; charset=utf-8");
   res.send(
@@ -146,7 +191,8 @@ async function handleMallLanding(req: Request, res: Response) {
       badge: "CIKKA MALL",
       title,
       subtitle,
-      imageUrl: getFirstImageUrl(product?.imageUrls),
+      imageUrl,
+      canonicalUrl,
       appUrl: `cikkaapp://mall/${encodeURIComponent(id)}`,
     })
   );
@@ -157,6 +203,11 @@ router.get("/cikkamall/:id", handleMallLanding);
 
 async function handleRewardProductLanding(req: Request, res: Response) {
   const id = String(req.params.id || "").trim();
+  const queryTitle = String(req.query.title || "").trim();
+  const queryBrand = String(req.query.brand || "").trim();
+  const queryPoints = req.query.points ? Number(req.query.points) : undefined;
+  const queryImage = String(req.query.image || req.query.img || "").trim();
+
   const product = await prisma.product
     .findUnique({
       where: { id },
@@ -164,11 +215,18 @@ async function handleRewardProductLanding(req: Request, res: Response) {
     })
     .catch(() => null);
 
-  const pts = Number(product?.price || product?.loyaltyPoints || 0);
-  const title = product?.name || "Cikka Reward Store Pick";
-  const subtitle = product
-    ? `${product.brandName ? `${product.brandName} · ` : ""}Redeem for ${Math.round(pts).toLocaleString("en-IN")} CI Points`
-    : "Redeem exclusive rewards using CI Points inside Cikka.";
+  const title = queryTitle || product?.name || "Cikka Reward Store Pick";
+  const brand = queryBrand || product?.brandName || "";
+  const pts = queryPoints ?? Number(product?.price || product?.loyaltyPoints || 0);
+  let subtitle = "Redeem exclusive rewards using CI Points inside Cikka.";
+  if (pts > 0) {
+    subtitle = `${brand ? `${brand} · ` : ""}Redeem for ${Math.round(pts).toLocaleString("en-IN")} CI Points`;
+  } else if (product) {
+    subtitle = `${product.brandName ? `${product.brandName} · ` : ""}Redeem for ${Math.round(Number(product.price || product.loyaltyPoints || 0)).toLocaleString("en-IN")} CI Points`;
+  }
+
+  const imageUrl = queryImage || getFirstImageUrl(product?.imageUrls) || "https://images.unsplash.com/photo-1542291026-7eec264c27ff?w=800&q=80";
+  const canonicalUrl = `https://cikka.club/rewards/product/${encodeURIComponent(id)}`;
 
   res.setHeader("Content-Type", "text/html; charset=utf-8");
   res.send(
@@ -176,7 +234,8 @@ async function handleRewardProductLanding(req: Request, res: Response) {
       badge: "REWARD STORE",
       title,
       subtitle,
-      imageUrl: getFirstImageUrl(product?.imageUrls),
+      imageUrl,
+      canonicalUrl,
       appUrl: `cikkaapp://rewards/product/${encodeURIComponent(id)}`,
     })
   );

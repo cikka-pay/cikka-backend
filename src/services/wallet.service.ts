@@ -11,6 +11,7 @@
 import { prisma } from "../config/prisma";
 import { WalletTxType } from "../generated/prisma/client";
 import { WalletNotificationMeta } from "../utils/userNotifications";
+import { isDevBypassPhone } from "./user-auth.service";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -87,7 +88,49 @@ export const walletService = {
    */
   async getBalance(userId: string): Promise<WalletBalance> {
     try {
-      const wallet = await prisma.userWallet.findUnique({ where: { userId } });
+      let isBypass = userId === "dev-bypass-1" || userId === "dev-bypass-user-id";
+      if (!isBypass) {
+        const u = await prisma.user.findUnique({
+          where: { id: userId },
+          select: { phone: true },
+        });
+        if (u && isDevBypassPhone(u.phone)) {
+          isBypass = true;
+        }
+      }
+
+      let wallet = await prisma.userWallet.findUnique({ where: { userId } });
+
+      if (isBypass) {
+        if (!wallet) {
+          try {
+            wallet = await prisma.userWallet.create({
+              data: {
+                userId,
+                ciPoints: 100000,
+                cashPaise: 1000000, // ₹10,000 in paise
+                lifetimeEarnedPoints: 100000,
+                lifetimeEarnedPaise: 1000000,
+              },
+            });
+          } catch (_wErr) {
+            wallet = await prisma.userWallet.findUnique({ where: { userId } });
+          }
+        } else if (wallet.ciPoints < 100000 || wallet.cashPaise < 1000000) {
+          try {
+            wallet = await prisma.userWallet.update({
+              where: { userId },
+              data: {
+                ciPoints: Math.max(wallet.ciPoints, 100000),
+                cashPaise: Math.max(wallet.cashPaise, 1000000),
+                lifetimeEarnedPoints: Math.max(wallet.lifetimeEarnedPoints, 100000),
+                lifetimeEarnedPaise: Math.max(wallet.lifetimeEarnedPaise, 1000000),
+              },
+            });
+          } catch (_uErr) {}
+        }
+      }
+
       if (!wallet) {
         return {
           ciPoints: 0,
@@ -112,13 +155,14 @@ export const walletService = {
       };
     } catch (err: any) {
       console.warn(`[WalletService Warning] getBalance fallback: ${err.message}`);
+      const fallbackBypass = userId === "dev-bypass-1" || userId === "dev-bypass-user-id";
       return {
-        ciPoints: 0,
-        cashPaise: 0,
-        cashRupees: 0,
-        lifetimeEarnedPoints: 0,
+        ciPoints: fallbackBypass ? 100000 : 0,
+        cashPaise: fallbackBypass ? 1000000 : 0,
+        cashRupees: fallbackBypass ? 10000 : 0,
+        lifetimeEarnedPoints: fallbackBypass ? 100000 : 0,
         lifetimeRedeemedPoints: 0,
-        lifetimeEarnedPaise: 0,
+        lifetimeEarnedPaise: fallbackBypass ? 1000000 : 0,
         lifetimeRedeemedPaise: 0,
         walletId: "",
       };
@@ -130,12 +174,58 @@ export const walletService = {
    */
   async getLedger(userId: string, limit = 20, cursor?: string) {
     try {
-      const entries = await prisma.loyaltyLedger.findMany({
+      let isBypass = userId === "dev-bypass-1" || userId === "dev-bypass-user-id";
+      if (!isBypass) {
+        const u = await prisma.user.findUnique({
+          where: { id: userId },
+          select: { phone: true },
+        });
+        if (u && isDevBypassPhone(u.phone)) {
+          isBypass = true;
+        }
+      }
+
+      let entries = await prisma.loyaltyLedger.findMany({
         where: { userId },
         orderBy: { createdAt: "desc" },
         take: limit + 1,
         ...(cursor ? { cursor: { id: cursor }, skip: 1 } : {}),
       });
+
+      if (isBypass && entries.length === 0) {
+        try {
+          await prisma.loyaltyLedger.createMany({
+            data: [
+              {
+                userId,
+                txType: WalletTxType.EARN_SIGNUP,
+                pointsDelta: 100000,
+                cashPaiseDelta: 0,
+                balanceAfterPoints: 100000,
+                balanceAfterPaise: 0,
+                description: "Dev Bypass Account Welcome CI Points Bonus",
+                idempotencyKey: `BYPASS_SIGNUP_POINTS_${userId}`,
+              },
+              {
+                userId,
+                txType: WalletTxType.EARN_CASHBACK,
+                pointsDelta: 0,
+                cashPaiseDelta: 1000000,
+                balanceAfterPoints: 100000,
+                balanceAfterPaise: 1000000,
+                description: "Dev Bypass Account Welcome Cashback Bonus",
+                idempotencyKey: `BYPASS_SIGNUP_CASHBACK_${userId}`,
+              },
+            ],
+            skipDuplicates: true,
+          });
+          entries = await prisma.loyaltyLedger.findMany({
+            where: { userId },
+            orderBy: { createdAt: "desc" },
+            take: limit + 1,
+          });
+        } catch (_seedErr) {}
+      }
 
       let nextCursor: string | null = null;
       if (entries.length > limit) {

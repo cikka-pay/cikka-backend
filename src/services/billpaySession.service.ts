@@ -50,6 +50,7 @@ export async function createBillpaySessionService(
       custID: user.id,
       categoryName: body.categoryName,
       billerId: body.billerId,
+      billParams: body.billParams,
       redirectTo: body.redirectTo,
     });
     return { link, sessionId };

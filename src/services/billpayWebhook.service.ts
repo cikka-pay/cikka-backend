@@ -324,17 +324,17 @@ async function applyPaymentEvent(event: string, target: BbpsTxnStatus, p: Record
             userId,
             category: "bills",
             title: `${created.billerName || "Bill"} Payment Failed`,
-            body: err.message || `Payment of ₹${Number(created.amount).toLocaleString("en-IN")} could not be completed.`,
+            body: err.message || `Payment of ₹${Number(created.amountPaid ?? created.billAmount ?? 0).toLocaleString("en-IN")} could not be completed.`,
             screen: "payment-history",
             params: {
-              highlightTxId: created.bbpsTxnId || created.refId || created.setuOrderId || created.internalTxnId,
+              highlightTxId: created.bbpsTxnId || created.refId || created.setuOrderId || created.id,
               initialFilter: "failed",
             },
             actionLabel: "View Failed Bill",
             metadata: {
-              bbpsTxnId: created.bbpsTxnId || created.refId || created.internalTxnId,
+              bbpsTxnId: created.bbpsTxnId || created.refId || created.id,
               billerName: created.billerName,
-              amount: Number(created.amount),
+              amount: Number(created.amountPaid ?? created.billAmount ?? 0),
               status: "FAILED",
             },
           });
@@ -382,21 +382,23 @@ async function applyPaymentEvent(event: string, target: BbpsTxnStatus, p: Record
     ) {
       const { createUserNotificationSafely } = await import("../utils/userNotifications");
       const targetUserId = (userId || existing.userId) as string;
-      const amtNum = Number(fields.amountPaid ?? fields.billAmount ?? existing.amount ?? 0);
+      const amtNum = Number(fields.amountPaid ?? fields.billAmount ?? existing.amountPaid ?? existing.billAmount ?? 0);
+      const billerNameStr = (typeof fields.billerName === "string" && fields.billerName) || existing.billerName || "Bill";
+      const bbpsTxnIdStr = (typeof fields.bbpsTxnId === "string" && fields.bbpsTxnId) || existing.bbpsTxnId || existing.refId || existing.id;
       await createUserNotificationSafely({
         userId: targetUserId,
         category: "bills",
-        title: `${existing.billerName || fields.billerName || "Bill"} Payment Failed`,
+        title: `${billerNameStr} Payment Failed`,
         body: err.message || `Payment of ₹${amtNum.toLocaleString("en-IN")} failed. Tap to inspect or raise an issue.`,
         screen: "payment-history",
         params: {
-          highlightTxId: existing.bbpsTxnId || fields.bbpsTxnId || existing.refId || existing.setuOrderId || existing.internalTxnId,
+          highlightTxId: bbpsTxnIdStr,
           initialFilter: "failed",
         },
         actionLabel: "View Failed Bill",
         metadata: {
-          bbpsTxnId: existing.bbpsTxnId || fields.bbpsTxnId || existing.refId || existing.internalTxnId,
-          billerName: existing.billerName || fields.billerName,
+          bbpsTxnId: bbpsTxnIdStr,
+          billerName: billerNameStr,
           amount: amtNum,
           status: "FAILED",
         },
