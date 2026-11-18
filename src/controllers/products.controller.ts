@@ -93,6 +93,12 @@ export const listProducts = asyncHandler(async (req: Request, res: Response) => 
             id: true,
             businessName: true,
             onboardingStatus: true,
+            isSpecialSeller: true,
+            onboarding: {
+              select: {
+                businessCategory: true,
+              },
+            },
           },
         },
       },
@@ -121,6 +127,12 @@ export const getProduct = asyncHandler(async (req: Request, res: Response) => {
           id: true,
           businessName: true,
           onboardingStatus: true,
+          isSpecialSeller: true,
+          onboarding: {
+            select: {
+              businessCategory: true,
+            },
+          },
         },
       },
     },
@@ -431,6 +443,12 @@ export const listMallCatalogProducts = asyncHandler(async (req: Request, res: Re
             id: true,
             businessName: true,
             onboardingStatus: true,
+            isSpecialSeller: true,
+            onboarding: {
+              select: {
+                businessCategory: true,
+              },
+            },
           },
         },
       },

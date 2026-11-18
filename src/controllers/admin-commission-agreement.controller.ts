@@ -97,12 +97,13 @@ export const getSellerCommissionConfig = asyncHandler(async (req: Request, res: 
     brandName: seller.businessName || seller.onboarding?.businessName,
     defaultRate: 22.0,
     allowedCycles: ["T_PLUS_7", "T_PLUS_14"],
+    isSpecialSeller: Boolean(seller.isSpecialSeller),
   });
 });
 
 export const updateSellerCommissionConfig = asyncHandler(async (req: Request, res: Response) => {
   const { sellerId } = req.params;
-  const { flatOrderFee, categoryCommissions, settlementCycle, notes } = req.body;
+  const { flatOrderFee, categoryCommissions, settlementCycle, notes, isSpecialSeller } = req.body;
 
   // Strict Policy: Only T_PLUS_7 and T_PLUS_14 allowed
   let cycleEnum: string | undefined = undefined;
@@ -231,7 +232,25 @@ export const updateSellerCommissionConfig = asyncHandler(async (req: Request, re
     },
   });
 
-  res.json({ message: "Commission configuration saved successfully", commissionConfig: config });
+  // Update Special Seller status if provided
+  if (isSpecialSeller !== undefined) {
+    try {
+      await prisma.seller.update({
+        where: { id: sellerId },
+        data: {
+          isSpecialSeller: Boolean(isSpecialSeller),
+        },
+      });
+    } catch (sellerErr) {
+      console.warn("Failed to update seller isSpecialSeller flag:", sellerErr);
+    }
+  }
+
+  res.json({
+    message: "Commission configuration saved successfully",
+    commissionConfig: config,
+    isSpecialSeller: Boolean(isSpecialSeller ?? seller?.isSpecialSeller),
+  });
 });
 
 export const getSellerAgreementConfig = asyncHandler(async (req: Request, res: Response) => {
