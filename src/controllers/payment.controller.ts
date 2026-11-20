@@ -157,7 +157,9 @@ async function getOrCreateProductForSeller(
   sellerId: string,
   name: string,
   price: number,
-  category: string
+  category: string,
+  brandName?: string,
+  imageUrl?: string
 ): Promise<string> {
   try {
     const existing = await prisma.product.findFirst({
@@ -168,14 +170,13 @@ async function getOrCreateProductForSeller(
     });
     if (existing) return existing.id;
 
-    const anyProd = await prisma.product.findFirst({ where: { sellerId } });
-    if (anyProd) return anyProd.id;
-
     const created = await prisma.product.create({
       data: {
         sellerId,
         name,
-        sku: `PRD-${Date.now().toString(36).toUpperCase()}`,
+        brandName: brandName || undefined,
+        imageUrls: imageUrl ? [imageUrl] : undefined,
+        sku: `PRD-${Date.now().toString(36).toUpperCase()}-${Math.floor(Math.random() * 1000)}`,
         price: Number(price),
         mrp: Number(price) * 1.25,
         category,
@@ -626,7 +627,9 @@ export async function executeOrderFulfillmentPipeline(params: OrderFulfillmentPa
     }
     distinctSellerIds.add(seller.id);
 
-    const productId = await getOrCreateProductForSeller(seller.id, name, itemPrice, category);
+    const itemBrand = item.brand || item.brandName || "Cikka Mall";
+    const itemImage = item.image || (Array.isArray(item.images) ? item.images[0] : item.imageUrls?.[0] || "");
+    const productId = await getOrCreateProductForSeller(seller.id, name, itemPrice, category, itemBrand, itemImage);
 
     itemResolvedList.push({
       item,
